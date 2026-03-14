@@ -86,7 +86,7 @@ pub async fn list_exceptions(
         )
         .await?;
 
-    print_incident_table(&incidents);
+    print_exception_table(&incidents);
     Ok(())
 }
 
@@ -176,6 +176,38 @@ pub async fn show(
 
     print_incident_detail(&incident);
     Ok(())
+}
+
+fn print_exception_table(incidents: &[Incident]) {
+    if incidents.is_empty() {
+        println!("No exception incidents found.");
+        return;
+    }
+
+    println!(
+        "{:<8} {:<10} {:<10} {:<8} {:<22} EXCEPTION",
+        "#", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
+    );
+    println!("{}", "-".repeat(100));
+
+    for incident in incidents {
+        let exception = if let Incident::ExceptionIncident { exception_name, .. } = incident {
+            exception_name.as_deref().unwrap_or("-")
+        } else {
+            "-"
+        };
+        println!(
+            "{:<8} {:<10} {:<10} {:<8} {:<22} {}",
+            incident.number(),
+            incident.state(),
+            incident.severity(),
+            incident.count(),
+            incident.last_occurred_at(),
+            truncate(exception, 50),
+        );
+    }
+
+    println!("\n{} exception incident(s) found.", incidents.len());
 }
 
 fn print_incident_table(incidents: &[Incident]) {
