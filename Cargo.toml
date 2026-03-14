@@ -1,0 +1,15 @@
+[package]
+name = "appsignal-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for interacting with AppSignal"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+dirs = "6"
+toml = "0.8"
+anyhow = "1"
