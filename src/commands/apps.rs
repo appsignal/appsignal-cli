@@ -8,7 +8,7 @@ use crate::config::Config;
 pub async fn list(org_slug: &str) -> Result<()> {
     let mut config = Config::load()?;
     let token = config.require_token()?.to_string();
-    let client = AppSignalClient::new(&token);
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
 
     let apps = client.list_apps(org_slug).await?;
 
@@ -41,7 +41,7 @@ pub async fn list(org_slug: &str) -> Result<()> {
 pub async fn info(app_id: &str) -> Result<()> {
     let config = Config::load()?;
     let token = config.require_token()?.to_string();
-    let client = AppSignalClient::new(&token);
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
 
     let app = client.get_app(app_id).await?;
 
@@ -61,7 +61,7 @@ pub async fn find(name: &str, environment: Option<&str>, org: Option<&str>) -> R
     let config = Config::load()?;
     let token = config.require_token()?.to_string();
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token);
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
 
     let app = client.find_app(&org_slug, name, environment).await?;
 
@@ -80,7 +80,7 @@ pub async fn find(name: &str, environment: Option<&str>, org: Option<&str>) -> R
 pub async fn set_org(org_slug: &str) -> Result<()> {
     let mut config = Config::load()?;
     let token = config.require_token()?.to_string();
-    let client = AppSignalClient::new(&token);
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
 
     // Validate the org exists by listing apps
     let _apps = client.list_apps(org_slug).await?;
@@ -105,7 +105,7 @@ pub fn show_org() -> Result<()> {
 pub async fn orgs() -> Result<()> {
     let config = Config::load()?;
     let token = config.require_token()?.to_string();
-    let client = AppSignalClient::new(&token);
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
 
     let orgs = client.list_organizations().await?;
 

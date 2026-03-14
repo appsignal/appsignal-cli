@@ -329,15 +329,15 @@ pub fn filter_apps(
 }
 
 impl AppSignalClient {
-    pub fn new(token: &str) -> Self {
+    pub fn new(token: &str, endpoint: Option<&str>) -> Self {
         Self {
             http: Client::new(),
             token: token.to_string(),
-            endpoint: DEFAULT_GRAPHQL_ENDPOINT.to_string(),
+            endpoint: endpoint.unwrap_or(DEFAULT_GRAPHQL_ENDPOINT).to_string(),
         }
     }
 
-    /// Create a client pointing at a custom endpoint (for testing).
+    /// Create a client pointing at a custom endpoint.
     #[cfg(test)]
     pub fn with_endpoint(token: &str, endpoint: &str) -> Self {
         Self {
@@ -1172,7 +1172,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_app_id_with_explicit_id() {
         // No server needed -- should return immediately
-        let client = AppSignalClient::new("tok");
+        let client = AppSignalClient::new("tok", None);
         let id = client
             .resolve_app_id("org", Some("explicit-id"), None, None)
             .await
@@ -1182,7 +1182,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_app_id_prefers_app_id_over_name() {
-        let client = AppSignalClient::new("tok");
+        let client = AppSignalClient::new("tok", None);
         let id = client
             .resolve_app_id("org", Some("explicit-id"), Some("SomeName"), Some("prod"))
             .await
@@ -1192,7 +1192,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_app_id_neither_provided() {
-        let client = AppSignalClient::new("tok");
+        let client = AppSignalClient::new("tok", None);
         let err = client
             .resolve_app_id("org", None, None, None)
             .await

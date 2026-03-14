@@ -28,7 +28,8 @@ pub async fn login(token: Option<String>) -> Result<()> {
     print!("Validating token... ");
     io::stdout().flush()?;
 
-    let client = AppSignalClient::new(&token);
+    let config = Config::load()?;
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
     match client.validate_token().await {
         Ok(_) => {
             println!("OK");
@@ -39,7 +40,7 @@ pub async fn login(token: Option<String>) -> Result<()> {
         }
     }
 
-    let mut config = Config::load()?;
+    let mut config = config;
     config.token = Some(token);
     config.save()?;
 

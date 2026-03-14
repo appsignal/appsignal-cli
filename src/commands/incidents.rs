@@ -19,7 +19,7 @@ pub async fn list(
     let config = Config::load()?;
     let token = config.require_token()?.to_string();
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token);
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
@@ -69,7 +69,7 @@ pub async fn show(
     let config = Config::load()?;
     let token = config.require_token()?.to_string();
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token);
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)

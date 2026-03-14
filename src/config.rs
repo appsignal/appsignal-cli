@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub struct Config {
     pub token: Option<String>,
     pub org: Option<String>,
+    pub endpoint: Option<String>,
 }
 
 impl Config {
@@ -95,7 +96,7 @@ mod tests {
     fn test_require_token_with_token() {
         let config = Config {
             token: Some("abc123".to_string()),
-            org: None,
+            ..Config::default()
         };
         assert_eq!(config.require_token().unwrap(), "abc123");
     }
@@ -111,7 +112,7 @@ mod tests {
     fn test_require_token_with_empty_token() {
         let config = Config {
             token: Some("".to_string()),
-            org: None,
+            ..Config::default()
         };
         let err = config.require_token().unwrap_err();
         assert!(err.to_string().contains("Not authenticated"));
@@ -122,6 +123,7 @@ mod tests {
         let config = Config {
             token: Some("my-token".to_string()),
             org: Some("my-org".to_string()),
+            ..Config::default()
         };
         let serialized = toml::to_string_pretty(&config).unwrap();
         let deserialized: Config = toml::from_str(&serialized).unwrap();
@@ -152,6 +154,7 @@ mod tests {
         let config = Config {
             token: Some("test-token".to_string()),
             org: Some("test-org".to_string()),
+            ..Config::default()
         };
         config.save_to(&path).unwrap();
 
@@ -166,7 +169,7 @@ mod tests {
 
         let config = Config {
             token: Some("tok".to_string()),
-            org: None,
+            ..Config::default()
         };
         config.save_to(&path).unwrap();
         assert!(path.exists());
@@ -179,7 +182,7 @@ mod tests {
 
         let config = Config {
             token: Some("tok".to_string()),
-            org: None,
+            ..Config::default()
         };
         config.save_to(&path).unwrap();
         assert!(path.exists());
@@ -214,13 +217,14 @@ mod tests {
 
         let config1 = Config {
             token: Some("first".to_string()),
-            org: None,
+            ..Config::default()
         };
         config1.save_to(&path).unwrap();
 
         let config2 = Config {
             token: Some("second".to_string()),
             org: Some("new-org".to_string()),
+            ..Config::default()
         };
         config2.save_to(&path).unwrap();
 

@@ -37,8 +37,8 @@ mod tests {
     #[test]
     fn test_resolve_org_explicit_overrides_config() {
         let config = Config {
-            token: None,
             org: Some("config-org".to_string()),
+            ..Config::default()
         };
         let result = resolve_org(Some("explicit-org"), &config).unwrap();
         assert_eq!(result, "explicit-org");
@@ -47,8 +47,8 @@ mod tests {
     #[test]
     fn test_resolve_org_from_config() {
         let config = Config {
-            token: None,
             org: Some("config-org".to_string()),
+            ..Config::default()
         };
         let result = resolve_org(None, &config).unwrap();
         assert_eq!(result, "config-org");
@@ -57,8 +57,8 @@ mod tests {
     #[test]
     fn test_resolve_org_empty_config() {
         let config = Config {
-            token: None,
             org: Some("".to_string()),
+            ..Config::default()
         };
         let err = resolve_org(None, &config).unwrap_err();
         assert!(err.to_string().contains("No organization configured"));
