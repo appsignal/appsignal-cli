@@ -6,6 +6,7 @@ use std::path::PathBuf;
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     pub token: Option<String>,
+    pub org: Option<String>,
 }
 
 impl Config {

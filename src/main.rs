@@ -21,10 +21,15 @@ enum Commands {
         #[command(subcommand)]
         action: AuthAction,
     },
-    /// List and inspect your AppSignal applications
+    /// List, find, and inspect your AppSignal applications
     Apps {
         #[command(subcommand)]
         action: AppsAction,
+    },
+    /// List and inspect incidents
+    Incidents {
+        #[command(subcommand)]
+        action: IncidentsAction,
     },
 }
 
@@ -44,17 +49,88 @@ enum AuthAction {
 
 #[derive(Subcommand)]
 enum AppsAction {
-    /// List all applications in an organization
+    /// List all applications in an organization (also saves the org as default)
     List {
         /// Organization slug (from your AppSignal URL: appsignal.com/<org-slug>)
         #[arg(long)]
         org: String,
     },
-    /// Show details for a specific application
+    /// Show details for a specific application by ID
     Info {
         /// The application ID
         #[arg(long)]
         app_id: String,
+    },
+    /// Find an application by name and optional environment
+    Find {
+        /// Application name (case-insensitive)
+        #[arg(long)]
+        name: String,
+        /// Environment filter (e.g. "production", "staging") — case-insensitive
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+    },
+    /// Set the default organization slug
+    SetOrg {
+        /// Organization slug
+        #[arg(long)]
+        org: String,
+    },
+    /// Show the current default organization
+    ShowOrg,
+    /// List all organizations you have access to
+    Orgs,
+}
+
+#[derive(Subcommand)]
+enum IncidentsAction {
+    /// List incidents for an application
+    List {
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+        /// Maximum number of incidents to return
+        #[arg(long, default_value = "10")]
+        limit: Option<i64>,
+        /// Offset for pagination
+        #[arg(long)]
+        offset: Option<i64>,
+        /// Filter by state: OPEN, CLOSED, or WIP
+        #[arg(long)]
+        state: Option<String>,
+        /// Sort order: LAST (most recent activity) or ID (creation order)
+        #[arg(long)]
+        order: Option<String>,
+    },
+    /// Show details for a specific incident by number
+    Show {
+        /// Incident number
+        #[arg(long)]
+        number: i64,
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
     },
 }
 
@@ -71,6 +147,56 @@ async fn main() -> Result<()> {
         Commands::Apps { action } => match action {
             AppsAction::List { org } => commands::apps::list(&org).await?,
             AppsAction::Info { app_id } => commands::apps::info(&app_id).await?,
+            AppsAction::Find {
+                name,
+                environment,
+                org,
+            } => {
+                commands::apps::find(&name, environment.as_deref(), org.as_deref()).await?
+            }
+            AppsAction::SetOrg { org } => commands::apps::set_org(&org).await?,
+            AppsAction::ShowOrg => commands::apps::show_org()?,
+            AppsAction::Orgs => commands::apps::orgs().await?,
+        },
+        Commands::Incidents { action } => match action {
+            IncidentsAction::List {
+                app_id,
+                app,
+                environment,
+                org,
+                limit,
+                offset,
+                state,
+                order,
+            } => {
+                commands::incidents::list(
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                    limit,
+                    offset,
+                    state.as_deref(),
+                    order.as_deref(),
+                )
+                .await?
+            }
+            IncidentsAction::Show {
+                number,
+                app_id,
+                app,
+                environment,
+                org,
+            } => {
+                commands::incidents::show(
+                    number,
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                )
+                .await?
+            }
         },
     }
 
