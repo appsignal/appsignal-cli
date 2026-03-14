@@ -83,6 +83,24 @@ enum AppsAction {
     ShowOrg,
     /// List all organizations you have access to
     Orgs,
+    /// Show resources for an app (users, notifiers, namespaces, dashboards)
+    Resources {
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+        /// Comma-separated sections to include: users, notifiers, namespaces, dashboards (default: all)
+        #[arg(long)]
+        sections: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -224,9 +242,12 @@ enum IncidentsAction {
         /// New severity: UNTRIAGED, CRITICAL, HIGH, LOW, NONE, or INFORMATIONAL
         #[arg(long)]
         severity: Option<String>,
-        /// Comma-separated user IDs to assign (use `apps resources` to find IDs)
+        /// Comma-separated user names or IDs to add as assignees
         #[arg(long)]
         assign: Option<String>,
+        /// Comma-separated user names or IDs to remove from assignees
+        #[arg(long)]
+        unassign: Option<String>,
         /// New description
         #[arg(long)]
         description: Option<String>,
@@ -275,6 +296,22 @@ async fn main() -> Result<()> {
             AppsAction::SetOrg { org } => commands::apps::set_org(&org).await?,
             AppsAction::ShowOrg => commands::apps::show_org()?,
             AppsAction::Orgs => commands::apps::orgs().await?,
+            AppsAction::Resources {
+                app_id,
+                app,
+                environment,
+                org,
+                sections,
+            } => {
+                commands::apps::resources(
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                    sections.as_deref(),
+                )
+                .await?
+            }
         },
         Commands::Incidents { action } => match action {
             IncidentsAction::List {
@@ -378,10 +415,13 @@ async fn main() -> Result<()> {
                 state,
                 severity,
                 assign,
+                unassign,
                 description,
             } => {
-                let assignee_ids: Option<Vec<String>> =
-                    assign.map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+                let assign_list: Option<Vec<String>> =
+                    assign.map(|s| s.split(',').map(|x| x.trim().to_string()).collect());
+                let unassign_list: Option<Vec<String>> =
+                    unassign.map(|s| s.split(',').map(|x| x.trim().to_string()).collect());
                 commands::incidents::update(
                     number,
                     app_id.as_deref(),
@@ -390,7 +430,8 @@ async fn main() -> Result<()> {
                     org.as_deref(),
                     state.as_deref(),
                     severity.as_deref(),
-                    assignee_ids.as_deref(),
+                    assign_list.as_deref(),
+                    unassign_list.as_deref(),
                     description.as_deref(),
                 )
                 .await?

@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use super::resolve_org;
-use crate::api::{AppSignalClient, Incident};
+use crate::api::{resolve_user_ids, AppSignalClient, Incident};
 use crate::config::Config;
 
 /// List incidents for an application (all types).
@@ -179,6 +179,7 @@ pub async fn show(
 }
 
 /// Update an incident (state, severity, assignees, description).
+/// Assign/unassign accept user names (resolved case-insensitively) or raw IDs.
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
     incident_number: i64,
@@ -188,7 +189,8 @@ pub async fn update(
     org: Option<&str>,
     state: Option<&str>,
     severity: Option<&str>,
-    assignee_ids: Option<&[String]>,
+    assign: Option<&[String]>,
+    unassign: Option<&[String]>,
     description: Option<&str>,
 ) -> Result<()> {
     let config = Config::load()?;
@@ -200,13 +202,45 @@ pub async fn update(
         .resolve_app_id(&org_slug, app_id, app_name, environment)
         .await?;
 
+    // If we need to assign/unassign, resolve names to IDs and merge with current assignees
+    let final_assignee_ids = if assign.is_some() || unassign.is_some() {
+        // Fetch app users for name resolution
+        let users = client.list_app_users(&resolved_app_id).await?;
+
+        // Fetch current incident to get existing assignees
+        let current = client
+            .get_incident(&resolved_app_id, incident_number)
+            .await?;
+        let mut current_ids: Vec<String> = current.assignee_ids();
+
+        // Add new assignees
+        if let Some(to_add) = assign {
+            let add_ids = resolve_user_ids(to_add, &users)?;
+            for id in add_ids {
+                if !current_ids.contains(&id) {
+                    current_ids.push(id);
+                }
+            }
+        }
+
+        // Remove unassigned
+        if let Some(to_remove) = unassign {
+            let remove_ids = resolve_user_ids(to_remove, &users)?;
+            current_ids.retain(|id| !remove_ids.contains(id));
+        }
+
+        Some(current_ids)
+    } else {
+        None
+    };
+
     let incident = client
         .update_incident(
             &resolved_app_id,
             incident_number,
             state,
             severity,
-            assignee_ids,
+            final_assignee_ids.as_deref(),
             description,
         )
         .await?;
@@ -312,6 +346,15 @@ fn print_incident_detail(incident: &Incident) {
     println!("  Description:    {}", incident.description());
     println!("  Created at:     {}", incident.created_at());
     println!("  Last occurred:  {}", incident.last_occurred_at());
+
+    let assignees = incident.assignees();
+    if !assignees.is_empty() {
+        let names: Vec<&str> = assignees
+            .iter()
+            .map(|u| u.name.as_deref().unwrap_or(&u.id))
+            .collect();
+        println!("  Assignees:      {}", names.join(", "));
+    }
 
     match incident {
         Incident::ExceptionIncident {

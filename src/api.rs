@@ -93,6 +93,36 @@ pub struct TriggerSummary {
     pub kind: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct User {
+    pub id: String,
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Notifier {
+    pub id: String,
+    pub name: Option<String>,
+    pub icon: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Dashboard {
+    pub id: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Resources available for an application.
+#[derive(Debug, Default, Serialize)]
+pub struct AppResources {
+    pub users: Option<Vec<User>>,
+    pub notifiers: Option<Vec<Notifier>>,
+    pub namespaces: Option<Vec<String>>,
+    pub dashboards: Option<Vec<Dashboard>>,
+}
+
 // -- Incident types --
 
 /// Incident types returned by the AppSignal GraphQL API.
@@ -123,6 +153,7 @@ pub enum Incident {
         namespace: Option<String>,
         #[serde(rename = "firstBacktraceLine")]
         first_backtrace_line: Option<String>,
+        assignees: Option<Vec<User>>,
     },
     PerformanceIncident {
         id: String,
@@ -143,6 +174,7 @@ pub enum Incident {
         mean: Option<f64>,
         #[serde(rename = "totalDuration")]
         total_duration: Option<f64>,
+        assignees: Option<Vec<User>>,
     },
     AnomalyIncident {
         id: String,
@@ -161,6 +193,7 @@ pub enum Incident {
         alert_state: Option<String>,
         trigger: Option<TriggerSummary>,
         tags: Option<Vec<KeyStringValue>>,
+        assignees: Option<Vec<User>>,
     },
     LogIncident {
         id: String,
@@ -175,6 +208,7 @@ pub enum Incident {
         last_occurred_at: Option<String>,
         #[serde(rename = "updatedAt")]
         updated_at: Option<String>,
+        assignees: Option<Vec<User>>,
     },
 }
 
@@ -258,6 +292,19 @@ impl Incident {
             Incident::LogIncident { .. } => "log",
         }
     }
+
+    pub fn assignees(&self) -> &[User] {
+        match self {
+            Incident::ExceptionIncident { assignees, .. }
+            | Incident::PerformanceIncident { assignees, .. }
+            | Incident::AnomalyIncident { assignees, .. }
+            | Incident::LogIncident { assignees, .. } => assignees.as_deref().unwrap_or(&[]),
+        }
+    }
+
+    pub fn assignee_ids(&self) -> Vec<String> {
+        self.assignees().iter().map(|u| u.id.clone()).collect()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -302,6 +349,31 @@ struct AppAnomalyIncidents {
     anomaly_incidents: Option<Vec<Incident>>,
 }
 
+// -- App resource response types --
+
+#[derive(Debug, Deserialize)]
+struct AppUsersData {
+    app: Option<AppUsers>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppUsers {
+    users: Option<Vec<User>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppResourcesData {
+    app: Option<AppResourcesInner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppResourcesInner {
+    users: Option<Vec<User>>,
+    notifiers: Option<Vec<Notifier>>,
+    namespaces: Option<Vec<String>>,
+    dashboards: Option<Vec<Dashboard>>,
+}
+
 // -- Mutation response types --
 
 #[derive(Debug, Deserialize)]
@@ -314,6 +386,52 @@ struct UpdateIncidentData {
 struct CreateIncidentNoteData {
     #[serde(rename = "createIncidentNote")]
     create_incident_note: Option<Incident>,
+}
+
+/// Resolve user identifiers (names or IDs) to user IDs.
+/// Each identifier is matched case-insensitively against user names.
+/// If no name matches, the identifier is assumed to be a raw user ID.
+pub fn resolve_user_ids(identifiers: &[String], users: &[User]) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    for ident in identifiers {
+        let ident_lower = ident.to_lowercase();
+        let matches: Vec<&User> = users
+            .iter()
+            .filter(|u| {
+                u.name
+                    .as_deref()
+                    .map(|n| n.to_lowercase() == ident_lower)
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        match matches.len() {
+            0 => {
+                // No name match — assume it's a raw ID
+                ids.push(ident.clone());
+            }
+            1 => ids.push(matches[0].id.clone()),
+            _ => {
+                let descriptions: Vec<String> = matches
+                    .iter()
+                    .map(|u| {
+                        format!(
+                            "  {} ({}, {})",
+                            u.id,
+                            u.name.as_deref().unwrap_or("-"),
+                            u.email.as_deref().unwrap_or("-"),
+                        )
+                    })
+                    .collect();
+                anyhow::bail!(
+                    "Multiple users match '{}'. Use an email or ID to disambiguate:\n{}",
+                    ident,
+                    descriptions.join("\n")
+                )
+            }
+        }
+    }
+    Ok(ids)
 }
 
 /// Filter a list of apps by name and optional environment (case-insensitive).
@@ -535,6 +653,60 @@ impl AppSignalClient {
         anyhow::bail!("Provide either --app-id or --app (with optional --environment)")
     }
 
+    /// List users for an application.
+    pub async fn list_app_users(&self, app_id: &str) -> Result<Vec<User>> {
+        let query = r#"
+            query AppUsers($appId: String!) {
+                app(id: $appId) {
+                    users { id name email }
+                }
+            }
+        "#;
+        let data: AppUsersData = self.graphql(query, json!({ "appId": app_id })).await?;
+        let app = data.app.context("Application not found")?;
+        Ok(app.users.unwrap_or_default())
+    }
+
+    /// Get resources for an application (users, notifiers, namespaces, dashboards).
+    pub async fn get_app_resources(
+        &self,
+        app_id: &str,
+        sections: &[String],
+    ) -> Result<AppResources> {
+        // Build a dynamic query based on requested sections
+        let include_all = sections.is_empty();
+        let want = |s: &str| include_all || sections.iter().any(|x| x == s);
+
+        let mut fields = String::new();
+        if want("users") {
+            fields.push_str("users { id name email } ");
+        }
+        if want("notifiers") {
+            fields.push_str("notifiers { id name icon } ");
+        }
+        if want("namespaces") {
+            fields.push_str("namespaces ");
+        }
+        if want("dashboards") {
+            fields.push_str("dashboards { id title description } ");
+        }
+
+        let query = format!(
+            "query AppResources($appId: String!) {{ app(id: $appId) {{ {} }} }}",
+            fields
+        );
+
+        let data: AppResourcesData = self.graphql(&query, json!({ "appId": app_id })).await?;
+        let app = data.app.context("Application not found")?;
+
+        Ok(AppResources {
+            users: app.users,
+            notifiers: app.notifiers,
+            namespaces: app.namespaces,
+            dashboards: app.dashboards,
+        })
+    }
+
     /// List incidents for an app (all types).
     #[allow(clippy::too_many_arguments)]
     pub async fn list_incidents(
@@ -556,11 +728,13 @@ impl AppSignalClient {
                             id number state severity description count
                             createdAt lastOccurredAt updatedAt
                             exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                            assignees { id name }
                         }
                         ... on PerformanceIncident {
                             id number state severity description count
                             createdAt lastOccurredAt updatedAt
                             actionNames namespace mean totalDuration
+                            assignees { id name }
                         }
                         ... on AnomalyIncident {
                             id number state severity description count
@@ -568,10 +742,12 @@ impl AppSignalClient {
                             alertState
                             trigger { id name metricName kind }
                             tags { key value }
+                            assignees { id name }
                         }
                         ... on LogIncident {
                             id number state severity description count
                             createdAt lastOccurredAt updatedAt
+                            assignees { id name }
                         }
                     }
                 }
@@ -624,6 +800,7 @@ impl AppSignalClient {
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
                         exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                            assignees { id name }
                     }
                 }
             }
@@ -711,11 +888,13 @@ impl AppSignalClient {
                             id number state severity description count
                             createdAt lastOccurredAt updatedAt
                             exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                            assignees { id name }
                         }
                         ... on PerformanceIncident {
                             id number state severity description count
                             createdAt lastOccurredAt updatedAt
                             actionNames namespace mean totalDuration
+                            assignees { id name }
                         }
                         ... on AnomalyIncident {
                             id number state severity description count
@@ -723,10 +902,12 @@ impl AppSignalClient {
                             alertState
                             trigger { id name metricName kind }
                             tags { key value }
+                            assignees { id name }
                         }
                         ... on LogIncident {
                             id number state severity description count
                             createdAt lastOccurredAt updatedAt
+                            assignees { id name }
                         }
                     }
                 }
@@ -763,11 +944,13 @@ impl AppSignalClient {
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
                         exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                            assignees { id name }
                     }
                     ... on PerformanceIncident {
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
                         actionNames namespace mean totalDuration
+                            assignees { id name }
                     }
                     ... on AnomalyIncident {
                         id number state severity description count
@@ -779,6 +962,7 @@ impl AppSignalClient {
                     ... on LogIncident {
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
+                        assignees { id name }
                     }
                 }
             }
@@ -818,11 +1002,13 @@ impl AppSignalClient {
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
                         exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                            assignees { id name }
                     }
                     ... on PerformanceIncident {
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
                         actionNames namespace mean totalDuration
+                            assignees { id name }
                     }
                     ... on AnomalyIncident {
                         id number state severity description count
@@ -834,6 +1020,7 @@ impl AppSignalClient {
                     ... on LogIncident {
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
+                        assignees { id name }
                     }
                 }
             }
@@ -961,6 +1148,11 @@ mod tests {
             action_names: Some(vec!["UsersController#show".to_string()]),
             namespace: Some("web".to_string()),
             first_backtrace_line: Some("app/models/user.rb:42".to_string()),
+            assignees: Some(vec![User {
+                id: "u1".to_string(),
+                name: Some("Alice".to_string()),
+                email: Some("alice@example.com".to_string()),
+            }]),
         }
     }
 
@@ -979,6 +1171,7 @@ mod tests {
             namespace: Some("web".to_string()),
             mean: Some(32.5),
             total_duration: Some(16250.0),
+            assignees: None,
         }
     }
 
@@ -1004,6 +1197,7 @@ mod tests {
                 key: "hostname".to_string(),
                 value: Some("web-1".to_string()),
             }]),
+            assignees: None,
         }
     }
 
@@ -1018,6 +1212,7 @@ mod tests {
             created_at: None,
             last_occurred_at: Some("2025-12-25T00:00:00Z".to_string()),
             updated_at: None,
+            assignees: None,
         }
     }
 
@@ -1097,12 +1292,15 @@ mod tests {
             "exceptionMessage": "bad",
             "actionNames": ["FooController#bar"],
             "namespace": "web",
-            "firstBacktraceLine": "app.rb:1"
+            "firstBacktraceLine": "app.rb:1",
+            "assignees": [{ "id": "u1", "name": "Alice", "email": "alice@example.com" }]
         }"#;
         let incident: Incident = serde_json::from_str(json).unwrap();
         assert_eq!(incident.kind(), "exception");
         assert_eq!(incident.number(), 5);
         assert_eq!(incident.state(), "OPEN");
+        assert_eq!(incident.assignees().len(), 1);
+        assert_eq!(incident.assignees()[0].name.as_deref(), Some("Alice"));
         if let Incident::ExceptionIncident {
             exception_name,
             exception_message,
@@ -1124,7 +1322,8 @@ mod tests {
             "description": null, "count": 200,
             "createdAt": null, "lastOccurredAt": null, "updatedAt": null,
             "actionNames": [], "namespace": "web",
-            "mean": 45.5, "totalDuration": 9100.0
+            "mean": 45.5, "totalDuration": 9100.0,
+            "assignees": []
         }"#;
         let incident: Incident = serde_json::from_str(json).unwrap();
         assert_eq!(incident.kind(), "performance");
@@ -1153,7 +1352,8 @@ mod tests {
             "updatedAt": null,
             "alertState": "WARMUP",
             "trigger": { "id": "t1", "name": "High CPU", "metricName": "cpu_usage", "kind": "Advanced" },
-            "tags": [{ "key": "hostname", "value": "web-1" }]
+            "tags": [{ "key": "hostname", "value": "web-1" }],
+            "assignees": []
         }"#;
         let incident: Incident = serde_json::from_str(json).unwrap();
         assert_eq!(incident.kind(), "anomaly");
@@ -1181,7 +1381,8 @@ mod tests {
             "id": "a2", "number": 2, "state": "CLOSED", "severity": null,
             "description": null, "count": 5,
             "createdAt": null, "lastOccurredAt": null, "updatedAt": null,
-            "alertState": null, "trigger": null, "tags": null
+            "alertState": null, "trigger": null, "tags": null,
+            "assignees": null
         }"#;
         let incident: Incident = serde_json::from_str(json).unwrap();
         assert_eq!(incident.kind(), "anomaly");
@@ -1194,12 +1395,103 @@ mod tests {
             "__typename": "LogIncident",
             "id": "l1", "number": 10, "state": "WIP", "severity": "WARNING",
             "description": "Log flood", "count": 9999,
-            "createdAt": null, "lastOccurredAt": null, "updatedAt": null
+            "createdAt": null, "lastOccurredAt": null, "updatedAt": null,
+            "assignees": null
         }"#;
         let incident: Incident = serde_json::from_str(json).unwrap();
         assert_eq!(incident.kind(), "log");
         assert_eq!(incident.state(), "WIP");
         assert_eq!(incident.count(), 9999);
+    }
+
+    // -- Assignee tests --
+
+    #[test]
+    fn test_incident_assignees() {
+        let incident = exception_incident();
+        assert_eq!(incident.assignees().len(), 1);
+        assert_eq!(incident.assignees()[0].id, "u1");
+        assert_eq!(incident.assignee_ids(), vec!["u1".to_string()]);
+    }
+
+    #[test]
+    fn test_incident_assignees_empty() {
+        let incident = performance_incident();
+        assert!(incident.assignees().is_empty());
+        assert!(incident.assignee_ids().is_empty());
+    }
+
+    // -- resolve_user_ids tests --
+
+    fn sample_users() -> Vec<User> {
+        vec![
+            User {
+                id: "u1".to_string(),
+                name: Some("Alice Smith".to_string()),
+                email: Some("alice@example.com".to_string()),
+            },
+            User {
+                id: "u2".to_string(),
+                name: Some("Bob Jones".to_string()),
+                email: Some("bob@example.com".to_string()),
+            },
+        ]
+    }
+
+    #[test]
+    fn test_resolve_user_ids_by_name() {
+        let ids = resolve_user_ids(&["Alice Smith".to_string()], &sample_users()).unwrap();
+        assert_eq!(ids, vec!["u1"]);
+    }
+
+    #[test]
+    fn test_resolve_user_ids_case_insensitive() {
+        let ids = resolve_user_ids(&["alice smith".to_string()], &sample_users()).unwrap();
+        assert_eq!(ids, vec!["u1"]);
+    }
+
+    #[test]
+    fn test_resolve_user_ids_falls_back_to_raw_id() {
+        let ids = resolve_user_ids(&["some-raw-id-123".to_string()], &sample_users()).unwrap();
+        assert_eq!(ids, vec!["some-raw-id-123"]);
+    }
+
+    #[test]
+    fn test_resolve_user_ids_multiple() {
+        let ids = resolve_user_ids(
+            &["Alice Smith".to_string(), "Bob Jones".to_string()],
+            &sample_users(),
+        )
+        .unwrap();
+        assert_eq!(ids, vec!["u1", "u2"]);
+    }
+
+    #[test]
+    fn test_resolve_user_ids_mixed_names_and_ids() {
+        let ids = resolve_user_ids(
+            &["Alice Smith".to_string(), "raw-id".to_string()],
+            &sample_users(),
+        )
+        .unwrap();
+        assert_eq!(ids, vec!["u1", "raw-id"]);
+    }
+
+    #[test]
+    fn test_resolve_user_ids_duplicate_name_errors() {
+        let users = vec![
+            User {
+                id: "u1".to_string(),
+                name: Some("Alice".to_string()),
+                email: Some("alice1@example.com".to_string()),
+            },
+            User {
+                id: "u2".to_string(),
+                name: Some("Alice".to_string()),
+                email: Some("alice2@example.com".to_string()),
+            },
+        ];
+        let err = resolve_user_ids(&["Alice".to_string()], &users).unwrap_err();
+        assert!(err.to_string().contains("Multiple users match"));
     }
 
     // -- Wiremock integration tests for API client --

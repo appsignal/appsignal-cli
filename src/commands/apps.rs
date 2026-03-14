@@ -124,3 +124,82 @@ pub async fn orgs() -> Result<()> {
     println!("\n{} organization(s) found.", orgs.len());
     Ok(())
 }
+
+/// Show resources for an application (users, notifiers, namespaces, dashboards).
+pub async fn resources(
+    app_id: Option<&str>,
+    app_name: Option<&str>,
+    environment: Option<&str>,
+    org: Option<&str>,
+    sections: Option<&str>,
+) -> Result<()> {
+    let config = Config::load()?;
+    let token = config.require_token()?.to_string();
+    let org_slug = resolve_org(org, &config)?;
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+
+    let resolved_app_id = client
+        .resolve_app_id(&org_slug, app_id, app_name, environment)
+        .await?;
+
+    let section_list: Vec<String> = sections
+        .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
+        .unwrap_or_default();
+
+    let resources = client
+        .get_app_resources(&resolved_app_id, &section_list)
+        .await?;
+
+    if let Some(users) = &resources.users {
+        println!("Users:");
+        println!("  {:<28} {:<25} EMAIL", "ID", "NAME");
+        println!("  {}", "-".repeat(80));
+        for user in users {
+            println!(
+                "  {:<28} {:<25} {}",
+                user.id,
+                user.name.as_deref().unwrap_or("-"),
+                user.email.as_deref().unwrap_or("-"),
+            );
+        }
+        println!();
+    }
+
+    if let Some(notifiers) = &resources.notifiers {
+        println!("Notifiers:");
+        println!("  {:<28} NAME", "ID");
+        println!("  {}", "-".repeat(60));
+        for notifier in notifiers {
+            println!(
+                "  {:<28} {}",
+                notifier.id,
+                notifier.name.as_deref().unwrap_or("-"),
+            );
+        }
+        println!();
+    }
+
+    if let Some(namespaces) = &resources.namespaces {
+        println!("Namespaces:");
+        for ns in namespaces {
+            println!("  {}", ns);
+        }
+        println!();
+    }
+
+    if let Some(dashboards) = &resources.dashboards {
+        println!("Dashboards:");
+        println!("  {:<28} TITLE", "ID");
+        println!("  {}", "-".repeat(60));
+        for dashboard in dashboards {
+            println!(
+                "  {:<28} {}",
+                dashboard.id,
+                dashboard.title.as_deref().unwrap_or("-"),
+            );
+        }
+        println!();
+    }
+
+    Ok(())
+}
