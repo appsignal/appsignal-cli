@@ -1,27 +1,11 @@
 use anyhow::Result;
 
+use super::resolve_org;
 use crate::api::{AppSignalClient, Incident};
 use crate::config::Config;
 
-/// Resolve the organization slug: use explicit --org if given, fall back to config.
-fn resolve_org(explicit: Option<&str>, config: &Config) -> Result<String> {
-    if let Some(org) = explicit {
-        return Ok(org.to_string());
-    }
-    config
-        .org
-        .as_deref()
-        .filter(|o| !o.is_empty())
-        .map(|o| o.to_string())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "No organization configured. Run `appsignal-cli apps list --org <slug>` first, \
-                 or set it with `appsignal-cli apps set-org --org <slug>`."
-            )
-        })
-}
-
 /// List incidents for an application.
+#[allow(clippy::too_many_arguments)]
 pub async fn list(
     app_id: Option<&str>,
     app_name: Option<&str>,
@@ -51,8 +35,8 @@ pub async fn list(
     }
 
     println!(
-        "{:<8} {:<12} {:<10} {:<10} {:<8} {:<22} {}",
-        "#", "TYPE", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED", "DESCRIPTION"
+        "{:<8} {:<12} {:<10} {:<10} {:<8} {:<22} DESCRIPTION",
+        "#", "TYPE", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
     );
     println!("{}", "-".repeat(100));
 
@@ -126,10 +110,7 @@ fn print_incident_detail(incident: &Incident) {
                 "  Message:        {}",
                 exception_message.as_deref().unwrap_or("-")
             );
-            println!(
-                "  Namespace:      {}",
-                namespace.as_deref().unwrap_or("-")
-            );
+            println!("  Namespace:      {}", namespace.as_deref().unwrap_or("-"));
             if let Some(actions) = action_names {
                 if !actions.is_empty() {
                     println!("  Actions:        {}", actions.join(", "));
@@ -147,10 +128,7 @@ fn print_incident_detail(incident: &Incident) {
             total_duration,
             ..
         } => {
-            println!(
-                "  Namespace:      {}",
-                namespace.as_deref().unwrap_or("-")
-            );
+            println!("  Namespace:      {}", namespace.as_deref().unwrap_or("-"));
             if let Some(m) = mean {
                 println!("  Mean duration:  {:.2} ms", m);
             }
@@ -173,5 +151,41 @@ fn truncate(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         format!("{}...", &s[..max.saturating_sub(3)])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_short_string() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_exact_length() {
+        assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_long_string() {
+        assert_eq!(truncate("hello world", 8), "hello...");
+    }
+
+    #[test]
+    fn test_truncate_empty_string() {
+        assert_eq!(truncate("", 10), "");
+    }
+
+    #[test]
+    fn test_truncate_with_small_max() {
+        // max=3 means 0 chars + "..." = "..."
+        assert_eq!(truncate("hello", 3), "...");
+    }
+
+    #[test]
+    fn test_truncate_one_over() {
+        assert_eq!(truncate("abcdef", 5), "ab...");
     }
 }

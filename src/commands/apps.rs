@@ -1,25 +1,8 @@
 use anyhow::Result;
 
+use super::resolve_org;
 use crate::api::AppSignalClient;
 use crate::config::Config;
-
-/// Resolve the organization slug: use explicit --org if given, fall back to config.
-fn resolve_org(explicit: Option<&str>, config: &Config) -> Result<String> {
-    if let Some(org) = explicit {
-        return Ok(org.to_string());
-    }
-    config
-        .org
-        .as_deref()
-        .filter(|o| !o.is_empty())
-        .map(|o| o.to_string())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "No organization configured. Run `appsignal-cli apps list --org <slug>` first, \
-                 or set it with `appsignal-cli apps set-org --org <slug>`."
-            )
-        })
-}
 
 /// List all applications in an organization (and save the org slug to config).
 pub async fn list(org_slug: &str) -> Result<()> {
@@ -38,10 +21,7 @@ pub async fn list(org_slug: &str) -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "{:<28} {:<30} {}",
-        "ID", "NAME", "ENVIRONMENT"
-    );
+    println!("{:<28} {:<30} ENVIRONMENT", "ID", "NAME");
     println!("{}", "-".repeat(73));
 
     for app in &apps {
@@ -67,10 +47,7 @@ pub async fn info(app_id: &str) -> Result<()> {
 
     println!("Application details:");
     println!("  ID:          {}", app.id);
-    println!(
-        "  Name:        {}",
-        app.name.as_deref().unwrap_or("-")
-    );
+    println!("  Name:        {}", app.name.as_deref().unwrap_or("-"));
     println!(
         "  Environment: {}",
         app.environment.as_deref().unwrap_or("-")
@@ -90,10 +67,7 @@ pub async fn find(name: &str, environment: Option<&str>, org: Option<&str>) -> R
 
     println!("Application details:");
     println!("  ID:          {}", app.id);
-    println!(
-        "  Name:        {}",
-        app.name.as_deref().unwrap_or("-")
-    );
+    println!("  Name:        {}", app.name.as_deref().unwrap_or("-"));
     println!(
         "  Environment: {}",
         app.environment.as_deref().unwrap_or("-")
@@ -140,7 +114,7 @@ pub async fn orgs() -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<40} {}", "SLUG", "NAME");
+    println!("{:<40} NAME", "SLUG");
     println!("{}", "-".repeat(60));
 
     for org in &orgs {

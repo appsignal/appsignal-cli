@@ -151,9 +151,7 @@ async fn main() -> Result<()> {
                 name,
                 environment,
                 org,
-            } => {
-                commands::apps::find(&name, environment.as_deref(), org.as_deref()).await?
-            }
+            } => commands::apps::find(&name, environment.as_deref(), org.as_deref()).await?,
             AppsAction::SetOrg { org } => commands::apps::set_org(&org).await?,
             AppsAction::ShowOrg => commands::apps::show_org()?,
             AppsAction::Orgs => commands::apps::orgs().await?,

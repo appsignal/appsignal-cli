@@ -3,12 +3,13 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-const GRAPHQL_ENDPOINT: &str = "https://appsignal.com/graphql";
+const DEFAULT_GRAPHQL_ENDPOINT: &str = "https://appsignal.com/graphql";
 
 /// Client for the AppSignal API.
 pub struct AppSignalClient {
     http: Client,
     token: String,
+    endpoint: String,
 }
 
 // -- GraphQL response types --
@@ -77,9 +78,11 @@ struct ViewerData {
 
 // -- Incident types --
 
-/// Common fields shared across all incident types.
+/// Incident types returned by the AppSignal GraphQL API.
+/// Variant names must match the GraphQL `__typename` values exactly.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "__typename")]
+#[allow(clippy::enum_variant_names)]
 pub enum Incident {
     ExceptionIncident {
         id: String,
@@ -202,12 +205,18 @@ impl Incident {
 
     pub fn last_occurred_at(&self) -> &str {
         match self {
-            Incident::ExceptionIncident { last_occurred_at, .. }
-            | Incident::PerformanceIncident { last_occurred_at, .. }
-            | Incident::AnomalyIncident { last_occurred_at, .. }
-            | Incident::LogIncident { last_occurred_at, .. } => {
-                last_occurred_at.as_deref().unwrap_or("-")
+            Incident::ExceptionIncident {
+                last_occurred_at, ..
             }
+            | Incident::PerformanceIncident {
+                last_occurred_at, ..
+            }
+            | Incident::AnomalyIncident {
+                last_occurred_at, ..
+            }
+            | Incident::LogIncident {
+                last_occurred_at, ..
+            } => last_occurred_at.as_deref().unwrap_or("-"),
         }
     }
 
@@ -250,11 +259,91 @@ struct AppSingleIncident {
     incident: Option<Incident>,
 }
 
+/// Filter a list of apps by name and optional environment (case-insensitive).
+/// Returns exactly one match or an error explaining what went wrong.
+pub fn filter_apps(
+    apps: Vec<App>,
+    name: &str,
+    environment: Option<&str>,
+    org_slug: &str,
+) -> Result<App> {
+    let name_lower = name.to_lowercase();
+    let matching: Vec<App> = apps
+        .into_iter()
+        .filter(|app| {
+            let name_match = app
+                .name
+                .as_deref()
+                .map(|n| n.to_lowercase() == name_lower)
+                .unwrap_or(false);
+            if !name_match {
+                return false;
+            }
+            if let Some(env) = environment {
+                let env_lower = env.to_lowercase();
+                app.environment
+                    .as_deref()
+                    .map(|e| e.to_lowercase() == env_lower)
+                    .unwrap_or(false)
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    match matching.len() {
+        0 => {
+            let msg = if let Some(env) = environment {
+                format!(
+                    "No app found with name '{}' and environment '{}' in organization '{}'",
+                    name, env, org_slug
+                )
+            } else {
+                format!(
+                    "No app found with name '{}' in organization '{}'",
+                    name, org_slug
+                )
+            };
+            anyhow::bail!(msg)
+        }
+        1 => Ok(matching.into_iter().next().unwrap()),
+        _ => {
+            let descriptions: Vec<String> = matching
+                .iter()
+                .map(|a| {
+                    format!(
+                        "  {} ({}, {})",
+                        a.id,
+                        a.name.as_deref().unwrap_or("-"),
+                        a.environment.as_deref().unwrap_or("-"),
+                    )
+                })
+                .collect();
+            anyhow::bail!(
+                "Multiple apps match name '{}'. Use --environment to disambiguate:\n{}",
+                name,
+                descriptions.join("\n")
+            )
+        }
+    }
+}
+
 impl AppSignalClient {
     pub fn new(token: &str) -> Self {
         Self {
             http: Client::new(),
             token: token.to_string(),
+            endpoint: DEFAULT_GRAPHQL_ENDPOINT.to_string(),
+        }
+    }
+
+    /// Create a client pointing at a custom endpoint (for testing).
+    #[cfg(test)]
+    pub fn with_endpoint(token: &str, endpoint: &str) -> Self {
+        Self {
+            http: Client::new(),
+            token: token.to_string(),
+            endpoint: endpoint.to_string(),
         }
     }
 
@@ -264,7 +353,7 @@ impl AppSignalClient {
         query: &str,
         variables: serde_json::Value,
     ) -> Result<T> {
-        let url = format!("{}?token={}", GRAPHQL_ENDPOINT, self.token);
+        let url = format!("{}?token={}", self.endpoint, self.token);
         let body = json!({
             "query": query,
             "variables": variables,
@@ -336,9 +425,7 @@ impl AppSignalClient {
                 }
             }
         "#;
-        let data: OrganizationData = self
-            .graphql(query, json!({ "slug": org_slug }))
-            .await?;
+        let data: OrganizationData = self.graphql(query, json!({ "slug": org_slug })).await?;
         let org = data
             .organization
             .with_context(|| format!("Organization '{}' not found", org_slug))?;
@@ -356,9 +443,7 @@ impl AppSignalClient {
                 }
             }
         "#;
-        let data: AppData = self
-            .graphql(query, json!({ "appId": app_id }))
-            .await?;
+        let data: AppData = self.graphql(query, json!({ "appId": app_id })).await?;
         data.app
             .with_context(|| format!("Application '{}' not found", app_id))
     }
@@ -371,65 +456,7 @@ impl AppSignalClient {
         environment: Option<&str>,
     ) -> Result<App> {
         let apps = self.list_apps(org_slug).await?;
-        let name_lower = name.to_lowercase();
-        let matching: Vec<App> = apps
-            .into_iter()
-            .filter(|app| {
-                let name_match = app
-                    .name
-                    .as_deref()
-                    .map(|n| n.to_lowercase() == name_lower)
-                    .unwrap_or(false);
-                if !name_match {
-                    return false;
-                }
-                if let Some(env) = environment {
-                    let env_lower = env.to_lowercase();
-                    app.environment
-                        .as_deref()
-                        .map(|e| e.to_lowercase() == env_lower)
-                        .unwrap_or(false)
-                } else {
-                    true
-                }
-            })
-            .collect();
-
-        match matching.len() {
-            0 => {
-                let msg = if let Some(env) = environment {
-                    format!(
-                        "No app found with name '{}' and environment '{}' in organization '{}'",
-                        name, env, org_slug
-                    )
-                } else {
-                    format!(
-                        "No app found with name '{}' in organization '{}'",
-                        name, org_slug
-                    )
-                };
-                anyhow::bail!(msg)
-            }
-            1 => Ok(matching.into_iter().next().unwrap()),
-            _ => {
-                let descriptions: Vec<String> = matching
-                    .iter()
-                    .map(|a| {
-                        format!(
-                            "  {} ({}, {})",
-                            a.id,
-                            a.name.as_deref().unwrap_or("-"),
-                            a.environment.as_deref().unwrap_or("-"),
-                        )
-                    })
-                    .collect();
-                anyhow::bail!(
-                    "Multiple apps match name '{}'. Use --environment to disambiguate:\n{}",
-                    name,
-                    descriptions.join("\n")
-                )
-            }
-        }
+        filter_apps(apps, name, environment, org_slug)
     }
 
     /// Resolve an app ID from the flexible --app/--environment/--app-id options.
@@ -546,5 +573,631 @@ impl AppSignalClient {
         let app = data.app.context("Application not found")?;
         app.incident
             .with_context(|| format!("Incident #{} not found", incident_number))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // -- Helper to build test apps --
+
+    fn app(id: &str, name: &str, env: &str) -> App {
+        App {
+            id: id.to_string(),
+            name: Some(name.to_string()),
+            environment: Some(env.to_string()),
+        }
+    }
+
+    fn sample_apps() -> Vec<App> {
+        vec![
+            app("id1", "Weekmenu", "development"),
+            app("id2", "Weekmenu", "production"),
+            app("id3", "SalonPelikaan", "production"),
+        ]
+    }
+
+    // -- filter_apps tests --
+
+    #[test]
+    fn test_filter_apps_exact_match() {
+        let result = filter_apps(sample_apps(), "SalonPelikaan", None, "org").unwrap();
+        assert_eq!(result.id, "id3");
+    }
+
+    #[test]
+    fn test_filter_apps_case_insensitive_name() {
+        let result = filter_apps(sample_apps(), "salonpelikaan", None, "org").unwrap();
+        assert_eq!(result.id, "id3");
+    }
+
+    #[test]
+    fn test_filter_apps_case_insensitive_environment() {
+        let result = filter_apps(sample_apps(), "Weekmenu", Some("PRODUCTION"), "org").unwrap();
+        assert_eq!(result.id, "id2");
+    }
+
+    #[test]
+    fn test_filter_apps_with_environment_disambiguates() {
+        let result = filter_apps(sample_apps(), "Weekmenu", Some("development"), "org").unwrap();
+        assert_eq!(result.id, "id1");
+    }
+
+    #[test]
+    fn test_filter_apps_no_match() {
+        let err = filter_apps(sample_apps(), "NonExistent", None, "myorg").unwrap_err();
+        assert!(err.to_string().contains("No app found"));
+        assert!(err.to_string().contains("NonExistent"));
+        assert!(err.to_string().contains("myorg"));
+    }
+
+    #[test]
+    fn test_filter_apps_no_match_with_env() {
+        let err = filter_apps(sample_apps(), "Weekmenu", Some("staging"), "myorg").unwrap_err();
+        assert!(err.to_string().contains("No app found"));
+        assert!(err.to_string().contains("staging"));
+    }
+
+    #[test]
+    fn test_filter_apps_multiple_matches_without_env() {
+        let err = filter_apps(sample_apps(), "Weekmenu", None, "org").unwrap_err();
+        assert!(err.to_string().contains("Multiple apps match"));
+        assert!(err.to_string().contains("--environment"));
+    }
+
+    #[test]
+    fn test_filter_apps_empty_list() {
+        let err = filter_apps(vec![], "Anything", None, "org").unwrap_err();
+        assert!(err.to_string().contains("No app found"));
+    }
+
+    #[test]
+    fn test_filter_apps_app_with_no_name() {
+        let apps = vec![App {
+            id: "id1".to_string(),
+            name: None,
+            environment: Some("production".to_string()),
+        }];
+        let err = filter_apps(apps, "Anything", None, "org").unwrap_err();
+        assert!(err.to_string().contains("No app found"));
+    }
+
+    // -- Incident accessor tests --
+
+    fn exception_incident() -> Incident {
+        Incident::ExceptionIncident {
+            id: "exc1".to_string(),
+            number: 42,
+            state: Some("OPEN".to_string()),
+            severity: Some("CRITICAL".to_string()),
+            description: Some("Something broke".to_string()),
+            count: 100,
+            created_at: Some("2025-01-01T00:00:00Z".to_string()),
+            last_occurred_at: Some("2025-06-01T12:00:00Z".to_string()),
+            updated_at: Some("2025-06-01T12:00:00Z".to_string()),
+            exception_name: Some("RuntimeError".to_string()),
+            exception_message: Some("bad things".to_string()),
+            action_names: Some(vec!["UsersController#show".to_string()]),
+            namespace: Some("web".to_string()),
+            first_backtrace_line: Some("app/models/user.rb:42".to_string()),
+        }
+    }
+
+    fn performance_incident() -> Incident {
+        Incident::PerformanceIncident {
+            id: "perf1".to_string(),
+            number: 7,
+            state: Some("CLOSED".to_string()),
+            severity: None,
+            description: None,
+            count: 500,
+            created_at: Some("2025-03-01T00:00:00Z".to_string()),
+            last_occurred_at: None,
+            updated_at: None,
+            action_names: Some(vec!["PagesController#index".to_string()]),
+            namespace: Some("web".to_string()),
+            mean: Some(32.5),
+            total_duration: Some(16250.0),
+        }
+    }
+
+    fn anomaly_incident() -> Incident {
+        Incident::AnomalyIncident {
+            id: "anom1".to_string(),
+            number: 3,
+            state: None,
+            severity: None,
+            description: None,
+            count: 1,
+            created_at: None,
+            last_occurred_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn log_incident() -> Incident {
+        Incident::LogIncident {
+            id: "log1".to_string(),
+            number: 99,
+            state: Some("WIP".to_string()),
+            severity: Some("WARNING".to_string()),
+            description: Some("Too many logs".to_string()),
+            count: 10,
+            created_at: None,
+            last_occurred_at: Some("2025-12-25T00:00:00Z".to_string()),
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn test_incident_number() {
+        assert_eq!(exception_incident().number(), 42);
+        assert_eq!(performance_incident().number(), 7);
+        assert_eq!(anomaly_incident().number(), 3);
+        assert_eq!(log_incident().number(), 99);
+    }
+
+    #[test]
+    fn test_incident_state() {
+        assert_eq!(exception_incident().state(), "OPEN");
+        assert_eq!(performance_incident().state(), "CLOSED");
+        assert_eq!(anomaly_incident().state(), "-");
+        assert_eq!(log_incident().state(), "WIP");
+    }
+
+    #[test]
+    fn test_incident_severity() {
+        assert_eq!(exception_incident().severity(), "CRITICAL");
+        assert_eq!(performance_incident().severity(), "-");
+        assert_eq!(anomaly_incident().severity(), "-");
+        assert_eq!(log_incident().severity(), "WARNING");
+    }
+
+    #[test]
+    fn test_incident_description() {
+        assert_eq!(exception_incident().description(), "Something broke");
+        assert_eq!(performance_incident().description(), "-");
+        assert_eq!(log_incident().description(), "Too many logs");
+    }
+
+    #[test]
+    fn test_incident_count() {
+        assert_eq!(exception_incident().count(), 100);
+        assert_eq!(performance_incident().count(), 500);
+    }
+
+    #[test]
+    fn test_incident_last_occurred_at() {
+        assert_eq!(
+            exception_incident().last_occurred_at(),
+            "2025-06-01T12:00:00Z"
+        );
+        assert_eq!(performance_incident().last_occurred_at(), "-");
+        assert_eq!(log_incident().last_occurred_at(), "2025-12-25T00:00:00Z");
+    }
+
+    #[test]
+    fn test_incident_created_at() {
+        assert_eq!(exception_incident().created_at(), "2025-01-01T00:00:00Z");
+        assert_eq!(anomaly_incident().created_at(), "-");
+    }
+
+    #[test]
+    fn test_incident_kind() {
+        assert_eq!(exception_incident().kind(), "exception");
+        assert_eq!(performance_incident().kind(), "performance");
+        assert_eq!(anomaly_incident().kind(), "anomaly");
+        assert_eq!(log_incident().kind(), "log");
+    }
+
+    // -- Incident deserialization tests --
+
+    #[test]
+    fn test_deserialize_exception_incident() {
+        let json = r#"{
+            "__typename": "ExceptionIncident",
+            "id": "e1", "number": 5, "state": "OPEN", "severity": "CRITICAL",
+            "description": "Oops", "count": 10,
+            "createdAt": "2025-01-01T00:00:00Z",
+            "lastOccurredAt": "2025-06-01T00:00:00Z",
+            "updatedAt": null,
+            "exceptionName": "RuntimeError",
+            "exceptionMessage": "bad",
+            "actionNames": ["FooController#bar"],
+            "namespace": "web",
+            "firstBacktraceLine": "app.rb:1"
+        }"#;
+        let incident: Incident = serde_json::from_str(json).unwrap();
+        assert_eq!(incident.kind(), "exception");
+        assert_eq!(incident.number(), 5);
+        assert_eq!(incident.state(), "OPEN");
+        if let Incident::ExceptionIncident {
+            exception_name,
+            exception_message,
+            ..
+        } = &incident
+        {
+            assert_eq!(exception_name.as_deref(), Some("RuntimeError"));
+            assert_eq!(exception_message.as_deref(), Some("bad"));
+        } else {
+            panic!("Expected ExceptionIncident");
+        }
+    }
+
+    #[test]
+    fn test_deserialize_performance_incident() {
+        let json = r#"{
+            "__typename": "PerformanceIncident",
+            "id": "p1", "number": 3, "state": "CLOSED", "severity": null,
+            "description": null, "count": 200,
+            "createdAt": null, "lastOccurredAt": null, "updatedAt": null,
+            "actionNames": [], "namespace": "web",
+            "mean": 45.5, "totalDuration": 9100.0
+        }"#;
+        let incident: Incident = serde_json::from_str(json).unwrap();
+        assert_eq!(incident.kind(), "performance");
+        assert_eq!(incident.count(), 200);
+        if let Incident::PerformanceIncident {
+            mean,
+            total_duration,
+            ..
+        } = &incident
+        {
+            assert_eq!(*mean, Some(45.5));
+            assert_eq!(*total_duration, Some(9100.0));
+        } else {
+            panic!("Expected PerformanceIncident");
+        }
+    }
+
+    #[test]
+    fn test_deserialize_anomaly_incident() {
+        let json = r#"{
+            "__typename": "AnomalyIncident",
+            "id": "a1", "number": 1, "state": "OPEN", "severity": null,
+            "description": "Spike detected", "count": 1,
+            "createdAt": "2025-03-01T00:00:00Z",
+            "lastOccurredAt": "2025-03-01T01:00:00Z",
+            "updatedAt": null
+        }"#;
+        let incident: Incident = serde_json::from_str(json).unwrap();
+        assert_eq!(incident.kind(), "anomaly");
+        assert_eq!(incident.description(), "Spike detected");
+    }
+
+    #[test]
+    fn test_deserialize_log_incident() {
+        let json = r#"{
+            "__typename": "LogIncident",
+            "id": "l1", "number": 10, "state": "WIP", "severity": "WARNING",
+            "description": "Log flood", "count": 9999,
+            "createdAt": null, "lastOccurredAt": null, "updatedAt": null
+        }"#;
+        let incident: Incident = serde_json::from_str(json).unwrap();
+        assert_eq!(incident.kind(), "log");
+        assert_eq!(incident.state(), "WIP");
+        assert_eq!(incident.count(), 9999);
+    }
+
+    // -- Wiremock integration tests for API client --
+
+    fn graphql_response(data: serde_json::Value) -> serde_json::Value {
+        json!({ "data": data })
+    }
+
+    #[tokio::test]
+    async fn test_validate_token_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(graphql_response(json!({ "__typename": "Query" }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client =
+            AppSignalClient::with_endpoint("test-token", &format!("{}/graphql", server.uri()));
+        client.validate_token().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_validate_token_http_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("Unauthorized"))
+            .mount(&server)
+            .await;
+
+        let client =
+            AppSignalClient::with_endpoint("bad-token", &format!("{}/graphql", server.uri()));
+        let err = client.validate_token().await.unwrap_err();
+        assert!(err.to_string().contains("401"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_token_graphql_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": null,
+                "errors": [{"message": "Invalid token"}]
+            })))
+            .mount(&server)
+            .await;
+
+        let client =
+            AppSignalClient::with_endpoint("bad-token", &format!("{}/graphql", server.uri()));
+        let err = client.validate_token().await.unwrap_err();
+        assert!(err.to_string().contains("Invalid token"));
+    }
+
+    #[tokio::test]
+    async fn test_list_organizations() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "viewer": {
+                        "organizations": [
+                            { "slug": "org-one", "name": "Org One" },
+                            { "slug": "org-two", "name": "Org Two" }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let orgs = client.list_organizations().await.unwrap();
+        assert_eq!(orgs.len(), 2);
+        assert_eq!(orgs[0].slug, "org-one");
+        assert_eq!(orgs[1].name, "Org Two");
+    }
+
+    #[tokio::test]
+    async fn test_list_apps() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "organization": {
+                        "apps": [
+                            { "id": "a1", "name": "MyApp", "environment": "production" }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let apps = client.list_apps("my-org").await.unwrap();
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].id, "a1");
+        assert_eq!(apps[0].name.as_deref(), Some("MyApp"));
+    }
+
+    #[tokio::test]
+    async fn test_list_apps_org_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "organization": null
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let err = client.list_apps("bad-org").await.unwrap_err();
+        assert!(err.to_string().contains("bad-org"));
+    }
+
+    #[tokio::test]
+    async fn test_get_app() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": { "id": "a1", "name": "MyApp", "environment": "staging" }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let app = client.get_app("a1").await.unwrap();
+        assert_eq!(app.id, "a1");
+        assert_eq!(app.environment.as_deref(), Some("staging"));
+    }
+
+    #[tokio::test]
+    async fn test_get_app_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": null
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let err = client.get_app("nope").await.unwrap_err();
+        assert!(err.to_string().contains("nope"));
+    }
+
+    #[tokio::test]
+    async fn test_list_incidents() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incidents": [
+                            {
+                                "__typename": "ExceptionIncident",
+                                "id": "e1", "number": 1, "state": "OPEN",
+                                "severity": "CRITICAL", "description": "Boom",
+                                "count": 5,
+                                "createdAt": "2025-01-01T00:00:00Z",
+                                "lastOccurredAt": "2025-06-01T00:00:00Z",
+                                "updatedAt": null,
+                                "exceptionName": "RuntimeError",
+                                "exceptionMessage": "fail",
+                                "actionNames": [],
+                                "namespace": "web",
+                                "firstBacktraceLine": "app.rb:1"
+                            },
+                            {
+                                "__typename": "PerformanceIncident",
+                                "id": "p1", "number": 2, "state": "CLOSED",
+                                "severity": null, "description": null,
+                                "count": 100,
+                                "createdAt": null, "lastOccurredAt": null,
+                                "updatedAt": null,
+                                "actionNames": ["PagesController#index"],
+                                "namespace": "web",
+                                "mean": 50.0, "totalDuration": 5000.0
+                            }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let incidents = client
+            .list_incidents("app1", Some(10), None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(incidents.len(), 2);
+        assert_eq!(incidents[0].kind(), "exception");
+        assert_eq!(incidents[0].number(), 1);
+        assert_eq!(incidents[1].kind(), "performance");
+        assert_eq!(incidents[1].number(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_incidents_empty() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": { "incidents": [] }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let incidents = client
+            .list_incidents("app1", None, None, None, None)
+            .await
+            .unwrap();
+        assert!(incidents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_incident() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incident": {
+                            "__typename": "ExceptionIncident",
+                            "id": "e1", "number": 42, "state": "OPEN",
+                            "severity": "CRITICAL", "description": "Bad",
+                            "count": 10,
+                            "createdAt": "2025-01-01T00:00:00Z",
+                            "lastOccurredAt": "2025-06-01T00:00:00Z",
+                            "updatedAt": null,
+                            "exceptionName": "RuntimeError",
+                            "exceptionMessage": "oops",
+                            "actionNames": ["Foo#bar"],
+                            "namespace": "web",
+                            "firstBacktraceLine": "app.rb:99"
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let incident = client.get_incident("app1", 42).await.unwrap();
+        assert_eq!(incident.number(), 42);
+        assert_eq!(incident.kind(), "exception");
+        assert_eq!(incident.state(), "OPEN");
+    }
+
+    #[tokio::test]
+    async fn test_get_incident_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": { "incident": null }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let err = client.get_incident("app1", 999).await.unwrap_err();
+        assert!(err.to_string().contains("999"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_app_id_with_explicit_id() {
+        // No server needed -- should return immediately
+        let client = AppSignalClient::new("tok");
+        let id = client
+            .resolve_app_id("org", Some("explicit-id"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(id, "explicit-id");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_app_id_prefers_app_id_over_name() {
+        let client = AppSignalClient::new("tok");
+        let id = client
+            .resolve_app_id("org", Some("explicit-id"), Some("SomeName"), Some("prod"))
+            .await
+            .unwrap();
+        assert_eq!(id, "explicit-id");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_app_id_neither_provided() {
+        let client = AppSignalClient::new("tok");
+        let err = client
+            .resolve_app_id("org", None, None, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("--app-id"));
+        assert!(err.to_string().contains("--app"));
     }
 }
