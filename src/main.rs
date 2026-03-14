@@ -201,6 +201,57 @@ enum IncidentsAction {
         #[arg(long)]
         org: Option<String>,
     },
+    /// Update an incident (state, severity, assignees)
+    Update {
+        /// Incident number
+        #[arg(long)]
+        number: i64,
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+        /// New state: OPEN, CLOSED, or WIP
+        #[arg(long)]
+        state: Option<String>,
+        /// New severity: UNTRIAGED, CRITICAL, HIGH, LOW, NONE, or INFORMATIONAL
+        #[arg(long)]
+        severity: Option<String>,
+        /// Comma-separated user IDs to assign (use `apps resources` to find IDs)
+        #[arg(long)]
+        assign: Option<String>,
+        /// New description
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Add a note to an incident
+    AddNote {
+        /// Incident number
+        #[arg(long)]
+        number: i64,
+        /// Note content (markdown supported)
+        #[arg(long)]
+        content: String,
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -311,6 +362,50 @@ async fn main() -> Result<()> {
             } => {
                 commands::incidents::show(
                     number,
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                )
+                .await?
+            }
+            IncidentsAction::Update {
+                number,
+                app_id,
+                app,
+                environment,
+                org,
+                state,
+                severity,
+                assign,
+                description,
+            } => {
+                let assignee_ids: Option<Vec<String>> =
+                    assign.map(|s| s.split(',').map(|id| id.trim().to_string()).collect());
+                commands::incidents::update(
+                    number,
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                    state.as_deref(),
+                    severity.as_deref(),
+                    assignee_ids.as_deref(),
+                    description.as_deref(),
+                )
+                .await?
+            }
+            IncidentsAction::AddNote {
+                number,
+                content,
+                app_id,
+                app,
+                environment,
+                org,
+            } => {
+                commands::incidents::add_note(
+                    number,
+                    &content,
                     app_id.as_deref(),
                     app.as_deref(),
                     environment.as_deref(),

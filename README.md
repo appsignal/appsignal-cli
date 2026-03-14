@@ -46,6 +46,12 @@ appsignal-cli incidents list-anomalies --app "MyApp" --environment "production"
 
 # Show details for a specific incident
 appsignal-cli incidents show --number 42 --app "MyApp" --environment "production"
+
+# Close an incident
+appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --state CLOSED
+
+# Add a note to an incident
+appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Root cause identified."
 ```
 
 ## Commands
@@ -77,6 +83,8 @@ appsignal-cli incidents show --number 42 --app "MyApp" --environment "production
 | `incidents list-exceptions` | List exception incidents (supports text search) |
 | `incidents list-anomalies` | List anomaly detection incidents |
 | `incidents show --number <N>` | Show details for a specific incident |
+| `incidents update --number <N>` | Update incident state, severity, or assignees |
+| `incidents add-note --number <N> --content "..."` | Add a note to an incident |
 
 All incident commands accept either `--app-id <id>` or `--app <name> [--environment <env>]` to identify the application. The `--environment` flag is needed when multiple apps share the same name.
 
@@ -105,6 +113,15 @@ All incident commands accept either `--app-id <id>` or `--app <name> [--environm
 | Flag | Description |
 |---|---|
 | `--query <text>` | Search exception name or message |
+
+#### `incidents update` options
+
+| Flag | Description |
+|---|---|
+| `--state <STATE>` | New state: `OPEN`, `CLOSED`, or `WIP` |
+| `--severity <SEV>` | New severity: `UNTRIAGED`, `CRITICAL`, `HIGH`, `LOW`, `NONE`, or `INFORMATIONAL` |
+| `--assign <IDs>` | Comma-separated user IDs to assign |
+| `--description <text>` | New description |
 
 ## Configuration
 

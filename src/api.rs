@@ -302,6 +302,20 @@ struct AppAnomalyIncidents {
     anomaly_incidents: Option<Vec<Incident>>,
 }
 
+// -- Mutation response types --
+
+#[derive(Debug, Deserialize)]
+struct UpdateIncidentData {
+    #[serde(rename = "updateIncident")]
+    update_incident: Option<Incident>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateIncidentNoteData {
+    #[serde(rename = "createIncidentNote")]
+    create_incident_note: Option<Incident>,
+}
+
 /// Filter a list of apps by name and optional environment (case-insensitive).
 /// Returns exactly one match or an error explaining what went wrong.
 pub fn filter_apps(
@@ -728,6 +742,115 @@ impl AppSignalClient {
         let app = data.app.context("Application not found")?;
         app.incident
             .with_context(|| format!("Incident #{} not found", incident_number))
+    }
+
+    /// Update a single incident (state, severity, assignees, description).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_incident(
+        &self,
+        app_id: &str,
+        incident_number: i64,
+        state: Option<&str>,
+        severity: Option<&str>,
+        assignee_ids: Option<&[String]>,
+        description: Option<&str>,
+    ) -> Result<Incident> {
+        let query = r#"
+            mutation UpdateIncident($appId: String!, $number: Int!, $state: IncidentStateEnum, $severity: IncidentSeverityEnum, $assigneeIds: [String!], $description: String) {
+                updateIncident(appId: $appId, number: $number, state: $state, severity: $severity, assigneeIds: $assigneeIds, description: $description) {
+                    __typename
+                    ... on ExceptionIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                    }
+                    ... on PerformanceIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        actionNames namespace mean totalDuration
+                    }
+                    ... on AnomalyIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        alertState
+                        trigger { id name metricName kind }
+                        tags { key value }
+                    }
+                    ... on LogIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                    }
+                }
+            }
+        "#;
+
+        let mut vars = json!({ "appId": app_id, "number": incident_number });
+        if let Some(s) = state {
+            vars["state"] = json!(s);
+        }
+        if let Some(s) = severity {
+            vars["severity"] = json!(s);
+        }
+        if let Some(ids) = assignee_ids {
+            vars["assigneeIds"] = json!(ids);
+        }
+        if let Some(d) = description {
+            vars["description"] = json!(d);
+        }
+
+        let data: UpdateIncidentData = self.graphql(query, vars).await?;
+        data.update_incident
+            .with_context(|| format!("Failed to update incident #{}", incident_number))
+    }
+
+    /// Create a note on an incident.
+    pub async fn create_incident_note(
+        &self,
+        app_id: &str,
+        incident_number: i64,
+        content: &str,
+    ) -> Result<Incident> {
+        let query = r#"
+            mutation CreateIncidentNote($appId: String!, $incidentNumber: Int!, $content: String!) {
+                createIncidentNote(appId: $appId, incidentNumber: $incidentNumber, content: $content) {
+                    __typename
+                    ... on ExceptionIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                    }
+                    ... on PerformanceIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        actionNames namespace mean totalDuration
+                    }
+                    ... on AnomalyIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        alertState
+                        trigger { id name metricName kind }
+                        tags { key value }
+                    }
+                    ... on LogIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                    }
+                }
+            }
+        "#;
+
+        let data: CreateIncidentNoteData = self
+            .graphql(
+                query,
+                json!({
+                    "appId": app_id,
+                    "incidentNumber": incident_number,
+                    "content": content,
+                }),
+            )
+            .await?;
+        data.create_incident_note
+            .with_context(|| format!("Failed to create note on incident #{}", incident_number))
     }
 }
 
@@ -1484,5 +1607,76 @@ mod tests {
         } else {
             panic!("Expected AnomalyIncident");
         }
+    }
+
+    #[tokio::test]
+    async fn test_update_incident() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "updateIncident": {
+                        "__typename": "ExceptionIncident",
+                        "id": "e1", "number": 42, "state": "CLOSED",
+                        "severity": "CRITICAL", "description": "Fixed",
+                        "count": 10,
+                        "createdAt": "2025-01-01T00:00:00Z",
+                        "lastOccurredAt": "2025-06-01T00:00:00Z",
+                        "updatedAt": "2025-06-02T00:00:00Z",
+                        "exceptionName": "RuntimeError",
+                        "exceptionMessage": "oops",
+                        "actionNames": [],
+                        "namespace": "web",
+                        "firstBacktraceLine": "app.rb:1"
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let incident = client
+            .update_incident("app1", 42, Some("CLOSED"), Some("CRITICAL"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(incident.number(), 42);
+        assert_eq!(incident.state(), "CLOSED");
+        assert_eq!(incident.severity(), "CRITICAL");
+    }
+
+    #[tokio::test]
+    async fn test_create_incident_note() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "createIncidentNote": {
+                        "__typename": "ExceptionIncident",
+                        "id": "e1", "number": 42, "state": "OPEN",
+                        "severity": "CRITICAL", "description": "Bad",
+                        "count": 10,
+                        "createdAt": "2025-01-01T00:00:00Z",
+                        "lastOccurredAt": "2025-06-01T00:00:00Z",
+                        "updatedAt": "2025-06-02T00:00:00Z",
+                        "exceptionName": "RuntimeError",
+                        "exceptionMessage": "oops",
+                        "actionNames": [],
+                        "namespace": "web",
+                        "firstBacktraceLine": "app.rb:1"
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let incident = client
+            .create_incident_note("app1", 42, "Investigation notes here")
+            .await
+            .unwrap();
+        assert_eq!(incident.number(), 42);
+        assert_eq!(incident.kind(), "exception");
     }
 }

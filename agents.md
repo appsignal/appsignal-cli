@@ -150,6 +150,8 @@ It can always be overridden with `--org <slug>`.
 | `appsignal-cli incidents list-exceptions [options]` | List exception incidents (supports `--query` text search) |
 | `appsignal-cli incidents list-anomalies [options]` | List anomaly detection incidents (shows trigger/alert info) |
 | `appsignal-cli incidents show --number <N> [app options]` | Show full details for a specific incident |
+| `appsignal-cli incidents update --number <N> [--state S] [--severity S] [--assign IDs] [--description D]` | Update incident state, severity, or assignees |
+| `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident (markdown supported) |
 
 ### App resolution
 
@@ -215,6 +217,17 @@ appsignal-cli incidents list-anomalies --app "MyApp" --environment "production" 
 **Filtering by namespace:**
 ```bash
 appsignal-cli incidents list --app "MyApp" --environment "production" --namespaces "background" --state OPEN
+```
+
+**Closing an incident:**
+```bash
+appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --state CLOSED
+```
+
+**Triaging an incident with severity and a note:**
+```bash
+appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --severity CRITICAL
+appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Investigated: root cause is a memory leak in the connection pool."
 ```
 
 ## Adding new GraphQL queries

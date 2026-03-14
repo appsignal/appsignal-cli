@@ -178,6 +178,70 @@ pub async fn show(
     Ok(())
 }
 
+/// Update an incident (state, severity, assignees, description).
+#[allow(clippy::too_many_arguments)]
+pub async fn update(
+    incident_number: i64,
+    app_id: Option<&str>,
+    app_name: Option<&str>,
+    environment: Option<&str>,
+    org: Option<&str>,
+    state: Option<&str>,
+    severity: Option<&str>,
+    assignee_ids: Option<&[String]>,
+    description: Option<&str>,
+) -> Result<()> {
+    let config = Config::load()?;
+    let token = config.require_token()?.to_string();
+    let org_slug = resolve_org(org, &config)?;
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+
+    let resolved_app_id = client
+        .resolve_app_id(&org_slug, app_id, app_name, environment)
+        .await?;
+
+    let incident = client
+        .update_incident(
+            &resolved_app_id,
+            incident_number,
+            state,
+            severity,
+            assignee_ids,
+            description,
+        )
+        .await?;
+
+    println!("Incident #{} updated.", incident_number);
+    print_incident_detail(&incident);
+    Ok(())
+}
+
+/// Add a note to an incident.
+pub async fn add_note(
+    incident_number: i64,
+    content: &str,
+    app_id: Option<&str>,
+    app_name: Option<&str>,
+    environment: Option<&str>,
+    org: Option<&str>,
+) -> Result<()> {
+    let config = Config::load()?;
+    let token = config.require_token()?.to_string();
+    let org_slug = resolve_org(org, &config)?;
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+
+    let resolved_app_id = client
+        .resolve_app_id(&org_slug, app_id, app_name, environment)
+        .await?;
+
+    let _incident = client
+        .create_incident_note(&resolved_app_id, incident_number, content)
+        .await?;
+
+    println!("Note added to incident #{}.", incident_number);
+    Ok(())
+}
+
 fn print_exception_table(incidents: &[Incident]) {
     if incidents.is_empty() {
         println!("No exception incidents found.");

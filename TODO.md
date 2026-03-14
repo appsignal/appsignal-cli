@@ -70,38 +70,16 @@ This document tracks progress toward feature parity between the `appsignal-cli` 
 ## Incidents — Write
 
 ### `update_incidents`
-- [ ] **CLI**: Not implemented
+- [x] **CLI**: `incidents update`
 
-**MCP parameters**:
-| Parameter | Type | Required | Notes |
-|---|---|---|---|
-| `app_name` | string | yes | |
-| `app_environment` | string | yes | |
-| `incidents` | array of numbers | yes | Incident numbers to update |
-| `state` | string | no | "open", "closed", "wip" |
-| `severity` | string | no | "critical", "high", "low", "none", "informational", "untriaged" |
-| `assign_users` | array of strings | no | User IDs |
-| `unassign_users` | array of strings | no | User IDs |
+Uses the `updateIncident` GraphQL mutation. Supports `--state`, `--severity`, `--assign` (comma-separated user IDs), and `--description`. Updates one incident at a time (by number).
 
-**TODO**:
-- [ ] Add `incidents update` subcommand
-- [ ] Discover GraphQL mutations for incident state/severity/assignee changes
-- [ ] Supports bulk updates (multiple incident numbers)
+**Notes**: The MCP server supports `unassign_users` separately; the CLI's `--assign` sets the full assignee list via `assigneeIds`. The GraphQL API also exposes `bulkUpdateIncidents` (by IDs, not numbers) but we use `updateIncident` (by number) for simplicity.
 
 ### `create_incident_note`
-- [ ] **CLI**: Not implemented
+- [x] **CLI**: `incidents add-note`
 
-**MCP parameters**:
-| Parameter | Type | Required | Notes |
-|---|---|---|---|
-| `number` | number | yes | Incident number |
-| `app_name` | string | yes | |
-| `app_environment` | string | yes | |
-| `content` | string | yes | Markdown supported |
-
-**TODO**:
-- [ ] Add `incidents add-note` subcommand
-- [ ] Discover GraphQL mutation for creating logbook notes
+Uses the `createIncidentNote` GraphQL mutation. Takes `--number`, `--content` (markdown supported), and the standard app resolution flags.
 
 ---
 
