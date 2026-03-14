@@ -11,10 +11,10 @@ src/
   config.rs            Config load/save/delete (~/.config/appsignal/config.toml)
   api.rs               AppSignalClient — GraphQL client for the AppSignal API
   commands/
-    mod.rs             Re-exports command modules
+    mod.rs             Shared helpers (resolve_org) + re-exports
     auth.rs            auth login / logout / status
-    apps.rs            apps list / info / find / set-org / show-org
-    incidents.rs       incidents list / show
+    apps.rs            apps list / info / find / set-org / show-org / orgs
+    incidents.rs       incidents list / list-exceptions / list-anomalies / show
 ```
 
 - **CLI framework**: clap v4 with derive macros
@@ -23,6 +23,7 @@ src/
 - **Error handling**: anyhow with contextual messages
 - **Config format**: TOML via the `toml` crate
 - **Config location**: `~/.config/appsignal/config.toml` (via `dirs` crate)
+- **Testing**: wiremock for HTTP mocking, tempfile for config tests
 
 ## AppSignal API
 
@@ -31,6 +32,9 @@ All API interaction goes through the **GraphQL endpoint**:
 ```
 POST https://appsignal.com/graphql?token=<personal-api-token>
 ```
+
+The endpoint is configurable via the `endpoint` field in config.toml
+(defaults to `https://appsignal.com/graphql`).
 
 Authentication uses a **personal API token** passed as the `token` query
 parameter. Tokens can be found at https://appsignal.com/users/edit.
@@ -53,6 +57,10 @@ parameter. Tokens can be found at https://appsignal.com/users/edit.
   that succeeds for any valid token.
 - GraphQL errors are returned with HTTP 400, not in the `errors` array of a
   200 response. The client handles both cases.
+- The GraphQL API does **not** expose `start`/`end` time range filters for
+  incidents. The MCP server achieves this via direct MongoDB access.
+- The GraphQL `state` filter only accepts a **single** `IncidentStateEnum`
+  value, not a list (unlike the MCP server which supports comma-separated states).
 
 ### Incident types
 
@@ -73,10 +81,15 @@ Extra fields on `ExceptionIncident`:
 Extra fields on `PerformanceIncident`:
 - `actionNames`, `namespace`, `mean` (Float!), `totalDuration` (Float!)
 
+Extra fields on `AnomalyIncident`:
+- `alertState` (AlertStateEnum), `trigger` (Trigger object with `id`, `name`, `metricName`, `kind`)
+- `tags` (list of `KeyStringValue` with `key` and `value`)
+
 ### Enums
 
 - `IncidentStateEnum`: `OPEN`, `CLOSED`, `WIP`
 - `IncidentOrderEnum`: `ID` (creation order), `LAST` (most recent activity)
+- `AlertStateEnum`: `OPEN`, `CLOSED`, `WARMUP`, `COOLDOWN`, `UNTRACKED`, `ARCHIVED`
 
 ### Documented GraphQL queries from the AppSignal docs
 
@@ -90,9 +103,9 @@ Key fields on `App`:
 - `id`, `name`, `environment`
 - `incidents(namespaces, marker, state, actionName, limit, offset, order)` — all incident types (union)
 - `incident(incidentNumber: Int!)` — single incident by number (union)
-- `exceptionIncidents(namespaces, marker, query, state, limit, offset, order, actionName)`
+- `exceptionIncidents(namespaces, marker, query, state, limit, offset, order, actionName)` — exception incidents only, with text search via `query`
 - `performanceIncidents(namespaces, marker, query, state, limit, offset, order, actionName)`
-- `anomalyIncidents(state, limit, offset, order)`
+- `anomalyIncidents(state, limit, offset, order)` — anomaly incidents only (fewer filters than exceptions)
 - `logIncidents(state, limit, offset, order)`
 - `deployMarkers(limit, offset, start, end)`
 - `metrics { list(...) }`, `metrics { timeseries(...) }`
@@ -115,6 +128,7 @@ The config file at `~/.config/appsignal/config.toml` stores:
 
 - `token` — personal API token (set via `auth login`)
 - `org` — default organization slug (auto-saved by `apps list`, or set via `apps set-org`)
+- `endpoint` — (optional) custom GraphQL endpoint URL, defaults to `https://appsignal.com/graphql`
 
 The org slug is used as a default for all commands that need an organization.
 It can always be overridden with `--org <slug>`.
@@ -126,15 +140,16 @@ It can always be overridden with `--org <slug>`.
 | `appsignal-cli auth login [--token TOKEN]` | Store API token (prompts if omitted), validates via `{ __typename }` |
 | `appsignal-cli auth logout` | Delete stored credentials |
 | `appsignal-cli auth status` | Show auth status (masked token) |
+| `appsignal-cli apps orgs` | List all organizations you have access to |
 | `appsignal-cli apps list --org <slug>` | List apps in an organization (saves org as default) |
 | `appsignal-cli apps info --app-id <id>` | Show details for a single app by ID |
 | `appsignal-cli apps find --name <name> [--environment <env>] [--org <slug>]` | Find app by name (case-insensitive) |
 | `appsignal-cli apps set-org --org <slug>` | Set the default organization slug |
 | `appsignal-cli apps show-org` | Show the current default organization |
-| `appsignal-cli incidents list --app <name> [--environment <env>] [--limit N] [--state STATE] [--order ORDER]` | List incidents for an app by name |
-| `appsignal-cli incidents list --app-id <id> [--limit N] [--state STATE] [--order ORDER]` | List incidents for an app by ID |
-| `appsignal-cli incidents show --number <N> --app <name> [--environment <env>]` | Show incident details by number |
-| `appsignal-cli incidents show --number <N> --app-id <id>` | Show incident details by number and app ID |
+| `appsignal-cli incidents list [options]` | List all incident types for an app |
+| `appsignal-cli incidents list-exceptions [options]` | List exception incidents (supports `--query` text search) |
+| `appsignal-cli incidents list-anomalies [options]` | List anomaly detection incidents (shows trigger/alert info) |
+| `appsignal-cli incidents show --number <N> [app options]` | Show full details for a specific incident |
 
 ### App resolution
 
@@ -145,25 +160,61 @@ All incident commands accept either:
 The `--environment` flag is only needed when multiple apps share the same name
 (e.g. "Weekmenu" in both "development" and "production").
 
-### LLM workflow example
+### Incident listing options
 
-An LLM answering "What's the latest incident for Weekmenu Production?" would run:
+Common options for `incidents list`, `list-exceptions`, and `list-anomalies`:
 
+| Flag | Description |
+|---|---|
+| `--app <name>` | App name (case-insensitive) |
+| `--environment <env>` | Environment filter (e.g. "production") |
+| `--app-id <id>` | App ID (alternative to --app) |
+| `--org <slug>` | Organization (uses saved default if omitted) |
+| `--limit <N>` | Max results (default: 10) |
+| `--offset <N>` | Pagination offset |
+| `--state <STATE>` | Filter by state: `OPEN`, `CLOSED`, or `WIP` |
+| `--order <ORDER>` | Sort by: `LAST` (recent activity) or `ID` (creation) |
+
+Additional options for `incidents list` and `list-exceptions`:
+
+| Flag | Description |
+|---|---|
+| `--namespaces <ns>` | Filter by namespaces (comma-separated, e.g. "web,background") |
+| `--action <name>` | Filter by action name (e.g. "UsersController#show") |
+
+Additional option for `list-exceptions` only:
+
+| Flag | Description |
+|---|---|
+| `--query <text>` | Text search for exception name or message |
+
+### LLM workflow examples
+
+**Finding the latest incident:**
 ```bash
-# Step 1: List apps (one-time, saves org for future calls)
-appsignal-cli apps list --org jeroen-test-org
+# One-time setup: save the org slug
+appsignal-cli apps list --org my-org
 
-# Step 2: Get the latest incident
-appsignal-cli incidents list --app "Weekmenu" --environment "production" --limit 1 --order LAST
+# Get the latest incident
+appsignal-cli incidents list --app "MyApp" --environment "production" --limit 1 --order LAST
 
-# Step 3: Get full details if needed
-appsignal-cli incidents show --number 1 --app "Weekmenu" --environment "production"
+# Get full details
+appsignal-cli incidents show --number 42 --app "MyApp" --environment "production"
 ```
 
-After the org is saved, step 1 is no longer needed. So the LLM can just run:
-
+**Searching for a specific error:**
 ```bash
-appsignal-cli incidents list --app "Weekmenu" --environment "production" --limit 1 --order LAST
+appsignal-cli incidents list-exceptions --app "MyApp" --environment "production" --query "TimeoutError" --state OPEN
+```
+
+**Checking anomaly alerts:**
+```bash
+appsignal-cli incidents list-anomalies --app "MyApp" --environment "production" --state OPEN
+```
+
+**Filtering by namespace:**
+```bash
+appsignal-cli incidents list --app "MyApp" --environment "production" --namespaces "background" --state OPEN
 ```
 
 ## Adding new GraphQL queries
@@ -178,6 +229,7 @@ Use introspection queries to discover available fields:
     fields {
       name
       type { name kind }
+      args { name type { name kind } }
     }
   }
 }
@@ -186,3 +238,16 @@ Use introspection queries to discover available fields:
 The GraphQL endpoint returns HTTP 400 with error details for invalid fields,
 which makes it easy to iterate, but avoid guessing field names in production
 queries.
+
+### Known GraphQL limitations vs MCP server
+
+The MCP server (`devenv/appsignal-server/app/mcp/tools/`) has direct MongoDB
+access, giving it capabilities the GraphQL API does not expose:
+
+- **Time range filters** (`start`/`end`) on incident queries — not available in GraphQL
+- **Multiple state filters** (comma-separated) — GraphQL only accepts a single enum value
+- **Trigger ID filter** on anomaly incidents — not available in GraphQL
+- **Incident mutations** (update state/severity/assignees, create notes) — need to discover GraphQL mutations
+- **Metrics REST API** — metric names, tags, timeseries, and aggregations use a separate REST API (`/api/v2/metrics/...`)
+
+See `TODO.md` for the full feature parity tracking document.

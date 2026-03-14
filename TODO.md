@@ -27,27 +27,27 @@ This document tracks progress toward feature parity between the `appsignal-cli` 
 ## Incidents — Read
 
 ### `get_exception_incidents`
-- [~] **CLI**: `incidents list`
+- [x] **CLI**: `incidents list-exceptions`
 
 **MCP parameters**:
 | Parameter | MCP | CLI | Notes |
 |---|---|---|---|
 | `app_name` | required | `--app` | Case-insensitive in CLI |
 | `app_environment` | required | `--environment` | Case-insensitive in CLI |
-| `namespaces` | comma-separated string | Not implemented | Add `--namespaces` filter |
-| `start` | ISO 8601 | Not implemented | Add `--start` filter |
-| `end` | ISO 8601 | Not implemented | Add `--end` filter |
-| `states` | comma-separated string | `--state` (single) | Extend to support multiple states |
-| `page` | integer (1-based) | `--offset` | Different pagination model. Add `--page` as alias? |
+| `namespaces` | comma-separated string | `--namespaces` | Done |
+| `start` | ISO 8601 | Not available | GraphQL API does not expose start/end filters |
+| `end` | ISO 8601 | Not available | GraphQL API does not expose start/end filters |
+| `states` | comma-separated string | `--state` (single) | GraphQL only accepts single state enum |
+| `page` | integer (1-based) | `--offset` | Different pagination model |
+| `query` | string | `--query` | Text search for exception name/message — Done |
+| `actionName` | string | `--action` | Filter by action — Done |
 
-**Missing from CLI**:
-- [ ] `--namespaces` filter (comma-separated)
-- [ ] `--start` / `--end` time range filters
-- [ ] Support multiple states (comma-separated)
-- [ ] Page-based pagination (currently offset-based)
+**Not possible via GraphQL**:
+- `--start` / `--end` time range filters (MCP uses direct MongoDB, not available in GraphQL)
+- Multiple states (GraphQL enum only accepts a single value)
 
 ### `get_anomaly_incidents`
-- [ ] **CLI**: Not implemented
+- [x] **CLI**: `incidents list-anomalies`
 
 **MCP parameters**:
 | Parameter | Type | Required | Notes |
@@ -58,10 +58,7 @@ This document tracks progress toward feature parity between the `appsignal-cli` 
 | `trigger_id` | string | no | Filter by trigger |
 | `page` | integer | no | 1-based, 50 per page |
 
-**TODO**:
-- [ ] Add `incidents list-anomalies` subcommand (or `--type anomaly` flag)
-- [ ] Requires discovering if `anomalyIncidents` GraphQL field supports these filters
-- [ ] Anomaly states differ from exception states ("warmup", "cooldown", "archived")
+**Notes**: Implemented via `anomalyIncidents` GraphQL field. Supports `state`, `limit`, `offset`, `order`. Trigger ID filtering is not available via GraphQL (MCP uses direct MongoDB for that). Anomaly-specific fields (alertState, trigger summary, tags) are included in output.
 
 ### `get_incident`
 - [x] **CLI**: `incidents show --number <N>`

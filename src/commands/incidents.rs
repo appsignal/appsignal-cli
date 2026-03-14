@@ -4,9 +4,95 @@ use super::resolve_org;
 use crate::api::{AppSignalClient, Incident};
 use crate::config::Config;
 
-/// List incidents for an application.
+/// List incidents for an application (all types).
 #[allow(clippy::too_many_arguments)]
 pub async fn list(
+    app_id: Option<&str>,
+    app_name: Option<&str>,
+    environment: Option<&str>,
+    org: Option<&str>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    state: Option<&str>,
+    order: Option<&str>,
+    namespaces: Option<&str>,
+    action_name: Option<&str>,
+) -> Result<()> {
+    let config = Config::load()?;
+    let token = config.require_token()?.to_string();
+    let org_slug = resolve_org(org, &config)?;
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+
+    let resolved_app_id = client
+        .resolve_app_id(&org_slug, app_id, app_name, environment)
+        .await?;
+
+    let ns: Option<Vec<String>> =
+        namespaces.map(|s| s.split(',').map(|n| n.trim().to_string()).collect());
+
+    let incidents = client
+        .list_incidents(
+            &resolved_app_id,
+            limit,
+            offset,
+            state,
+            order,
+            ns.as_deref(),
+            action_name,
+        )
+        .await?;
+
+    print_incident_table(&incidents);
+    Ok(())
+}
+
+/// List exception incidents for an application.
+#[allow(clippy::too_many_arguments)]
+pub async fn list_exceptions(
+    app_id: Option<&str>,
+    app_name: Option<&str>,
+    environment: Option<&str>,
+    org: Option<&str>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    state: Option<&str>,
+    order: Option<&str>,
+    namespaces: Option<&str>,
+    action_name: Option<&str>,
+    query: Option<&str>,
+) -> Result<()> {
+    let config = Config::load()?;
+    let token = config.require_token()?.to_string();
+    let org_slug = resolve_org(org, &config)?;
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+
+    let resolved_app_id = client
+        .resolve_app_id(&org_slug, app_id, app_name, environment)
+        .await?;
+
+    let ns: Option<Vec<String>> =
+        namespaces.map(|s| s.split(',').map(|n| n.trim().to_string()).collect());
+
+    let incidents = client
+        .list_exception_incidents(
+            &resolved_app_id,
+            limit,
+            offset,
+            state,
+            order,
+            ns.as_deref(),
+            action_name,
+            query,
+        )
+        .await?;
+
+    print_incident_table(&incidents);
+    Ok(())
+}
+
+/// List anomaly incidents for an application.
+#[allow(clippy::too_many_arguments)]
+pub async fn list_anomalies(
     app_id: Option<&str>,
     app_name: Option<&str>,
     environment: Option<&str>,
@@ -26,35 +112,44 @@ pub async fn list(
         .await?;
 
     let incidents = client
-        .list_incidents(&resolved_app_id, limit, offset, state, order)
+        .list_anomaly_incidents(&resolved_app_id, limit, offset, state, order)
         .await?;
 
     if incidents.is_empty() {
-        println!("No incidents found.");
+        println!("No anomaly incidents found.");
         return Ok(());
     }
 
     println!(
-        "{:<8} {:<12} {:<10} {:<10} {:<8} {:<22} DESCRIPTION",
-        "#", "TYPE", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
+        "{:<8} {:<10} {:<10} {:<10} {:<8} {:<22} TRIGGER",
+        "#", "STATE", "SEVERITY", "ALERT", "COUNT", "LAST OCCURRED"
     );
     println!("{}", "-".repeat(100));
 
     for incident in &incidents {
-        let desc = truncate(incident.description(), 40);
+        let trigger_name = if let Incident::AnomalyIncident { trigger, .. } = incident {
+            trigger.as_ref().map(|t| t.name.as_str()).unwrap_or("-")
+        } else {
+            "-"
+        };
+        let alert_state = if let Incident::AnomalyIncident { alert_state, .. } = incident {
+            alert_state.as_deref().unwrap_or("-")
+        } else {
+            "-"
+        };
         println!(
-            "{:<8} {:<12} {:<10} {:<10} {:<8} {:<22} {}",
+            "{:<8} {:<10} {:<10} {:<10} {:<8} {:<22} {}",
             incident.number(),
-            incident.kind(),
             incident.state(),
             incident.severity(),
+            alert_state,
             incident.count(),
             incident.last_occurred_at(),
-            desc,
+            truncate(trigger_name, 40),
         );
     }
 
-    println!("\n{} incident(s) found.", incidents.len());
+    println!("\n{} anomaly incident(s) found.", incidents.len());
     Ok(())
 }
 
@@ -81,6 +176,35 @@ pub async fn show(
 
     print_incident_detail(&incident);
     Ok(())
+}
+
+fn print_incident_table(incidents: &[Incident]) {
+    if incidents.is_empty() {
+        println!("No incidents found.");
+        return;
+    }
+
+    println!(
+        "{:<8} {:<12} {:<10} {:<10} {:<8} {:<22} DESCRIPTION",
+        "#", "TYPE", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
+    );
+    println!("{}", "-".repeat(100));
+
+    for incident in incidents {
+        let desc = truncate(incident.description(), 40);
+        println!(
+            "{:<8} {:<12} {:<10} {:<10} {:<8} {:<22} {}",
+            incident.number(),
+            incident.kind(),
+            incident.state(),
+            incident.severity(),
+            incident.count(),
+            incident.last_occurred_at(),
+            desc,
+        );
+    }
+
+    println!("\n{} incident(s) found.", incidents.len());
 }
 
 fn print_incident_detail(incident: &Incident) {
@@ -141,7 +265,29 @@ fn print_incident_detail(incident: &Incident) {
                 }
             }
         }
-        Incident::AnomalyIncident { .. } => {}
+        Incident::AnomalyIncident {
+            alert_state,
+            trigger,
+            tags,
+            ..
+        } => {
+            if let Some(state) = alert_state {
+                println!("  Alert state:    {}", state);
+            }
+            if let Some(t) = trigger {
+                println!("  Trigger:        {} ({})", t.name, t.kind);
+                println!("  Metric:         {}", t.metric_name);
+            }
+            if let Some(tags) = tags {
+                if !tags.is_empty() {
+                    let tag_strs: Vec<String> = tags
+                        .iter()
+                        .map(|t| format!("{}={}", t.key, t.value.as_deref().unwrap_or("")))
+                        .collect();
+                    println!("  Tags:           {}", tag_strs.join(", "));
+                }
+            }
+        }
         Incident::LogIncident { .. } => {}
     }
 }

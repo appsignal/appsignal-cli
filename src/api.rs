@@ -76,6 +76,23 @@ struct ViewerData {
     viewer: Option<Viewer>,
 }
 
+// -- Shared types --
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct KeyStringValue {
+    pub key: String,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TriggerSummary {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "metricName")]
+    pub metric_name: String,
+    pub kind: String,
+}
+
 // -- Incident types --
 
 /// Incident types returned by the AppSignal GraphQL API.
@@ -140,6 +157,10 @@ pub enum Incident {
         last_occurred_at: Option<String>,
         #[serde(rename = "updatedAt")]
         updated_at: Option<String>,
+        #[serde(rename = "alertState")]
+        alert_state: Option<String>,
+        trigger: Option<TriggerSummary>,
+        tags: Option<Vec<KeyStringValue>>,
     },
     LogIncident {
         id: String,
@@ -257,6 +278,28 @@ struct AppIncidentData {
 #[derive(Debug, Deserialize)]
 struct AppSingleIncident {
     incident: Option<Incident>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppExceptionIncidentsData {
+    app: Option<AppExceptionIncidents>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppExceptionIncidents {
+    #[serde(rename = "exceptionIncidents")]
+    exception_incidents: Option<Vec<Incident>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppAnomalyIncidentsData {
+    app: Option<AppAnomalyIncidents>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppAnomalyIncidents {
+    #[serde(rename = "anomalyIncidents")]
+    anomaly_incidents: Option<Vec<Incident>>,
 }
 
 /// Filter a list of apps by name and optional environment (case-insensitive).
@@ -478,7 +521,8 @@ impl AppSignalClient {
         anyhow::bail!("Provide either --app-id or --app (with optional --environment)")
     }
 
-    /// List incidents for an app.
+    /// List incidents for an app (all types).
+    #[allow(clippy::too_many_arguments)]
     pub async fn list_incidents(
         &self,
         app_id: &str,
@@ -486,11 +530,13 @@ impl AppSignalClient {
         offset: Option<i64>,
         state: Option<&str>,
         order: Option<&str>,
+        namespaces: Option<&[String]>,
+        action_name: Option<&str>,
     ) -> Result<Vec<Incident>> {
         let query = r#"
-            query AppIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum) {
+            query AppIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $namespaces: [String], $actionName: String) {
                 app(id: $appId) {
-                    incidents(limit: $limit, offset: $offset, state: $state, order: $order) {
+                    incidents(limit: $limit, offset: $offset, state: $state, order: $order, namespaces: $namespaces, actionName: $actionName) {
                         __typename
                         ... on ExceptionIncident {
                             id number state severity description count
@@ -505,6 +551,9 @@ impl AppSignalClient {
                         ... on AnomalyIncident {
                             id number state severity description count
                             createdAt lastOccurredAt updatedAt
+                            alertState
+                            trigger { id name metricName kind }
+                            tags { key value }
                         }
                         ... on LogIncident {
                             id number state severity description count
@@ -528,10 +577,113 @@ impl AppSignalClient {
         if let Some(o) = order {
             vars["order"] = json!(o);
         }
+        if let Some(ns) = namespaces {
+            vars["namespaces"] = json!(ns);
+        }
+        if let Some(a) = action_name {
+            vars["actionName"] = json!(a);
+        }
 
         let data: AppIncidentsData = self.graphql(query, vars).await?;
         let app = data.app.context("Application not found")?;
         Ok(app.incidents.unwrap_or_default())
+    }
+
+    /// List exception incidents for an app (with text search support).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_exception_incidents(
+        &self,
+        app_id: &str,
+        limit: Option<i64>,
+        offset: Option<i64>,
+        state: Option<&str>,
+        order: Option<&str>,
+        namespaces: Option<&[String]>,
+        action_name: Option<&str>,
+        query_str: Option<&str>,
+    ) -> Result<Vec<Incident>> {
+        let query = r#"
+            query AppExceptionIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $namespaces: [String], $actionName: String, $query: String) {
+                app(id: $appId) {
+                    exceptionIncidents(limit: $limit, offset: $offset, state: $state, order: $order, namespaces: $namespaces, actionName: $actionName, query: $query) {
+                        __typename
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                    }
+                }
+            }
+        "#;
+
+        let mut vars = json!({ "appId": app_id });
+        if let Some(l) = limit {
+            vars["limit"] = json!(l);
+        }
+        if let Some(o) = offset {
+            vars["offset"] = json!(o);
+        }
+        if let Some(s) = state {
+            vars["state"] = json!(s);
+        }
+        if let Some(o) = order {
+            vars["order"] = json!(o);
+        }
+        if let Some(ns) = namespaces {
+            vars["namespaces"] = json!(ns);
+        }
+        if let Some(a) = action_name {
+            vars["actionName"] = json!(a);
+        }
+        if let Some(q) = query_str {
+            vars["query"] = json!(q);
+        }
+
+        let data: AppExceptionIncidentsData = self.graphql(query, vars).await?;
+        let app = data.app.context("Application not found")?;
+        Ok(app.exception_incidents.unwrap_or_default())
+    }
+
+    /// List anomaly incidents for an app.
+    pub async fn list_anomaly_incidents(
+        &self,
+        app_id: &str,
+        limit: Option<i64>,
+        offset: Option<i64>,
+        state: Option<&str>,
+        order: Option<&str>,
+    ) -> Result<Vec<Incident>> {
+        let query = r#"
+            query AppAnomalyIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum) {
+                app(id: $appId) {
+                    anomalyIncidents(limit: $limit, offset: $offset, state: $state, order: $order) {
+                        __typename
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        alertState
+                        trigger { id name metricName kind }
+                        tags { key value }
+                    }
+                }
+            }
+        "#;
+
+        let mut vars = json!({ "appId": app_id });
+        if let Some(l) = limit {
+            vars["limit"] = json!(l);
+        }
+        if let Some(o) = offset {
+            vars["offset"] = json!(o);
+        }
+        if let Some(s) = state {
+            vars["state"] = json!(s);
+        }
+        if let Some(o) = order {
+            vars["order"] = json!(o);
+        }
+
+        let data: AppAnomalyIncidentsData = self.graphql(query, vars).await?;
+        let app = data.app.context("Application not found")?;
+        Ok(app.anomaly_incidents.unwrap_or_default())
     }
 
     /// Get a single incident by number.
@@ -554,6 +706,9 @@ impl AppSignalClient {
                         ... on AnomalyIncident {
                             id number state severity description count
                             createdAt lastOccurredAt updatedAt
+                            alertState
+                            trigger { id name metricName kind }
+                            tags { key value }
                         }
                         ... on LogIncident {
                             id number state severity description count
@@ -715,6 +870,17 @@ mod tests {
             created_at: None,
             last_occurred_at: None,
             updated_at: None,
+            alert_state: Some("WARMUP".to_string()),
+            trigger: Some(TriggerSummary {
+                id: "t1".to_string(),
+                name: "High CPU".to_string(),
+                metric_name: "cpu_usage".to_string(),
+                kind: "Advanced".to_string(),
+            }),
+            tags: Some(vec![KeyStringValue {
+                key: "hostname".to_string(),
+                value: Some("web-1".to_string()),
+            }]),
         }
     }
 
@@ -861,11 +1027,42 @@ mod tests {
             "description": "Spike detected", "count": 1,
             "createdAt": "2025-03-01T00:00:00Z",
             "lastOccurredAt": "2025-03-01T01:00:00Z",
-            "updatedAt": null
+            "updatedAt": null,
+            "alertState": "WARMUP",
+            "trigger": { "id": "t1", "name": "High CPU", "metricName": "cpu_usage", "kind": "Advanced" },
+            "tags": [{ "key": "hostname", "value": "web-1" }]
         }"#;
         let incident: Incident = serde_json::from_str(json).unwrap();
         assert_eq!(incident.kind(), "anomaly");
         assert_eq!(incident.description(), "Spike detected");
+        if let Incident::AnomalyIncident {
+            alert_state,
+            trigger,
+            tags,
+            ..
+        } = &incident
+        {
+            assert_eq!(alert_state.as_deref(), Some("WARMUP"));
+            assert_eq!(trigger.as_ref().unwrap().name, "High CPU");
+            assert_eq!(tags.as_ref().unwrap()[0].key, "hostname");
+        } else {
+            panic!("Expected AnomalyIncident");
+        }
+    }
+
+    #[test]
+    fn test_deserialize_anomaly_incident_minimal() {
+        // Anomaly incident with no trigger/tags/alertState (all optional)
+        let json = r#"{
+            "__typename": "AnomalyIncident",
+            "id": "a2", "number": 2, "state": "CLOSED", "severity": null,
+            "description": null, "count": 5,
+            "createdAt": null, "lastOccurredAt": null, "updatedAt": null,
+            "alertState": null, "trigger": null, "tags": null
+        }"#;
+        let incident: Incident = serde_json::from_str(json).unwrap();
+        assert_eq!(incident.kind(), "anomaly");
+        assert_eq!(incident.number(), 2);
     }
 
     #[test]
@@ -1085,7 +1282,7 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let incidents = client
-            .list_incidents("app1", Some(10), None, None, None)
+            .list_incidents("app1", Some(10), None, None, None, None, None)
             .await
             .unwrap();
         assert_eq!(incidents.len(), 2);
@@ -1110,7 +1307,7 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let incidents = client
-            .list_incidents("app1", None, None, None, None)
+            .list_incidents("app1", None, None, None, None, None, None)
             .await
             .unwrap();
         assert!(incidents.is_empty());
@@ -1199,5 +1396,93 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("--app-id"));
         assert!(err.to_string().contains("--app"));
+    }
+
+    #[tokio::test]
+    async fn test_list_exception_incidents() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "exceptionIncidents": [
+                            {
+                                "__typename": "ExceptionIncident",
+                                "id": "e1", "number": 1, "state": "OPEN",
+                                "severity": "CRITICAL", "description": "Boom",
+                                "count": 5,
+                                "createdAt": "2025-01-01T00:00:00Z",
+                                "lastOccurredAt": "2025-06-01T00:00:00Z",
+                                "updatedAt": null,
+                                "exceptionName": "RuntimeError",
+                                "exceptionMessage": "fail",
+                                "actionNames": ["FooController#bar"],
+                                "namespace": "web",
+                                "firstBacktraceLine": "app.rb:1"
+                            }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let incidents = client
+            .list_exception_incidents("app1", Some(10), None, None, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(incidents.len(), 1);
+        assert_eq!(incidents[0].kind(), "exception");
+    }
+
+    #[tokio::test]
+    async fn test_list_anomaly_incidents() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "anomalyIncidents": [
+                            {
+                                "__typename": "AnomalyIncident",
+                                "id": "a1", "number": 10, "state": "OPEN",
+                                "severity": null, "description": "CPU spike",
+                                "count": 3,
+                                "createdAt": "2025-01-01T00:00:00Z",
+                                "lastOccurredAt": "2025-06-01T00:00:00Z",
+                                "updatedAt": null,
+                                "alertState": "OPEN",
+                                "trigger": { "id": "t1", "name": "CPU Alert", "metricName": "cpu_usage", "kind": "Advanced" },
+                                "tags": [{ "key": "hostname", "value": "web-1" }]
+                            }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let incidents = client
+            .list_anomaly_incidents("app1", Some(10), None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(incidents.len(), 1);
+        assert_eq!(incidents[0].kind(), "anomaly");
+        assert_eq!(incidents[0].number(), 10);
+        if let Incident::AnomalyIncident {
+            alert_state,
+            trigger,
+            ..
+        } = &incidents[0]
+        {
+            assert_eq!(alert_state.as_deref(), Some("OPEN"));
+            assert_eq!(trigger.as_ref().unwrap().name, "CPU Alert");
+        } else {
+            panic!("Expected AnomalyIncident");
+        }
     }
 }

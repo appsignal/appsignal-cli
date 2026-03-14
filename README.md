@@ -32,8 +32,17 @@ appsignal-cli apps list --org <org-slug>
 # Find an app by name
 appsignal-cli apps find --name "MyApp" --environment "production"
 
-# List recent incidents
+# List recent incidents (all types)
 appsignal-cli incidents list --app "MyApp" --environment "production" --limit 5
+
+# List only exception incidents
+appsignal-cli incidents list-exceptions --app "MyApp" --environment "production" --state OPEN
+
+# Search exceptions by name or message
+appsignal-cli incidents list-exceptions --app "MyApp" --environment "production" --query "TimeoutError"
+
+# List anomaly detection alerts
+appsignal-cli incidents list-anomalies --app "MyApp" --environment "production"
 
 # Show details for a specific incident
 appsignal-cli incidents show --number 42 --app "MyApp" --environment "production"
@@ -64,12 +73,14 @@ appsignal-cli incidents show --number 42 --app "MyApp" --environment "production
 
 | Command | Description |
 |---|---|
-| `incidents list` | List incidents for an app |
+| `incidents list` | List all incident types for an app |
+| `incidents list-exceptions` | List exception incidents (supports text search) |
+| `incidents list-anomalies` | List anomaly detection incidents |
 | `incidents show --number <N>` | Show details for a specific incident |
 
-Both incident commands accept either `--app-id <id>` or `--app <name> [--environment <env>]` to identify the application. The `--environment` flag is needed when multiple apps share the same name.
+All incident commands accept either `--app-id <id>` or `--app <name> [--environment <env>]` to identify the application. The `--environment` flag is needed when multiple apps share the same name.
 
-#### `incidents list` options
+#### Common options
 
 | Flag | Description |
 |---|---|
@@ -81,6 +92,19 @@ Both incident commands accept either `--app-id <id>` or `--app <name> [--environ
 | `--offset <N>` | Pagination offset |
 | `--state <STATE>` | Filter by state: `OPEN`, `CLOSED`, or `WIP` |
 | `--order <ORDER>` | Sort by: `LAST` (recent activity) or `ID` (creation) |
+
+#### Additional options for `list` and `list-exceptions`
+
+| Flag | Description |
+|---|---|
+| `--namespaces <ns>` | Filter by namespaces (comma-separated, e.g. "web,background") |
+| `--action <name>` | Filter by action name (e.g. "UsersController#show") |
+
+#### Additional option for `list-exceptions`
+
+| Flag | Description |
+|---|---|
+| `--query <text>` | Search exception name or message |
 
 ## Configuration
 
