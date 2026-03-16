@@ -107,7 +107,7 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
 
 All log and incident commands accept either `--app-id <id>` or `--app <name> [--environment <env>]` to identify the application. The `--environment` flag is needed when multiple apps share the same name.
 
-#### Common options
+#### Incident common options
 
 | Flag | Description |
 |---|---|
@@ -196,14 +196,14 @@ appsignal-cli logs tail --app "MyApp" --environment "production" --view "Error l
 # Search recent logs
 appsignal-cli logs search --app "MyApp" --environment "production" --query "timeout" --severities ERROR
 
-# Search with time range
+# Search with time range and literal bracket matching
 appsignal-cli logs search --app "MyApp" --environment "production" \
   --start "2025-03-16T06:00:00Z" --end "2025-03-16T07:00:00Z" \
-  --query "group:notifiers [Email]"
+  --query 'group=notifiers message:"[Email]"'
 
 # Fetch ALL matching logs (auto-paginate beyond the 100-line API limit)
 appsignal-cli logs search --app "MyApp" --environment "production" \
-  --start "2025-03-16T06:00:00Z" --query "group:notifiers [Email]" --page-all --json
+  --start "2025-03-16T06:00:00Z" --query 'group=notifiers message:"[Email]"' --page-all --json
 
 # Get JSON output for LLM consumption
 appsignal-cli logs search --app "MyApp" --environment "production" --query "error" --json
