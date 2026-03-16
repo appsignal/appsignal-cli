@@ -52,6 +52,16 @@ appsignal-cli incidents update --number 42 --app "MyApp" --environment "producti
 
 # Add a note to an incident
 appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Root cause identified."
+
+# Tail logs in real time
+appsignal-cli logs tail --app "MyApp" --environment "production"
+
+# Search logs with JSON output (for LLMs)
+appsignal-cli logs search --app "MyApp" --environment "production" --query "timeout" --json
+
+# Fetch all logs in a time range (auto-paginate)
+appsignal-cli logs search --app "MyApp" --environment "production" \
+  --start "2025-03-16T06:00:00Z" --query "group:notifiers" --page-all --json
 ```
 
 ## Commands
@@ -86,7 +96,16 @@ appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "produc
 | `incidents update --number <N>` | Update incident state, severity, or assignees |
 | `incidents add-note --number <N> --content "..."` | Add a note to an incident |
 
-All incident commands accept either `--app-id <id>` or `--app <name> [--environment <env>]` to identify the application. The `--environment` flag is needed when multiple apps share the same name.
+### `logs`
+
+| Command | Description |
+|---|---|
+| `logs tail` | Stream log lines in real time (polls every second) |
+| `logs search` | Search log lines (one-shot query, supports `--json` for LLM use) |
+| `logs views` | List saved log views (filter presets) |
+| `logs sources` | List log sources for an app |
+
+All log and incident commands accept either `--app-id <id>` or `--app <name> [--environment <env>]` to identify the application. The `--environment` flag is needed when multiple apps share the same name.
 
 #### Common options
 
@@ -122,6 +141,79 @@ All incident commands accept either `--app-id <id>` or `--app <name> [--environm
 | `--severity <SEV>` | New severity: `UNTRIAGED`, `CRITICAL`, `HIGH`, `LOW`, `NONE`, or `INFORMATIONAL` |
 | `--assign <IDs>` | Comma-separated user IDs to assign |
 | `--description <text>` | New description |
+
+#### Log filtering options
+
+All log commands (`tail`, `search`) support these filters:
+
+| Flag | Description |
+|---|---|
+| `--query <text>` | Log query filter ([syntax docs](https://docs.appsignal.com/logging/query-syntax)) |
+| `--severities <list>` | Comma-separated severities (e.g. `ERROR,CRITICAL`) |
+| `--source-ids <list>` | Comma-separated log source IDs |
+| `--view <name-or-id>` | Apply a saved log view's filters as defaults |
+
+#### Additional options for `logs search`
+
+| Flag | Description |
+|---|---|
+| `--start <ISO8601>` | Start time (e.g. `2025-01-01T00:00:00Z`) |
+| `--end <ISO8601>` | End time |
+| `--limit <N>` | Max results per page (default: 100, max: 100) |
+| `--order <ORDER>` | `ASC` (oldest first) or `DESC` (newest first, default) |
+| `--json` | Output as JSON (for LLM/programmatic consumption) |
+| `--page-all` | Auto-paginate to fetch all results in the time range |
+
+The `--view` flag resolves a log view by name (case-insensitive) or ID. CLI flags always override the view's saved defaults.
+
+The `--page-all` flag works by slicing the time window: it fetches 100 lines at a time in ASC order, using the last line's timestamp as the start of the next request, deduplicating by log line ID at boundaries.
+
+#### Query syntax
+
+The `--query` flag uses AppSignal's [log query syntax](https://docs.appsignal.com/logging/query-syntax). Key patterns:
+
+- `severity=error` — exact field match
+- `message:timeout` — message contains "timeout"
+- `group=notifiers` — exact group match
+- `hostname:prod` — hostname contains "prod"
+- `message:"[Email]"` — use quotes for special characters like `[` `]`
+- Space-separated terms are combined with AND; use `OR` for alternatives
+
+**Note:** Square brackets `[...]` have special meaning in the query parser. To search for literal brackets (e.g. `[Email]`), use `message:"[Email]"` — not `[Email]` as bare text.
+
+#### Log examples
+
+```sh
+# Tail logs in real time
+appsignal-cli logs tail --app "MyApp" --environment "production"
+
+# Tail only error logs
+appsignal-cli logs tail --app "MyApp" --environment "production" --severities ERROR,CRITICAL
+
+# Tail using a saved log view
+appsignal-cli logs tail --app "MyApp" --environment "production" --view "Error logs"
+
+# Search recent logs
+appsignal-cli logs search --app "MyApp" --environment "production" --query "timeout" --severities ERROR
+
+# Search with time range
+appsignal-cli logs search --app "MyApp" --environment "production" \
+  --start "2025-03-16T06:00:00Z" --end "2025-03-16T07:00:00Z" \
+  --query "group:notifiers [Email]"
+
+# Fetch ALL matching logs (auto-paginate beyond the 100-line API limit)
+appsignal-cli logs search --app "MyApp" --environment "production" \
+  --start "2025-03-16T06:00:00Z" --query "group:notifiers [Email]" --page-all --json
+
+# Get JSON output for LLM consumption
+appsignal-cli logs search --app "MyApp" --environment "production" --query "error" --json
+
+# List available log views
+appsignal-cli logs views --app "MyApp" --environment "production"
+
+# List log sources
+appsignal-cli logs sources --app "MyApp" --environment "production"
+```
 
 ## Configuration
 

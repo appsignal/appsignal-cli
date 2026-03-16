@@ -13,6 +13,7 @@ tokio = { version = "1", features = ["full"] }
 dirs = "6"
 toml = "0.8"
 anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 wiremock = "0.6"

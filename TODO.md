@@ -245,6 +245,43 @@ Uses the `createIncidentNote` GraphQL mutation. Takes `--number`, `--content` (m
 
 ---
 
+## Logs
+
+### `logs tail`
+- [x] **CLI**: `logs tail --app <name> --environment <env>`
+
+Real-time log tailing via 1-second polling of the GraphQL `logs.lines` field. Supports all filters:
+- `--query` — free-text search query
+- `--severities` — comma-separated severity levels (e.g. "ERROR,CRITICAL")
+- `--source-ids` — comma-separated source IDs
+- `--view` — log view name or ID (applies the view's saved filters as defaults; CLI flags override)
+
+Deduplicates log lines by ID across polls. Starts with 60 seconds of historical context.
+
+### `logs search`
+- [x] **CLI**: `logs search --app <name> --environment <env>`
+
+One-shot log query designed for both human and LLM consumption. Supports:
+- All filters from `logs tail` (`--query`, `--severities`, `--source-ids`, `--view`)
+- `--start` / `--end` — ISO 8601 time range
+- `--limit` — max lines (up to 100, default 100)
+- `--order` — ASC or DESC (default DESC)
+- `--json` — output as JSON for programmatic/LLM consumption
+
+### `logs views`
+- [x] **CLI**: `logs views --app <name> --environment <env>`
+
+Lists saved log views (filter presets) for an app. Shows ID, name, query, and severities.
+
+### `logs sources`
+- [x] **CLI**: `logs sources --app <name> --environment <env>`
+
+Lists log sources for an app. Shows ID, name, type, and format.
+
+**Notes**: The GraphQL `logs.lines` field is capped at 100 results per query. The `--view` flag resolves a log view by name (case-insensitive) or ID and applies its saved query, source IDs, and severities as defaults. CLI flags always take precedence over view defaults.
+
+---
+
 ## Not Applicable for CLI
 
 ### `get_more_tools`

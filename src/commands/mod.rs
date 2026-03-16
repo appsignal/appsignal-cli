@@ -1,6 +1,7 @@
 pub mod apps;
 pub mod auth;
 pub mod incidents;
+pub mod logs;
 
 use crate::config::Config;
 use anyhow::Result;

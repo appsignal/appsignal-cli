@@ -31,6 +31,11 @@ enum Commands {
         #[command(subcommand)]
         action: IncidentsAction,
     },
+    /// Stream, search, and inspect application logs
+    Logs {
+        #[command(subcommand)]
+        action: LogsAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -275,6 +280,116 @@ enum IncidentsAction {
     },
 }
 
+#[derive(Subcommand)]
+enum LogsAction {
+    /// Tail (stream) log lines in real time, with optional filters
+    Tail {
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+        /// Log query filter. Supports field filters (group=notifiers, severity=error,
+        /// message:"[Email]", hostname:web-1) and free text. Use quotes for literal
+        /// special characters. See https://docs.appsignal.com/logging/query-syntax
+        #[arg(long)]
+        query: Option<String>,
+        /// Comma-separated severity levels (e.g. "ERROR,CRITICAL")
+        #[arg(long)]
+        severities: Option<String>,
+        /// Comma-separated source IDs to filter by
+        #[arg(long)]
+        source_ids: Option<String>,
+        /// Log view name or ID — applies the view's saved filters as defaults
+        #[arg(long)]
+        view: Option<String>,
+    },
+    /// Search log lines (one-shot query). Use --json for LLM-friendly output.
+    Search {
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+        /// Log query filter. Supports field filters (group=notifiers, severity=error,
+        /// message:"[Email]", hostname:web-1) and free text. Use quotes for literal
+        /// special characters. See https://docs.appsignal.com/logging/query-syntax
+        #[arg(long)]
+        query: Option<String>,
+        /// Comma-separated severity levels (e.g. "ERROR,CRITICAL")
+        #[arg(long)]
+        severities: Option<String>,
+        /// Comma-separated source IDs to filter by
+        #[arg(long)]
+        source_ids: Option<String>,
+        /// Log view name or ID — applies the view's saved filters as defaults
+        #[arg(long)]
+        view: Option<String>,
+        /// Start time (ISO 8601, e.g. "2025-01-01T00:00:00Z")
+        #[arg(long)]
+        start: Option<String>,
+        /// End time (ISO 8601, e.g. "2025-01-01T12:00:00Z")
+        #[arg(long)]
+        end: Option<String>,
+        /// Maximum number of log lines to return (max 100)
+        #[arg(long, default_value = "100")]
+        limit: Option<i64>,
+        /// Sort order: ASC (oldest first) or DESC (newest first)
+        #[arg(long, default_value = "DESC")]
+        order: Option<String>,
+        /// Output results as JSON (useful for LLM/programmatic consumption)
+        #[arg(long)]
+        json: bool,
+        /// Automatically paginate to fetch all results (requires --start; ignores --limit and --order)
+        #[arg(long)]
+        page_all: bool,
+    },
+    /// List saved log views (filter presets) for an app
+    Views {
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+    },
+    /// List log sources for an app
+    Sources {
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -447,6 +562,92 @@ async fn main() -> Result<()> {
                 commands::incidents::add_note(
                     number,
                     &content,
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                )
+                .await?
+            }
+        },
+        Commands::Logs { action } => match action {
+            LogsAction::Tail {
+                app_id,
+                app,
+                environment,
+                org,
+                query,
+                severities,
+                source_ids,
+                view,
+            } => {
+                commands::logs::tail(
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                    query.as_deref(),
+                    severities.as_deref(),
+                    source_ids.as_deref(),
+                    view.as_deref(),
+                )
+                .await?
+            }
+            LogsAction::Search {
+                app_id,
+                app,
+                environment,
+                org,
+                query,
+                severities,
+                source_ids,
+                view,
+                start,
+                end,
+                limit,
+                order,
+                json,
+                page_all,
+            } => {
+                commands::logs::search(
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                    query.as_deref(),
+                    severities.as_deref(),
+                    source_ids.as_deref(),
+                    view.as_deref(),
+                    start.as_deref(),
+                    end.as_deref(),
+                    limit,
+                    order.as_deref(),
+                    json,
+                    page_all,
+                )
+                .await?
+            }
+            LogsAction::Views {
+                app_id,
+                app,
+                environment,
+                org,
+            } => {
+                commands::logs::views(
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                )
+                .await?
+            }
+            LogsAction::Sources {
+                app_id,
+                app,
+                environment,
+                org,
+            } => {
+                commands::logs::sources(
                     app_id.as_deref(),
                     app.as_deref(),
                     environment.as_deref(),

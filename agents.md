@@ -15,6 +15,7 @@ src/
     auth.rs            auth login / logout / status
     apps.rs            apps list / info / find / set-org / show-org / orgs
     incidents.rs       incidents list / list-exceptions / list-anomalies / show
+    logs.rs            logs tail / search / views / sources
 ```
 
 - **CLI framework**: clap v4 with derive macros
@@ -23,6 +24,7 @@ src/
 - **Error handling**: anyhow with contextual messages
 - **Config format**: TOML via the `toml` crate
 - **Config location**: `~/.config/appsignal/config.toml` (via `dirs` crate)
+- **Time handling**: chrono for UTC timestamps in log tailing/pagination
 - **Testing**: wiremock for HTTP mocking, tempfile for config tests
 
 ## AppSignal API
@@ -152,6 +154,10 @@ It can always be overridden with `--org <slug>`.
 | `appsignal-cli incidents show --number <N> [app options]` | Show full details for a specific incident |
 | `appsignal-cli incidents update --number <N> [--state S] [--severity S] [--assign IDs] [--description D]` | Update incident state, severity, or assignees |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident (markdown supported) |
+| `appsignal-cli logs tail [filters]` | Stream log lines in real time (1-second polling) |
+| `appsignal-cli logs search [filters] [--json] [--page-all]` | One-shot log search (supports auto-pagination and JSON output) |
+| `appsignal-cli logs views [app options]` | List saved log views (filter presets) |
+| `appsignal-cli logs sources [app options]` | List log sources for an app |
 
 ### App resolution
 
@@ -230,6 +236,209 @@ appsignal-cli incidents update --number 42 --app "MyApp" --environment "producti
 appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Investigated: root cause is a memory leak in the connection pool."
 ```
 
+## Logs
+
+### Architecture
+
+Log data lives in **ClickHouse** (not MongoDB). The AppSignal server has two paths
+for querying logs:
+
+1. **GraphQL** (`app.logs.lines`) — used by the CLI. Capped at 100 results per query.
+2. **REST API** (`POST /api/v2/logs/lines`) — served by a separate Rust `bulk_endpoint`
+   service. Supports SSE streaming and cursor-based pagination. Not used by the CLI.
+
+The CLI uses exclusively the GraphQL path.
+
+### Key log types
+
+**`LogLine`** — a single log entry:
+- `id` (String!) — UUID
+- `timestamp` (PreciseDateTime!) — ISO 8601
+- `severity` (SeverityEnum!) — UNKNOWN, TRACE, DEBUG, INFO, NOTICE, WARN, ERROR, CRITICAL, ALERT, FATAL
+- `hostname` (String!) — originating host
+- `group` (String) — log group (e.g. "notifiers", "background")
+- `message` (String!) — the log message body
+- `attributes` ([KeyStringValue]) — key-value metadata
+- `source` (Source) — which log source (lazy-loaded)
+
+**`LogView`** — a saved filter preset:
+- `id`, `name`, `query` (free-text search), `sourceIds`, `severities`, `columns`, `lineHeight`
+
+**`LogSource`** — a log ingestion source:
+- `id`, `name`, `type` (vector/custom/vercel), `fmt` (JSON/PLAINTEXT/LOGFMT/AUTODETECT), `key`
+
+### GraphQL queries used
+
+```graphql
+# Fetch log lines
+app(id: $appId) {
+  logs {
+    lines(start, end, sourceIds, severities, query, limit, order) {
+      id timestamp severity hostname group message
+      attributes { key value }
+      source { id name }
+    }
+  }
+}
+
+# Fetch log views
+app(id: $appId) {
+  logViews { id name query sourceIds severities columns }
+}
+
+# Fetch single log view by ID
+app(id: $appId) {
+  logView(id: $viewId) { id name query sourceIds severities columns }
+}
+
+# Fetch log sources
+app(id: $appId) {
+  logs {
+    sources { id name type fmt }
+  }
+}
+```
+
+### Query syntax
+
+The `query` parameter supports a rich filter syntax parsed by the ClickHouse BulkEndpoint
+Rust service. Full docs: https://docs.appsignal.com/logging/query-syntax
+
+#### Operators
+
+| Operator | Syntax | Meaning | Example |
+|----------|--------|---------|---------|
+| `=` | `field=value` | Exact match | `group=notifiers`, `severity=error` |
+| `!=` | `field!=value` | Not equal | `source!=mongodb` |
+| `:` | `field:value` | Contains (substring) | `message:timeout`, `hostname:prod` |
+| `!:` | `field!:value` | Does not contain | `hostname!:test` |
+| `>` `<` `>=` `<=` | `field>value` | Numeric comparison | `duration>100` |
+
+#### Available fields
+
+`severity`, `hostname`, `group`, `message`, plus any custom attribute (dot notation
+for nested: `user.id=123`).
+
+#### Free text
+
+Bare words (no field prefix) search the `message` field: `timeout` finds messages
+containing "timeout".
+
+#### Combining
+
+- **Spaces** = implicit AND: `severity=error hostname=web-1`
+- **`OR`** keyword: `severity=error OR severity=warning`
+- **Parentheses**: `severity=error AND (hostname=web-1 OR hostname=web-2)`
+
+#### Quoting
+
+Use quotes for values with spaces or special characters: `group:"background jobs"`,
+`message:"[Email]"`.
+
+**IMPORTANT**: Square brackets `[...]` have special meaning (list/array syntax in
+the legacy query parser). If you want to search for a literal `[Email]` in messages,
+you MUST use `message:"[Email]"` — NOT `[Email]` as bare text.
+
+**Correct**: `group=notifiers message:"[Email]"`
+**Wrong**: `group=notifiers [Email]` (the `[Email]` gets parsed as a list, matching
+any line containing the word "email" case-insensitively, not the literal `[Email]` prefix)
+
+#### Severities
+
+The `severities` GraphQL argument is a separate typed filter. The server merges it
+into the query string as `severity=[error,critical]`. Using the `--severities` CLI
+flag is preferred over embedding severity in the query string.
+
+### Log view resolution
+
+The `--view` flag on `tail` and `search` resolves a log view by:
+1. Trying the value as a **view ID** via `get_log_view(app_id, view_id)`
+2. If that fails, listing all views and matching **by name** (case-insensitive)
+3. Errors if no match or multiple matches
+
+The view's `query`, `sourceIds`, and `severities` are applied as defaults.
+Explicit CLI flags (`--query`, `--severities`, `--source-ids`) always override
+the view's values.
+
+### Pagination (`--page-all`)
+
+The GraphQL `logs.lines` field is **capped at 100 results** with no cursor support.
+The `--page-all` flag on `logs search` works around this using time-window slicing:
+
+1. Fetch 100 lines in **ASC** order (oldest first)
+2. If the page is full (100 results), use the **last line's timestamp** as the
+   new `start` parameter for the next request
+3. **Deduplicate by log line ID** using a `HashSet` — multiple lines can share
+   the exact same timestamp, so the boundary between pages may include duplicates
+4. Stop when a page returns fewer than 100 results
+
+This is implemented in `fetch_all_pages()` in `commands/logs.rs`.
+
+Progress is printed to stderr: `Page N: fetched X lines (Y total unique)`.
+
+### Tailing (`logs tail`)
+
+Live log tailing is implemented via **polling** (not WebSocket/SSE):
+
+1. Start with a 60-second lookback window
+2. Every **1 second**, query for lines between `start` and `now` in ASC order
+3. Deduplicate by ID using a `HashSet`
+4. Move the window forward: next `start` = `now - 120 seconds` (2-minute lookback for safety)
+5. Prune the seen-ID set when it exceeds 1000 entries (re-seed from current batch)
+
+This matches the frontend's live tail behavior in `useLogTail.js`.
+
+### CLI commands
+
+| Command | Description |
+|---|---|
+| `logs tail [filters]` | Real-time log streaming (1s poll interval) |
+| `logs search [filters] [--json] [--page-all]` | One-shot log query |
+| `logs views` | List saved log views for an app |
+| `logs sources` | List log sources for an app |
+
+Filter flags (shared by `tail` and `search`):
+- `--query <text>` — free-text search with field filter syntax
+- `--severities <list>` — comma-separated (e.g. `ERROR,CRITICAL`)
+- `--source-ids <list>` — comma-separated source IDs
+- `--view <name-or-id>` — apply a saved log view's filters
+
+Additional flags for `search`:
+- `--start <ISO8601>` — start time
+- `--end <ISO8601>` — end time
+- `--limit <N>` — max results (default 100, max 100)
+- `--order <ASC|DESC>` — sort order (default DESC)
+- `--json` — JSON output for programmatic/LLM consumption
+- `--page-all` — auto-paginate to fetch all results (ignores --limit/--order)
+
+### LLM workflow examples
+
+**Search for recent errors:**
+```bash
+appsignal-cli logs search --app "MyApp" --environment "production" \
+  --severities ERROR,CRITICAL --json
+```
+
+**Count emails sent in a time window:**
+```bash
+appsignal-cli logs search --app "appsignal" --environment "production" \
+  --query "group:notifiers [Email]" \
+  --start "2025-03-16T06:53:00Z" --page-all --json
+```
+
+**Tail logs with a saved view:**
+```bash
+appsignal-cli logs tail --app "MyApp" --environment "production" --view "Error logs"
+```
+
+**Get log sources to use as filter:**
+```bash
+appsignal-cli logs sources --app "MyApp" --environment "production"
+# Then use a source ID:
+appsignal-cli logs search --app "MyApp" --environment "production" \
+  --source-ids "636873bc14ad665402d297e2" --json
+```
+
 ## Adding new GraphQL queries
 
 When adding new fields to queries, **always verify the field exists** on the
@@ -262,5 +471,8 @@ access, giving it capabilities the GraphQL API does not expose:
 - **Trigger ID filter** on anomaly incidents — not available in GraphQL
 - **Incident mutations** (update state/severity/assignees, create notes) — need to discover GraphQL mutations
 - **Metrics REST API** — metric names, tags, timeseries, and aggregations use a separate REST API (`/api/v2/metrics/...`)
+- **Log line pagination** — GraphQL `logs.lines` is capped at 100 results with no cursor.
+  The CLI works around this with time-window slicing (`--page-all`). The REST API
+  (`/api/v2/logs/lines`) supports proper cursor-based pagination but is not used.
 
 See `TODO.md` for the full feature parity tracking document.

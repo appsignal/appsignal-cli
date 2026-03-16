@@ -388,6 +388,93 @@ struct CreateIncidentNoteData {
     create_incident_note: Option<Incident>,
 }
 
+// -- Log types --
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LogLine {
+    pub id: String,
+    pub timestamp: String,
+    pub severity: String,
+    pub hostname: String,
+    pub group: Option<String>,
+    pub message: String,
+    pub attributes: Option<Vec<KeyStringValue>>,
+    pub source: Option<LogSourceRef>,
+}
+
+/// Lightweight source reference returned inline with log lines.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LogSourceRef {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LogSource {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    pub fmt: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LogView {
+    pub id: String,
+    pub name: String,
+    pub query: Option<String>,
+    #[serde(rename = "sourceIds")]
+    pub source_ids: Option<Vec<String>>,
+    pub severities: Option<Vec<String>>,
+    pub columns: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppLogsData {
+    app: Option<AppLogs>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppLogs {
+    logs: Option<LogsInner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LogsInner {
+    lines: Option<Vec<LogLine>>,
+    #[allow(dead_code)]
+    sources: Option<Vec<LogSource>>,
+    #[serde(rename = "queryWindow")]
+    #[allow(dead_code)]
+    query_window: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppLogViewsData {
+    app: Option<AppLogViews>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppLogViews {
+    #[serde(rename = "logViews")]
+    log_views: Option<Vec<LogView>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppLogSourcesData {
+    app: Option<AppLogSources>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppLogSources {
+    logs: Option<LogSourcesInner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LogSourcesInner {
+    sources: Option<Vec<LogSource>>,
+}
+
 /// Resolve user identifiers (names or IDs) to user IDs.
 /// Each identifier is matched case-insensitively against user names.
 /// If no name matches, the identifier is assumed to be a raw user ID.
@@ -1038,6 +1125,151 @@ impl AppSignalClient {
             .await?;
         data.create_incident_note
             .with_context(|| format!("Failed to create note on incident #{}", incident_number))
+    }
+
+    // -- Log methods --
+
+    /// Query log lines for an app via the GraphQL `logs.lines` field.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_log_lines(
+        &self,
+        app_id: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+        source_ids: Option<&[String]>,
+        severities: Option<&[String]>,
+        query: Option<&str>,
+        limit: Option<i64>,
+        order: Option<&str>,
+    ) -> Result<Vec<LogLine>> {
+        let gql = r#"
+            query AppLogLines($appId: String!, $start: PreciseDateTime, $end: PreciseDateTime,
+                              $sourceIds: [String!], $severities: [SeverityEnum!],
+                              $query: String, $limit: Int, $order: OrderEnum) {
+                app(id: $appId) {
+                    logs {
+                        lines(start: $start, end: $end, sourceIds: $sourceIds,
+                              severities: $severities, query: $query, limit: $limit, order: $order) {
+                            id
+                            timestamp
+                            severity
+                            hostname
+                            group
+                            message
+                            attributes { key value }
+                            source { id name }
+                        }
+                    }
+                }
+            }
+        "#;
+
+        let mut vars = json!({ "appId": app_id });
+        if let Some(s) = start {
+            vars["start"] = json!(s);
+        }
+        if let Some(e) = end {
+            vars["end"] = json!(e);
+        }
+        if let Some(sids) = source_ids {
+            vars["sourceIds"] = json!(sids);
+        }
+        if let Some(sevs) = severities {
+            vars["severities"] = json!(sevs);
+        }
+        if let Some(q) = query {
+            vars["query"] = json!(q);
+        }
+        if let Some(l) = limit {
+            vars["limit"] = json!(l);
+        }
+        if let Some(o) = order {
+            vars["order"] = json!(o);
+        }
+
+        let data: AppLogsData = self.graphql(gql, vars).await?;
+        let app = data.app.context("Application not found")?;
+        let logs = app.logs.context("Logs not available for this app")?;
+        Ok(logs.lines.unwrap_or_default())
+    }
+
+    /// List all log views (saved filter presets) for an app.
+    pub async fn list_log_views(&self, app_id: &str) -> Result<Vec<LogView>> {
+        let gql = r#"
+            query AppLogViews($appId: String!) {
+                app(id: $appId) {
+                    logViews {
+                        id
+                        name
+                        query
+                        sourceIds
+                        severities
+                        columns
+                    }
+                }
+            }
+        "#;
+        let data: AppLogViewsData = self.graphql(gql, json!({ "appId": app_id })).await?;
+        let app = data.app.context("Application not found")?;
+        Ok(app.log_views.unwrap_or_default())
+    }
+
+    /// Get a single log view by ID.
+    pub async fn get_log_view(&self, app_id: &str, view_id: &str) -> Result<LogView> {
+        let gql = r#"
+            query AppLogView($appId: String!, $viewId: String!) {
+                app(id: $appId) {
+                    logView(id: $viewId) {
+                        id
+                        name
+                        query
+                        sourceIds
+                        severities
+                        columns
+                    }
+                }
+            }
+        "#;
+
+        #[derive(Debug, Deserialize)]
+        struct AppLogViewData {
+            app: Option<AppLogViewInner>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct AppLogViewInner {
+            #[serde(rename = "logView")]
+            log_view: Option<LogView>,
+        }
+
+        let data: AppLogViewData = self
+            .graphql(gql, json!({ "appId": app_id, "viewId": view_id }))
+            .await?;
+        let app = data.app.context("Application not found")?;
+        app.log_view
+            .with_context(|| format!("Log view '{}' not found", view_id))
+    }
+
+    /// List all log sources for an app.
+    pub async fn list_log_sources(&self, app_id: &str) -> Result<Vec<LogSource>> {
+        let gql = r#"
+            query AppLogSources($appId: String!) {
+                app(id: $appId) {
+                    logs {
+                        sources {
+                            id
+                            name
+                            type
+                            fmt
+                        }
+                    }
+                }
+            }
+        "#;
+        let data: AppLogSourcesData = self.graphql(gql, json!({ "appId": app_id })).await?;
+        let app = data.app.context("Application not found")?;
+        let logs = app.logs.context("Logs not available for this app")?;
+        Ok(logs.sources.unwrap_or_default())
     }
 }
 
@@ -1970,5 +2202,377 @@ mod tests {
             .unwrap();
         assert_eq!(incident.number(), 42);
         assert_eq!(incident.kind(), "exception");
+    }
+
+    // -- LogLine deserialization tests --
+
+    #[test]
+    fn test_deserialize_log_line() {
+        let json = r#"{
+            "id": "019cf56c-f226-76dd-8b29-a0c66f71d124",
+            "timestamp": "2025-03-16T06:54:36.832Z",
+            "severity": "ERROR",
+            "hostname": "worker-ams1",
+            "group": "notifiers",
+            "message": "[Email] Sending notification",
+            "attributes": [{ "key": "request_id", "value": "abc123" }],
+            "source": { "id": "s1", "name": "application" }
+        }"#;
+        let line: LogLine = serde_json::from_str(json).unwrap();
+        assert_eq!(line.id, "019cf56c-f226-76dd-8b29-a0c66f71d124");
+        assert_eq!(line.severity, "ERROR");
+        assert_eq!(line.hostname, "worker-ams1");
+        assert_eq!(line.group.as_deref(), Some("notifiers"));
+        assert_eq!(line.message, "[Email] Sending notification");
+        let attrs = line.attributes.unwrap();
+        assert_eq!(attrs.len(), 1);
+        assert_eq!(attrs[0].key, "request_id");
+        assert_eq!(attrs[0].value.as_deref(), Some("abc123"));
+        let source = line.source.unwrap();
+        assert_eq!(source.id, "s1");
+        assert_eq!(source.name.as_deref(), Some("application"));
+    }
+
+    #[test]
+    fn test_deserialize_log_line_minimal() {
+        let json = r#"{
+            "id": "line1",
+            "timestamp": "2025-01-01T00:00:00Z",
+            "severity": "INFO",
+            "hostname": "web-1",
+            "group": null,
+            "message": "Hello",
+            "attributes": null,
+            "source": null
+        }"#;
+        let line: LogLine = serde_json::from_str(json).unwrap();
+        assert_eq!(line.id, "line1");
+        assert!(line.group.is_none());
+        assert!(line.attributes.is_none());
+        assert!(line.source.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_log_view() {
+        let json = r#"{
+            "id": "view1",
+            "name": "Error logs",
+            "query": "severity=[error,critical]",
+            "sourceIds": ["s1", "s2"],
+            "severities": ["ERROR", "CRITICAL"],
+            "columns": ["timestamp", "message"]
+        }"#;
+        let view: LogView = serde_json::from_str(json).unwrap();
+        assert_eq!(view.id, "view1");
+        assert_eq!(view.name, "Error logs");
+        assert_eq!(view.query.as_deref(), Some("severity=[error,critical]"));
+        assert_eq!(view.source_ids.as_ref().unwrap(), &["s1", "s2"]);
+        assert_eq!(view.severities.as_ref().unwrap(), &["ERROR", "CRITICAL"]);
+        assert_eq!(view.columns.as_ref().unwrap(), &["timestamp", "message"]);
+    }
+
+    #[test]
+    fn test_deserialize_log_view_minimal() {
+        let json = r#"{
+            "id": "view2",
+            "name": "All logs",
+            "query": null,
+            "sourceIds": null,
+            "severities": null,
+            "columns": null
+        }"#;
+        let view: LogView = serde_json::from_str(json).unwrap();
+        assert_eq!(view.id, "view2");
+        assert_eq!(view.name, "All logs");
+        assert!(view.query.is_none());
+        assert!(view.source_ids.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_log_source() {
+        let json = r#"{
+            "id": "src1",
+            "name": "Application",
+            "type": "vector",
+            "fmt": "JSON"
+        }"#;
+        let source: LogSource = serde_json::from_str(json).unwrap();
+        assert_eq!(source.id, "src1");
+        assert_eq!(source.name, "Application");
+        assert_eq!(source.kind.as_deref(), Some("vector"));
+        assert_eq!(source.fmt.as_deref(), Some("JSON"));
+    }
+
+    // -- Wiremock tests for log API methods --
+
+    #[tokio::test]
+    async fn test_list_log_lines() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "logs": {
+                            "lines": [
+                                {
+                                    "id": "line1",
+                                    "timestamp": "2025-06-01T12:00:00Z",
+                                    "severity": "ERROR",
+                                    "hostname": "web-1",
+                                    "group": "notifiers",
+                                    "message": "Something broke",
+                                    "attributes": [{ "key": "req", "value": "123" }],
+                                    "source": { "id": "s1", "name": "app" }
+                                },
+                                {
+                                    "id": "line2",
+                                    "timestamp": "2025-06-01T12:01:00Z",
+                                    "severity": "INFO",
+                                    "hostname": "web-2",
+                                    "group": null,
+                                    "message": "All good",
+                                    "attributes": [],
+                                    "source": null
+                                }
+                            ]
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let lines = client
+            .list_log_lines("app1", None, None, None, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].id, "line1");
+        assert_eq!(lines[0].severity, "ERROR");
+        assert_eq!(lines[0].message, "Something broke");
+        assert_eq!(lines[1].id, "line2");
+        assert_eq!(lines[1].severity, "INFO");
+    }
+
+    #[tokio::test]
+    async fn test_list_log_lines_empty() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": { "logs": { "lines": [] } }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let lines = client
+            .list_log_lines("app1", None, None, None, None, None, None, None)
+            .await
+            .unwrap();
+        assert!(lines.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_log_lines_with_filters() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "logs": {
+                            "lines": [{
+                                "id": "filtered1",
+                                "timestamp": "2025-06-01T12:00:00Z",
+                                "severity": "ERROR",
+                                "hostname": "web-1",
+                                "group": null,
+                                "message": "Filtered result",
+                                "attributes": [],
+                                "source": null
+                            }]
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let sids = vec!["s1".to_string()];
+        let sevs = vec!["ERROR".to_string()];
+        let lines = client
+            .list_log_lines(
+                "app1",
+                Some("2025-06-01T00:00:00Z"),
+                Some("2025-06-02T00:00:00Z"),
+                Some(&sids),
+                Some(&sevs),
+                Some("timeout"),
+                Some(50),
+                Some("ASC"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].id, "filtered1");
+    }
+
+    #[tokio::test]
+    async fn test_list_log_views() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "logViews": [
+                            {
+                                "id": "v1",
+                                "name": "Error logs",
+                                "query": "severity=[error]",
+                                "sourceIds": ["s1"],
+                                "severities": ["ERROR"],
+                                "columns": ["timestamp", "message"]
+                            },
+                            {
+                                "id": "v2",
+                                "name": "All logs",
+                                "query": null,
+                                "sourceIds": [],
+                                "severities": [],
+                                "columns": null
+                            }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let views = client.list_log_views("app1").await.unwrap();
+        assert_eq!(views.len(), 2);
+        assert_eq!(views[0].id, "v1");
+        assert_eq!(views[0].name, "Error logs");
+        assert_eq!(views[0].query.as_deref(), Some("severity=[error]"));
+        assert_eq!(views[1].id, "v2");
+        assert!(views[1].query.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_log_views_empty() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": { "logViews": [] }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let views = client.list_log_views("app1").await.unwrap();
+        assert!(views.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_log_view() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "logView": {
+                            "id": "v1",
+                            "name": "Error logs",
+                            "query": "severity=[error]",
+                            "sourceIds": ["s1"],
+                            "severities": ["ERROR"],
+                            "columns": []
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let view = client.get_log_view("app1", "v1").await.unwrap();
+        assert_eq!(view.id, "v1");
+        assert_eq!(view.name, "Error logs");
+    }
+
+    #[tokio::test]
+    async fn test_get_log_view_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": { "logView": null }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let err = client.get_log_view("app1", "nope").await.unwrap_err();
+        assert!(err.to_string().contains("nope"));
+    }
+
+    #[tokio::test]
+    async fn test_list_log_sources() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "logs": {
+                            "sources": [
+                                { "id": "s1", "name": "Application", "type": "vector", "fmt": "JSON" },
+                                { "id": "s2", "name": "Custom", "type": "custom", "fmt": "PLAINTEXT" }
+                            ]
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let sources = client.list_log_sources("app1").await.unwrap();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].id, "s1");
+        assert_eq!(sources[0].name, "Application");
+        assert_eq!(sources[0].kind.as_deref(), Some("vector"));
+        assert_eq!(sources[1].fmt.as_deref(), Some("PLAINTEXT"));
+    }
+
+    #[tokio::test]
+    async fn test_list_log_sources_empty() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": { "logs": { "sources": [] } }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let sources = client.list_log_sources("app1").await.unwrap();
+        assert!(sources.is_empty());
     }
 }
