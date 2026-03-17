@@ -41,6 +41,9 @@ appsignal-cli incidents list-exceptions --app "MyApp" --environment "production"
 # Search exceptions by name or message
 appsignal-cli incidents list-exceptions --app "MyApp" --environment "production" --query "TimeoutError"
 
+# List performance incidents
+appsignal-cli incidents list-performance --app "MyApp" --environment "production"
+
 # List anomaly detection alerts
 appsignal-cli incidents list-anomalies --app "MyApp" --environment "production"
 
@@ -91,6 +94,7 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
 |---|---|
 | `incidents list` | List all incident types for an app |
 | `incidents list-exceptions` | List exception incidents (supports text search) |
+| `incidents list-performance` | List performance incidents (supports text search) |
 | `incidents list-anomalies` | List anomaly detection incidents |
 | `incidents show --number <N>` | Show details for a specific incident |
 | `incidents update --number <N>` | Update incident state, severity, or assignees |
@@ -118,20 +122,20 @@ All log and incident commands accept either `--app-id <id>` or `--app <name> [--
 | `--limit <N>` | Max results (default: 10) |
 | `--offset <N>` | Pagination offset |
 | `--state <STATE>` | Filter by state: `OPEN`, `CLOSED`, or `WIP` |
-| `--order <ORDER>` | Sort by: `LAST` (recent activity) or `ID` (creation) |
+| `--order <ORDER>` | Sort by: `LAST` (recent activity, default) or `ID` (creation) |
 
-#### Additional options for `list` and `list-exceptions`
+#### Additional options for `list`, `list-exceptions`, and `list-performance`
 
 | Flag | Description |
 |---|---|
 | `--namespaces <ns>` | Filter by namespaces (comma-separated, e.g. "web,background") |
 | `--action <name>` | Filter by action name (e.g. "UsersController#show") |
 
-#### Additional option for `list-exceptions`
+#### Additional option for `list-exceptions` and `list-performance`
 
 | Flag | Description |
 |---|---|
-| `--query <text>` | Search exception name or message |
+| `--query <text>` | Search by name or message |
 
 #### `incidents update` options
 

@@ -153,6 +153,50 @@ pub async fn list_anomalies(
     Ok(())
 }
 
+/// List performance incidents for an application.
+#[allow(clippy::too_many_arguments)]
+pub async fn list_performance(
+    app_id: Option<&str>,
+    app_name: Option<&str>,
+    environment: Option<&str>,
+    org: Option<&str>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    state: Option<&str>,
+    order: Option<&str>,
+    namespaces: Option<&str>,
+    action_name: Option<&str>,
+    query: Option<&str>,
+) -> Result<()> {
+    let config = Config::load()?;
+    let token = config.require_token()?.to_string();
+    let org_slug = resolve_org(org, &config)?;
+    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+
+    let resolved_app_id = client
+        .resolve_app_id(&org_slug, app_id, app_name, environment)
+        .await?;
+
+    let ns: Option<Vec<String>> =
+        namespaces.map(|s| s.split(',').map(|n| n.trim().to_string()).collect());
+
+    let incidents = client
+        .list_performance_incidents(
+            &resolved_app_id,
+            limit,
+            offset,
+            state,
+            order,
+            ns.as_deref(),
+            action_name,
+            query,
+        )
+        .await?;
+
+    print_performance_table(&incidents);
+    Ok(())
+}
+
 /// Show details for a specific incident.
 pub async fn show(
     incident_number: i64,
@@ -306,6 +350,42 @@ fn print_exception_table(incidents: &[Incident]) {
     }
 
     println!("\n{} exception incident(s) found.", incidents.len());
+}
+
+fn print_performance_table(incidents: &[Incident]) {
+    if incidents.is_empty() {
+        println!("No performance incidents found.");
+        return;
+    }
+
+    println!(
+        "{:<8} {:<10} {:<10} {:<8} {:<22} ACTION",
+        "#", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
+    );
+    println!("{}", "-".repeat(100));
+
+    for incident in incidents {
+        let action = if let Incident::PerformanceIncident { action_names, .. } = incident {
+            action_names
+                .as_ref()
+                .and_then(|names| names.first())
+                .map(|s| s.as_str())
+                .unwrap_or("-")
+        } else {
+            "-"
+        };
+        println!(
+            "{:<8} {:<10} {:<10} {:<8} {:<22} {}",
+            incident.number(),
+            incident.state(),
+            incident.severity(),
+            incident.count(),
+            incident.last_occurred_at(),
+            truncate(action, 50),
+        );
+    }
+
+    println!("\n{} performance incident(s) found.", incidents.len());
 }
 
 fn print_incident_table(incidents: &[Incident]) {

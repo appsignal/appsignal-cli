@@ -14,7 +14,7 @@ src/
     mod.rs             Shared helpers (resolve_org) + re-exports
     auth.rs            auth login / logout / status
     apps.rs            apps list / info / find / set-org / show-org / orgs
-    incidents.rs       incidents list / list-exceptions / list-anomalies / show
+    incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show
     logs.rs            logs tail / search / views / sources
 ```
 
@@ -150,6 +150,7 @@ It can always be overridden with `--org <slug>`.
 | `appsignal-cli apps show-org` | Show the current default organization |
 | `appsignal-cli incidents list [options]` | List all incident types for an app |
 | `appsignal-cli incidents list-exceptions [options]` | List exception incidents (supports `--query` text search) |
+| `appsignal-cli incidents list-performance [options]` | List performance incidents (supports `--query` text search) |
 | `appsignal-cli incidents list-anomalies [options]` | List anomaly detection incidents (shows trigger/alert info) |
 | `appsignal-cli incidents show --number <N> [app options]` | Show full details for a specific incident |
 | `appsignal-cli incidents update --number <N> [--state S] [--severity S] [--assign IDs] [--description D]` | Update incident state, severity, or assignees |
@@ -170,7 +171,7 @@ The `--environment` flag is only needed when multiple apps share the same name
 
 ### Incident listing options
 
-Common options for `incidents list`, `list-exceptions`, and `list-anomalies`:
+Common options for `incidents list`, `list-exceptions`, `list-performance`, and `list-anomalies`:
 
 | Flag | Description |
 |---|---|
@@ -181,20 +182,20 @@ Common options for `incidents list`, `list-exceptions`, and `list-anomalies`:
 | `--limit <N>` | Max results (default: 10) |
 | `--offset <N>` | Pagination offset |
 | `--state <STATE>` | Filter by state: `OPEN`, `CLOSED`, or `WIP` |
-| `--order <ORDER>` | Sort by: `LAST` (recent activity) or `ID` (creation) |
+| `--order <ORDER>` | Sort by: `LAST` (recent activity, default) or `ID` (creation) |
 
-Additional options for `incidents list` and `list-exceptions`:
+Additional options for `incidents list`, `list-exceptions`, and `list-performance`:
 
 | Flag | Description |
 |---|---|
 | `--namespaces <ns>` | Filter by namespaces (comma-separated, e.g. "web,background") |
 | `--action <name>` | Filter by action name (e.g. "UsersController#show") |
 
-Additional option for `list-exceptions` only:
+Additional option for `list-exceptions` and `list-performance`:
 
 | Flag | Description |
 |---|---|
-| `--query <text>` | Text search for exception name or message |
+| `--query <text>` | Text search for name or message |
 
 ### LLM workflow examples
 
@@ -213,6 +214,11 @@ appsignal-cli incidents show --number 42 --app "MyApp" --environment "production
 **Searching for a specific error:**
 ```bash
 appsignal-cli incidents list-exceptions --app "MyApp" --environment "production" --query "TimeoutError" --state OPEN
+```
+
+**Searching for slow actions:**
+```bash
+appsignal-cli incidents list-performance --app "MyApp" --environment "production" --query "UsersController" --state OPEN
 ```
 
 **Checking anomaly alerts:**

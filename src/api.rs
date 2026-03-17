@@ -349,6 +349,17 @@ struct AppAnomalyIncidents {
     anomaly_incidents: Option<Vec<Incident>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AppPerformanceIncidentsData {
+    app: Option<AppPerformanceIncidents>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppPerformanceIncidents {
+    #[serde(rename = "performanceIncidents")]
+    performance_incidents: Option<Vec<Incident>>,
+}
+
 // -- App resource response types --
 
 #[derive(Debug, Deserialize)]
@@ -919,6 +930,61 @@ impl AppSignalClient {
         let data: AppExceptionIncidentsData = self.graphql(query, vars).await?;
         let app = data.app.context("Application not found")?;
         Ok(app.exception_incidents.unwrap_or_default())
+    }
+
+    /// List performance incidents for an app (with text search support).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_performance_incidents(
+        &self,
+        app_id: &str,
+        limit: Option<i64>,
+        offset: Option<i64>,
+        state: Option<&str>,
+        order: Option<&str>,
+        namespaces: Option<&[String]>,
+        action_name: Option<&str>,
+        query_str: Option<&str>,
+    ) -> Result<Vec<Incident>> {
+        let query = r#"
+            query AppPerformanceIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $namespaces: [String], $actionName: String, $query: String) {
+                app(id: $appId) {
+                    performanceIncidents(limit: $limit, offset: $offset, state: $state, order: $order, namespaces: $namespaces, actionName: $actionName, query: $query) {
+                        __typename
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        actionNames namespace mean totalDuration
+                        assignees { id name }
+                    }
+                }
+            }
+        "#;
+
+        let mut vars = json!({ "appId": app_id });
+        if let Some(l) = limit {
+            vars["limit"] = json!(l);
+        }
+        if let Some(o) = offset {
+            vars["offset"] = json!(o);
+        }
+        if let Some(s) = state {
+            vars["state"] = json!(s);
+        }
+        if let Some(o) = order {
+            vars["order"] = json!(o);
+        }
+        if let Some(ns) = namespaces {
+            vars["namespaces"] = json!(ns);
+        }
+        if let Some(a) = action_name {
+            vars["actionName"] = json!(a);
+        }
+        if let Some(q) = query_str {
+            vars["query"] = json!(q);
+        }
+
+        let data: AppPerformanceIncidentsData = self.graphql(query, vars).await?;
+        let app = data.app.context("Application not found")?;
+        Ok(app.performance_incidents.unwrap_or_default())
     }
 
     /// List anomaly incidents for an app.

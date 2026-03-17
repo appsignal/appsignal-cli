@@ -134,7 +134,7 @@ enum IncidentsAction {
         #[arg(long)]
         state: Option<String>,
         /// Sort order: LAST (most recent activity) or ID (creation order)
-        #[arg(long)]
+        #[arg(long, default_value = "LAST")]
         order: Option<String>,
         /// Filter by namespaces (comma-separated, e.g. "web,background")
         #[arg(long)]
@@ -167,7 +167,7 @@ enum IncidentsAction {
         #[arg(long)]
         state: Option<String>,
         /// Sort order: LAST (most recent activity) or ID (creation order)
-        #[arg(long)]
+        #[arg(long, default_value = "LAST")]
         order: Option<String>,
         /// Filter by namespaces (comma-separated, e.g. "web,background")
         #[arg(long)]
@@ -176,6 +176,42 @@ enum IncidentsAction {
         #[arg(long)]
         action: Option<String>,
         /// Search query to filter exception incidents by name or message
+        #[arg(long)]
+        query: Option<String>,
+    },
+    /// List performance incidents (with text search support)
+    ListPerformance {
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+        /// Maximum number of incidents to return
+        #[arg(long, default_value = "10")]
+        limit: Option<i64>,
+        /// Offset for pagination
+        #[arg(long)]
+        offset: Option<i64>,
+        /// Filter by state: OPEN, CLOSED, or WIP
+        #[arg(long)]
+        state: Option<String>,
+        /// Sort order: LAST (most recent activity) or ID (creation order)
+        #[arg(long, default_value = "LAST")]
+        order: Option<String>,
+        /// Filter by namespaces (comma-separated, e.g. "web,background")
+        #[arg(long)]
+        namespaces: Option<String>,
+        /// Filter by action name (e.g. "UsersController#show")
+        #[arg(long)]
+        action: Option<String>,
+        /// Search query to filter performance incidents by action name
         #[arg(long)]
         query: Option<String>,
     },
@@ -203,7 +239,7 @@ enum IncidentsAction {
         #[arg(long)]
         state: Option<String>,
         /// Sort order: LAST (most recent activity) or ID (creation order)
-        #[arg(long)]
+        #[arg(long, default_value = "LAST")]
         order: Option<String>,
     },
     /// Show details for a specific incident by number
@@ -469,6 +505,34 @@ async fn main() -> Result<()> {
                 query,
             } => {
                 commands::incidents::list_exceptions(
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                    limit,
+                    offset,
+                    state.as_deref(),
+                    order.as_deref(),
+                    namespaces.as_deref(),
+                    action.as_deref(),
+                    query.as_deref(),
+                )
+                .await?
+            }
+            IncidentsAction::ListPerformance {
+                app_id,
+                app,
+                environment,
+                org,
+                limit,
+                offset,
+                state,
+                order,
+                namespaces,
+                action,
+                query,
+            } => {
+                commands::incidents::list_performance(
                     app_id.as_deref(),
                     app.as_deref(),
                     environment.as_deref(),
