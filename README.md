@@ -4,11 +4,17 @@ A command-line interface for [AppSignal](https://appsignal.com), built in Rust. 
 
 ## Installation
 
+The easiest way to get `appsignal-cli` in your machine is to run our installation one-liner:
+
 ```sh
-cargo install --path .
+curl -sSL https://github.com/appsignal/appsignal-cli/releases/latest/download/install.sh | sh
 ```
 
-Requires Rust 1.70+.
+You'll need to run it with super-user privileges -- if you're not running this as root, prefix it with `sudo`.
+
+`appsignal-cli` is only supported for Linux and macOS, in the x86_64 (Intel) and arm64 (Apple Silicon) architectures. Linux distributions based on musl, such as Alpine, are also supported.
+
+Not a fan of `curl | sh` one-liners? Download the binary for your operating system and architecture [from our latest release](https://github.com/appsignal/appsignal-cli/releases/latest/).
 
 ## Authentication
 

@@ -1,0 +1,17 @@
+#!/bin/sh
+
+set -eu
+
+TARGET=$1
+
+mkdir release > /dev/null 2>&1 || true
+rm -rf target
+
+echo "Building for '$TARGET'..."
+echo
+
+cross build --release --target "$TARGET"
+tar -czvf "release/$TARGET.tar.gz" -C "target/$TARGET/release appsignal-cli"
+
+echo "Done! Built release at 'release/$TARGET.tar.gz'."
+echo
