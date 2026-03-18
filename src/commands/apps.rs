@@ -1,14 +1,12 @@
 use anyhow::Result;
 
-use super::resolve_org;
-use crate::api::AppSignalClient;
+use super::{authenticated_client, resolve_org};
 use crate::config::Config;
 
 /// List all applications in an organization (and save the org slug to config).
 pub async fn list(org_slug: &str) -> Result<()> {
     let mut config = Config::load()?;
-    let token = config.require_token()?.to_string();
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let apps = client.list_apps(org_slug).await?;
 
@@ -39,9 +37,8 @@ pub async fn list(org_slug: &str) -> Result<()> {
 
 /// Show details for a specific application.
 pub async fn info(app_id: &str) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let mut config = Config::load()?;
+    let client = authenticated_client(&mut config).await?;
 
     let app = client.get_app(app_id).await?;
 
@@ -58,10 +55,9 @@ pub async fn info(app_id: &str) -> Result<()> {
 
 /// Find an application by name and optional environment.
 pub async fn find(name: &str, environment: Option<&str>, org: Option<&str>) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let app = client.find_app(&org_slug, name, environment).await?;
 
@@ -79,8 +75,7 @@ pub async fn find(name: &str, environment: Option<&str>, org: Option<&str>) -> R
 /// Set the default organization slug.
 pub async fn set_org(org_slug: &str) -> Result<()> {
     let mut config = Config::load()?;
-    let token = config.require_token()?.to_string();
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     // Validate the org exists by listing apps
     let _apps = client.list_apps(org_slug).await?;
@@ -103,9 +98,8 @@ pub fn show_org() -> Result<()> {
 
 /// List all organizations the authenticated user has access to.
 pub async fn orgs() -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let mut config = Config::load()?;
+    let client = authenticated_client(&mut config).await?;
 
     let orgs = client.list_organizations().await?;
 
@@ -133,10 +127,9 @@ pub async fn resources(
     org: Option<&str>,
     sections: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)

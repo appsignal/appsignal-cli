@@ -10,9 +10,10 @@ src/
   main.rs              CLI entrypoint, clap derive command/subcommand definitions
   config.rs            Config load/save/delete (~/.config/appsignal/config.toml)
   api.rs               AppSignalClient — GraphQL client for the AppSignal API
+  oauth.rs             OAuth PKCE flow (code verifier, challenge, token exchange, refresh)
   commands/
-    mod.rs             Shared helpers (resolve_org) + re-exports
-    auth.rs            auth login / logout / status
+    mod.rs             Shared helpers (resolve_org, authenticated_client) + re-exports
+    auth.rs            auth login / logout / status (supports both token and OAuth)
     apps.rs            apps list / info / find / set-org / show-org / orgs
     incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show
     logs.rs            logs tail / search / views / sources
@@ -32,14 +33,28 @@ src/
 All API interaction goes through the **GraphQL endpoint**:
 
 ```
-POST https://appsignal.com/graphql?token=<personal-api-token>
+POST https://appsignal.com/graphql
 ```
 
 The endpoint is configurable via the `endpoint` field in config.toml
 (defaults to `https://appsignal.com/graphql`).
 
-Authentication uses a **personal API token** passed as the `token` query
-parameter. Tokens can be found at https://appsignal.com/users/edit.
+### Authentication
+
+The CLI supports two authentication methods:
+
+1. **Personal API token** — passed as a `?token=` query parameter.
+   Tokens can be found at https://appsignal.com/users/edit.
+2. **OAuth (PKCE)** — access token sent via `Authorization: Bearer` header.
+   Obtained through the OAuth authorization code flow with PKCE.
+
+OAuth credentials take precedence when both are present in the config.
+
+The `AppSignalClient` struct stores an `AuthMethod` enum that determines how
+each request is authenticated. The `graphql()` method applies the correct
+authentication based on the variant:
+- `AuthMethod::PersonalToken(token)` → appends `?token=<token>` to the URL
+- `AuthMethod::OAuth { access_token, .. }` → sets `Authorization: Bearer <token>` header
 
 ### Key schema facts (learned the hard way)
 
@@ -122,26 +137,70 @@ There is also a **REST API** at `https://appsignal.com/api/[app_id]/...` for:
 - `/event_names.json` — event names
 - `/sourcemaps` — sourcemap uploads
 
-The REST API uses the same `?token=` query parameter for auth.
+The REST API uses the same `?token=` query parameter for auth (personal tokens)
+or `Authorization: Bearer` header (OAuth tokens).
 
 ## Config
 
 The config file at `~/.config/appsignal/config.toml` stores:
 
-- `token` — personal API token (set via `auth login`)
+- `token` — personal API token (set via `auth login --token`)
 - `org` — default organization slug (auto-saved by `apps list`, or set via `apps set-org`)
 - `endpoint` — (optional) custom GraphQL endpoint URL, defaults to `https://appsignal.com/graphql`
+- `[oauth]` — OAuth credentials (set via `auth login --oauth`):
+  - `access_token` — OAuth access token
+  - `refresh_token` — OAuth refresh token (used for automatic renewal)
+  - `expires_at` — UNIX timestamp when the access token expires
+
+When OAuth credentials are present, they take precedence over the personal token.
+Switching auth methods clears the other (i.e., `--oauth` clears `token`, `--token` clears `[oauth]`).
 
 The org slug is used as a default for all commands that need an organization.
 It can always be overridden with `--org <slug>`.
+
+## OAuth
+
+The CLI uses the **OAuth 2.0 Authorization Code flow with PKCE** for browser-based
+authentication. Implementation is in `src/oauth.rs`.
+
+### Flow
+
+1. CLI generates a PKCE code verifier + S256 challenge and a random state parameter
+2. Opens the browser to `https://appsignal.com/oauth/authorize` with PKCE and state params
+3. User authorizes in the browser; server redirects to `appsignal://callback?code=...&state=...`
+4. User copies the callback URL and pastes it into the terminal
+5. CLI validates the state, then exchanges the code for tokens via `POST /oauth/token`
+6. Credentials are saved to `config.toml`
+
+### Configuration (hardcoded in `src/oauth.rs`)
+
+| Setting | Value |
+|---|---|
+| Client ID | `IimKhAcp18_CojT108_KnthRqTpyT8BCSCddBzSpCZs` |
+| Redirect URI | `appsignal://callback` (custom scheme) |
+| Scopes | `app:read app:write` |
+| PKCE method | S256 |
+| Grant types | `authorization_code`, `refresh_token` |
+
+The OAuth provider is Doorkeeper, configured in `appsignal-server`. The CLI
+application is registered as a **non-confidential** (public) client — no client
+secret is used.
+
+### Token refresh
+
+Before each API call, `commands::authenticated_client()` checks if the stored
+OAuth access token has expired (with a 60-second grace window). If expired and
+a refresh token is available, it automatically refreshes the token and persists
+the updated credentials. If refresh fails, the user is prompted to re-authenticate.
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `appsignal-cli auth login [--token TOKEN]` | Store API token (prompts if omitted), validates via `{ __typename }` |
-| `appsignal-cli auth logout` | Delete stored credentials |
-| `appsignal-cli auth status` | Show auth status (masked token) |
+| `appsignal-cli auth login --oauth` | Authenticate via OAuth PKCE flow (opens browser) |
+| `appsignal-cli auth login [--token TOKEN]` | Store personal API token (prompts if omitted), validates via `{ __typename }` |
+| `appsignal-cli auth logout` | Delete stored credentials (both token and OAuth) |
+| `appsignal-cli auth status` | Show auth status, method (OAuth/token), and expiry |
 | `appsignal-cli apps orgs` | List all organizations you have access to |
 | `appsignal-cli apps list --org <slug>` | List apps in an organization (saves org as default) |
 | `appsignal-cli apps info --app-id <id>` | Show details for a single app by ID |

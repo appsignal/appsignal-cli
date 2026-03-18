@@ -3,7 +3,9 @@ pub mod auth;
 pub mod incidents;
 pub mod logs;
 
+use crate::api::AppSignalClient;
 use crate::config::Config;
+use crate::oauth;
 use anyhow::Result;
 
 /// Resolve the organization slug: use explicit --org if given, fall back to config.
@@ -22,6 +24,50 @@ pub fn resolve_org(explicit: Option<&str>, config: &Config) -> Result<String> {
                  or set it with `appsignal-cli apps set-org --org <slug>`."
             )
         })
+}
+
+/// Create an authenticated [`AppSignalClient`] from the current config.
+///
+/// If OAuth credentials are present and the access token has expired, this
+/// function automatically refreshes the token and persists the updated
+/// credentials before returning the client.
+pub async fn authenticated_client(config: &mut Config) -> Result<AppSignalClient> {
+    // Auto-refresh expired OAuth tokens
+    if config.oauth.is_some() && config.oauth_token_expired() {
+        let oauth = config.oauth.as_ref().unwrap();
+        if let Some(ref refresh_token) = oauth.refresh_token {
+            let base_url = derive_oauth_base(&config.endpoint);
+            let new_creds = oauth::refresh_access_token(base_url.as_deref(), refresh_token).await?;
+            config.oauth = Some(new_creds);
+            config.save()?;
+        } else {
+            anyhow::bail!(
+                "OAuth access token has expired and no refresh token is available.\n\
+                 Please re-authenticate with `appsignal-cli auth login --oauth`."
+            );
+        }
+    }
+
+    let auth = config.auth_method()?;
+    Ok(AppSignalClient::with_auth(auth, config.endpoint.as_deref()))
+}
+
+/// Derive the OAuth base URL from the GraphQL endpoint stored in config.
+///
+/// For example, if endpoint is `https://staging.appsignal.com/graphql`,
+/// the OAuth base is `https://staging.appsignal.com`.
+/// Returns `None` (which means "use default") when no custom endpoint is set.
+fn derive_oauth_base(endpoint: &Option<String>) -> Option<String> {
+    endpoint.as_ref().and_then(|ep| {
+        url::Url::parse(ep).ok().map(|u| {
+            format!(
+                "{}://{}{}",
+                u.scheme(),
+                u.host_str().unwrap_or("appsignal.com"),
+                u.port().map(|p| format!(":{}", p)).unwrap_or_default()
+            )
+        })
+    })
 }
 
 #[cfg(test)]

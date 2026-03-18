@@ -1,6 +1,7 @@
 mod api;
 mod commands;
 mod config;
+mod oauth;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -40,11 +41,14 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum AuthAction {
-    /// Set your personal API token
+    /// Authenticate with AppSignal (personal token or OAuth)
     Login {
         /// Your AppSignal personal API token
-        #[arg(long)]
+        #[arg(long, conflicts_with = "oauth")]
         token: Option<String>,
+        /// Authenticate via OAuth (opens your browser)
+        #[arg(long)]
+        oauth: bool,
     },
     /// Remove stored credentials
     Logout,
@@ -432,7 +436,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Auth { action } => match action {
-            AuthAction::Login { token } => commands::auth::login(token).await?,
+            AuthAction::Login { token, oauth } => commands::auth::login(token, oauth).await?,
             AuthAction::Logout => commands::auth::logout()?,
             AuthAction::Status => commands::auth::status()?,
         },

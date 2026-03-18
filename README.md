@@ -12,13 +12,27 @@ Requires Rust 1.70+.
 
 ## Authentication
 
+There are two ways to authenticate:
+
+### OAuth (recommended)
+
+```sh
+appsignal-cli auth login --oauth
+```
+
+This opens your browser to authorize the CLI with your AppSignal account. After
+authorizing, copy the callback URL from the browser and paste it into the terminal.
+OAuth tokens are automatically refreshed when they expire.
+
+### Personal API token
+
 Get your personal API token from https://appsignal.com/users/edit, then:
 
 ```sh
 appsignal-cli auth login --token <your-token>
 ```
 
-The token is stored in `~/.config/appsignal/config.toml`.
+Credentials are stored in `~/.config/appsignal/config.toml`.
 
 ## Quick start
 
@@ -73,9 +87,10 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
 
 | Command | Description |
 |---|---|
-| `auth login [--token TOKEN]` | Store API token (prompts if omitted) |
+| `auth login --oauth` | Authenticate via OAuth (opens browser) |
+| `auth login [--token TOKEN]` | Authenticate with a personal API token (prompts if omitted) |
 | `auth logout` | Remove stored credentials |
-| `auth status` | Show authentication status |
+| `auth status` | Show authentication status and method |
 
 ### `apps`
 
@@ -224,9 +239,19 @@ appsignal-cli logs sources --app "MyApp" --environment "production"
 Config is stored at `~/.config/appsignal/config.toml`:
 
 ```toml
+# When using a personal API token:
 token = "your-api-token"
 org = "your-org-slug"
+
+# When using OAuth (set automatically by `auth login --oauth`):
+[oauth]
+access_token = "..."
+refresh_token = "..."
+expires_at = 1742324400
 ```
+
+OAuth credentials take precedence over personal tokens when both are present.
+Expired OAuth tokens are automatically refreshed before API calls.
 
 The `org` value is saved automatically when you run `apps list --org <slug>` or `apps set-org --org <slug>`, so subsequent commands don't need `--org`.
 

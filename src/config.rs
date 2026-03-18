@@ -3,11 +3,35 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// Describes how the CLI authenticates with the AppSignal API.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AuthMethod {
+    /// Personal API token passed as a query parameter.
+    PersonalToken(String),
+    /// OAuth access token sent as a Bearer header, with optional refresh support.
+    OAuth {
+        access_token: String,
+        refresh_token: Option<String>,
+        /// Seconds since UNIX epoch when the access token expires.
+        expires_at: Option<i64>,
+    },
+}
+
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     pub token: Option<String>,
     pub org: Option<String>,
     pub endpoint: Option<String>,
+    /// OAuth credentials (stored alongside the personal token; OAuth takes precedence).
+    pub oauth: Option<OAuthCredentials>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OAuthCredentials {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    /// Seconds since UNIX epoch when the access token expires.
+    pub expires_at: Option<i64>,
 }
 
 impl Config {
@@ -73,6 +97,32 @@ impl Config {
             .as_deref()
             .filter(|t| !t.is_empty())
             .context("Not authenticated. Run `appsignal-cli auth login` first.")
+    }
+
+    /// Determine the authentication method to use.
+    /// OAuth credentials take precedence over a personal token when present.
+    pub fn auth_method(&self) -> Result<AuthMethod> {
+        if let Some(ref oauth) = self.oauth {
+            return Ok(AuthMethod::OAuth {
+                access_token: oauth.access_token.clone(),
+                refresh_token: oauth.refresh_token.clone(),
+                expires_at: oauth.expires_at,
+            });
+        }
+
+        let token = self.require_token()?;
+        Ok(AuthMethod::PersonalToken(token.to_string()))
+    }
+
+    /// Returns true if the stored OAuth access token has expired (or will expire within 60 s).
+    pub fn oauth_token_expired(&self) -> bool {
+        if let Some(ref oauth) = self.oauth {
+            if let Some(expires_at) = oauth.expires_at {
+                let now = chrono::Utc::now().timestamp();
+                return now >= expires_at - 60; // 60 s grace window
+            }
+        }
+        false
     }
 }
 
@@ -230,5 +280,114 @@ mod tests {
 
         let loaded = Config::load_from(&path).unwrap();
         assert_eq!(loaded, config2);
+    }
+
+    #[test]
+    fn test_auth_method_personal_token() {
+        let config = Config {
+            token: Some("my-token".to_string()),
+            ..Config::default()
+        };
+        let method = config.auth_method().unwrap();
+        assert_eq!(method, AuthMethod::PersonalToken("my-token".to_string()));
+    }
+
+    #[test]
+    fn test_auth_method_oauth_takes_precedence() {
+        let config = Config {
+            token: Some("my-token".to_string()),
+            oauth: Some(OAuthCredentials {
+                access_token: "oauth-access".to_string(),
+                refresh_token: Some("oauth-refresh".to_string()),
+                expires_at: Some(9999999999),
+            }),
+            ..Config::default()
+        };
+        let method = config.auth_method().unwrap();
+        assert_eq!(
+            method,
+            AuthMethod::OAuth {
+                access_token: "oauth-access".to_string(),
+                refresh_token: Some("oauth-refresh".to_string()),
+                expires_at: Some(9999999999),
+            }
+        );
+    }
+
+    #[test]
+    fn test_auth_method_no_credentials() {
+        let config = Config::default();
+        let err = config.auth_method().unwrap_err();
+        assert!(err.to_string().contains("Not authenticated"));
+    }
+
+    #[test]
+    fn test_oauth_credentials_serde_round_trip() {
+        let config = Config {
+            token: None,
+            org: Some("my-org".to_string()),
+            endpoint: None,
+            oauth: Some(OAuthCredentials {
+                access_token: "access-tok".to_string(),
+                refresh_token: Some("refresh-tok".to_string()),
+                expires_at: Some(1700000000),
+            }),
+        };
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(config, deserialized);
+    }
+
+    #[test]
+    fn test_oauth_token_expired_when_expired() {
+        let config = Config {
+            oauth: Some(OAuthCredentials {
+                access_token: "tok".to_string(),
+                refresh_token: None,
+                expires_at: Some(0), // epoch = long expired
+            }),
+            ..Config::default()
+        };
+        assert!(config.oauth_token_expired());
+    }
+
+    #[test]
+    fn test_oauth_token_not_expired_when_future() {
+        let config = Config {
+            oauth: Some(OAuthCredentials {
+                access_token: "tok".to_string(),
+                refresh_token: None,
+                expires_at: Some(9999999999),
+            }),
+            ..Config::default()
+        };
+        assert!(!config.oauth_token_expired());
+    }
+
+    #[test]
+    fn test_oauth_token_expired_no_oauth() {
+        let config = Config::default();
+        assert!(!config.oauth_token_expired());
+    }
+
+    #[test]
+    fn test_save_and_load_oauth_credentials() {
+        let dir = TempDir::new().unwrap();
+        let path = config_path(&dir);
+
+        let config = Config {
+            token: None,
+            org: Some("test-org".to_string()),
+            endpoint: None,
+            oauth: Some(OAuthCredentials {
+                access_token: "acc-tok".to_string(),
+                refresh_token: Some("ref-tok".to_string()),
+                expires_at: Some(1700000000),
+            }),
+        };
+        config.save_to(&path).unwrap();
+
+        let loaded = Config::load_from(&path).unwrap();
+        assert_eq!(loaded, config);
     }
 }

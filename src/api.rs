@@ -3,12 +3,14 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::config::AuthMethod;
+
 const DEFAULT_GRAPHQL_ENDPOINT: &str = "https://appsignal.com/graphql";
 
 /// Client for the AppSignal API.
 pub struct AppSignalClient {
     http: Client,
-    token: String,
+    auth: AuthMethod,
     endpoint: String,
 }
 
@@ -602,10 +604,21 @@ pub fn filter_apps(
 }
 
 impl AppSignalClient {
+    /// Create a client using a personal API token (legacy flow).
     pub fn new(token: &str, endpoint: Option<&str>) -> Self {
         Self {
             http: Client::new(),
-            token: token.to_string(),
+            auth: AuthMethod::PersonalToken(token.to_string()),
+            endpoint: endpoint.unwrap_or(DEFAULT_GRAPHQL_ENDPOINT).to_string(),
+        }
+    }
+
+    /// Create a client from an [`AuthMethod`], which can be either a personal
+    /// token or OAuth credentials.
+    pub fn with_auth(auth: AuthMethod, endpoint: Option<&str>) -> Self {
+        Self {
+            http: Client::new(),
+            auth,
             endpoint: endpoint.unwrap_or(DEFAULT_GRAPHQL_ENDPOINT).to_string(),
         }
     }
@@ -615,27 +628,39 @@ impl AppSignalClient {
     pub fn with_endpoint(token: &str, endpoint: &str) -> Self {
         Self {
             http: Client::new(),
-            token: token.to_string(),
+            auth: AuthMethod::PersonalToken(token.to_string()),
             endpoint: endpoint.to_string(),
         }
     }
 
     /// Execute a GraphQL query against AppSignal.
+    ///
+    /// Authentication is applied based on the stored [`AuthMethod`]:
+    /// - **PersonalToken**: appended as `?token=<token>` query parameter.
+    /// - **OAuth**: sent via `Authorization: Bearer <access_token>` header.
     async fn graphql<T: serde::de::DeserializeOwned>(
         &self,
         query: &str,
         variables: serde_json::Value,
     ) -> Result<T> {
-        let url = format!("{}?token={}", self.endpoint, self.token);
         let body = json!({
             "query": query,
             "variables": variables,
         });
 
-        let resp = self
-            .http
-            .post(&url)
-            .json(&body)
+        let request = match &self.auth {
+            AuthMethod::PersonalToken(token) => {
+                let url = format!("{}?token={}", self.endpoint, token);
+                self.http.post(&url).json(&body)
+            }
+            AuthMethod::OAuth { access_token, .. } => self
+                .http
+                .post(&self.endpoint)
+                .bearer_auth(access_token)
+                .json(&body),
+        };
+
+        let resp = request
             .send()
             .await
             .context("Failed to send request to AppSignal")?;

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use tokio::time::{sleep, Duration};
 
-use super::resolve_org;
+use super::{authenticated_client, resolve_org};
 use crate::api::{AppSignalClient, LogLine, LogView};
 use crate::config::Config;
 
@@ -21,10 +21,9 @@ pub async fn tail(
     source_ids: Option<&str>,
     view: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
@@ -131,10 +130,9 @@ pub async fn search(
     json_output: bool,
     page_all: bool,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
@@ -287,10 +285,9 @@ pub async fn views(
     environment: Option<&str>,
     org: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
@@ -333,10 +330,9 @@ pub async fn sources(
     environment: Option<&str>,
     org: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)

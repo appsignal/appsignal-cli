@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use super::resolve_org;
-use crate::api::{resolve_user_ids, AppSignalClient, Incident};
+use super::{authenticated_client, resolve_org};
+use crate::api::{resolve_user_ids, Incident};
 use crate::config::Config;
 
 /// List incidents for an application (all types).
@@ -18,10 +18,9 @@ pub async fn list(
     namespaces: Option<&str>,
     action_name: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
@@ -61,10 +60,9 @@ pub async fn list_exceptions(
     action_name: Option<&str>,
     query: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
@@ -102,10 +100,9 @@ pub async fn list_anomalies(
     state: Option<&str>,
     order: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
@@ -168,10 +165,9 @@ pub async fn list_performance(
     action_name: Option<&str>,
     query: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
@@ -205,10 +201,9 @@ pub async fn show(
     environment: Option<&str>,
     org: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
@@ -237,10 +232,9 @@ pub async fn update(
     unassign: Option<&[String]>,
     description: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
@@ -303,10 +297,9 @@ pub async fn add_note(
     environment: Option<&str>,
     org: Option<&str>,
 ) -> Result<()> {
-    let config = Config::load()?;
-    let token = config.require_token()?.to_string();
+    let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
-    let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+    let client = authenticated_client(&mut config).await?;
 
     let resolved_app_id = client
         .resolve_app_id(&org_slug, app_id, app_name, environment)
