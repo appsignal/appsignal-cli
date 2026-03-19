@@ -11,7 +11,7 @@ echo "Building for '$TARGET'..."
 echo
 
 cross build --release --target "$TARGET"
-tar -czvf "release/$TARGET.tar.gz" -C "target/$TARGET/release appsignal-cli"
+tar -czvf "release/$TARGET.tar.gz" -C "target/$TARGET/release" appsignal-cli
 
 echo "Done! Built release at 'release/$TARGET.tar.gz'."
 echo
