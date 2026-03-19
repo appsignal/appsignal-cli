@@ -1,0 +1,16 @@
+[build.env]
+passthrough = [
+  "PKG_CONFIG_ALLOW_CROSS"
+]
+
+[target.x86_64-unknown-linux-gnu]
+image = "appsignal/agent-x86_64-unknown-linux-gnu:3"
+
+[target.x86_64-unknown-linux-musl]
+image = "appsignal/agent-x86_64-unknown-linux-musl:3"
+
+[target.aarch64-unknown-linux-gnu]
+image = "appsignal/agent-aarch64-unknown-linux-gnu:3"
+
+[target.aarch64-unknown-linux-musl]
+image = "appsignal/agent-aarch64-unknown-linux-musl:3"
