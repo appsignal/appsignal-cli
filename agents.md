@@ -20,7 +20,7 @@ src/
 ```
 
 - **CLI framework**: clap v4 with derive macros
-- **HTTP client**: reqwest v0.12 with JSON + native-tls
+- **HTTP client**: reqwest v0.12 with JSON + rustls-tls
 - **Async runtime**: tokio
 - **Error handling**: anyhow with contextual messages
 - **Config format**: TOML via the `toml` crate
