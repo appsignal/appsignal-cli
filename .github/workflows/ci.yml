@@ -2,9 +2,19 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - develop
   pull_request:
-    branches: [main]
+    types:
+      - opened
+      - reopened
+      - synchronize
+  schedule:
+    - cron: 0 0 * * 1-5
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: "${{ !contains(github.ref, 'main')}}"
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,3 +49,14 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --check
+
+  cross_compile:
+    name: "Cross compile"
+    uses: ./.github/workflows/build_release.yaml
+    with:
+      branch: "${{ github.head_ref || github.ref_name }}"
+      upload_artifacts: false
+      run_versioning: false
+    secrets:
+      DOCKERHUB_USERNAME: ${{secrets.PUBLISH_DOCKERHUB_USERNAME}}
+      DOCKERHUB_TOKEN: ${{secrets.PUBLISH_DOCKERHUB_TOKEN}}
