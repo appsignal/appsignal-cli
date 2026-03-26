@@ -39,3 +39,14 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --check
+
+  cross_compile:
+    name: "Cross compile"
+    uses: ./.github/workflows/build_release.yaml
+    with:
+      branch: "${{ github.head_ref || github.ref_name }}"
+      upload_artifacts: false
+      run_versioning: false
+    secrets:
+      DOCKERHUB_USERNAME: ${{secrets.PUBLISH_DOCKERHUB_USERNAME}}
+      DOCKERHUB_TOKEN: ${{secrets.PUBLISH_DOCKERHUB_TOKEN}}
