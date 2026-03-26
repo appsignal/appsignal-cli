@@ -30,25 +30,21 @@ jobs:
       - run: cargo test
 
   clippy:
-    name: Clippy
+    name: "Rust clippy"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -- -D warnings
+      - run: rustup component add clippy
+      - run: cargo clippy --verbose --tests --all-targets --all-features -- -D warnings
 
-  fmt:
-    name: Format
+  formatter:
+    name: "Rust formatter"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --check
+      - run: rustup component add rustfmt
+      - run: cargo fmt --check --verbose
 
   cross_compile:
     name: "Cross compile"
