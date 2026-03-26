@@ -2,9 +2,19 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - develop
   pull_request:
-    branches: [main]
+    types:
+      - opened
+      - reopened
+      - synchronize
+  schedule:
+    - cron: 0 0 * * 1-5
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: "${{ !contains(github.ref, 'main')}}"
 
 env:
   CARGO_TERM_COLOR: always
