@@ -187,13 +187,13 @@ pub async fn orgs(format: Output) -> Result<()> {
     )
 }
 
-/// Show resources for an application (users, notifiers, namespaces, dashboards).
+/// Show resources for an application (users, notifiers, namespaces, dashboards, deploy markers).
 pub async fn resources(
     app_id: Option<&str>,
     app_name: Option<&str>,
     environment: Option<&str>,
     org: Option<&str>,
-    sections: Option<&str>,
+    sections: &[&str],
     format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
@@ -204,9 +204,7 @@ pub async fn resources(
         .resolve_app_id(&org_slug, app_id, app_name, environment)
         .await?;
 
-    let section_list: Vec<String> = sections
-        .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
-        .unwrap_or_default();
+    let section_list: Vec<String> = sections.iter().map(|section| section.to_string()).collect();
 
     let resources = client
         .get_app_resources(&resolved_app_id, &section_list)
@@ -248,7 +246,7 @@ pub async fn resources(
             if let Some(namespaces) = &resources.namespaces {
                 writeln!(w, "Namespaces:")?;
                 for ns in namespaces {
-                    writeln!(w, "  {}", ns)?;
+                    writeln!(w, "  {}", ns.name)?;
                 }
                 writeln!(w)?;
             }
@@ -261,6 +259,31 @@ pub async fn resources(
                         "  {}  {}",
                         dashboard.id,
                         dashboard.title.as_deref().unwrap_or("-")
+                    )?;
+                }
+                writeln!(w)?;
+            }
+
+            if let Some(deploy_markers) = &resources.deploy_markers {
+                writeln!(w, "Deploy markers:")?;
+                writeln!(
+                    w,
+                    "  {:<28} {:<12} {:<20} {:<10} USER",
+                    "ID", "REVISION", "CREATED AT", "ERRORS"
+                )?;
+                writeln!(w, "  {}", "-".repeat(90))?;
+                for marker in deploy_markers {
+                    writeln!(
+                        w,
+                        "  {:<28} {:<12} {:<20} {:<10} {}",
+                        marker.id,
+                        marker.short_revision.as_deref().unwrap_or("-"),
+                        marker.created_at.as_deref().unwrap_or("-"),
+                        marker
+                            .exception_count
+                            .map(|count| count.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        marker.user.as_deref().unwrap_or("-"),
                     )?;
                 }
             }

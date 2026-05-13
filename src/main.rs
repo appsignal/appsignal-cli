@@ -5,7 +5,7 @@ mod oauth;
 mod output;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 use crate::commands::skill::InstallTarget;
 use crate::output::Output;
@@ -138,24 +138,43 @@ enum AppsAction {
     ShowOrg,
     /// List all organizations you have access to
     Orgs,
-    /// Show resources for an app (users, notifiers, namespaces, dashboards)
+    /// Show resources for an app
     Resources {
-        /// Application ID (alternative to --app + --environment)
-        #[arg(long)]
-        app_id: Option<String>,
-        /// Application name
-        #[arg(long)]
-        app: Option<String>,
-        /// Environment filter
-        #[arg(long)]
-        environment: Option<String>,
-        /// Organization slug (uses saved default if omitted)
-        #[arg(long)]
-        org: Option<String>,
-        /// Comma-separated sections to include: users, notifiers, namespaces, dashboards (default: all)
-        #[arg(long)]
-        sections: Option<String>,
+        #[command(subcommand)]
+        action: AppResourceAction,
     },
+}
+
+#[derive(Args)]
+struct AppResourceArgs {
+    /// Application ID (alternative to --app + --environment)
+    #[arg(long)]
+    app_id: Option<String>,
+    /// Application name
+    #[arg(long)]
+    app: Option<String>,
+    /// Environment filter
+    #[arg(long)]
+    environment: Option<String>,
+    /// Organization slug (uses saved default if omitted)
+    #[arg(long)]
+    org: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum AppResourceAction {
+    /// Show all supported app resources
+    All(AppResourceArgs),
+    /// Show app users
+    Users(AppResourceArgs),
+    /// Show app notifiers
+    Notifiers(AppResourceArgs),
+    /// Show app namespaces
+    Namespaces(AppResourceArgs),
+    /// Show app dashboards
+    Dashboards(AppResourceArgs),
+    /// Show recent deploy markers
+    DeployMarkers(AppResourceArgs),
 }
 
 #[derive(Subcommand)]
@@ -532,23 +551,74 @@ async fn main() -> Result<()> {
             AppsAction::SetOrg { org } => commands::apps::set_org(&org, cli.output).await?,
             AppsAction::ShowOrg => commands::apps::show_org(cli.output)?,
             AppsAction::Orgs => commands::apps::orgs(cli.output).await?,
-            AppsAction::Resources {
-                app_id,
-                app,
-                environment,
-                org,
-                sections,
-            } => {
-                commands::apps::resources(
-                    app_id.as_deref(),
-                    app.as_deref(),
-                    environment.as_deref(),
-                    org.as_deref(),
-                    sections.as_deref(),
-                    cli.output,
-                )
-                .await?
-            }
+            AppsAction::Resources { action } => match action {
+                AppResourceAction::All(args) => {
+                    commands::apps::resources(
+                        args.app_id.as_deref(),
+                        args.app.as_deref(),
+                        args.environment.as_deref(),
+                        args.org.as_deref(),
+                        &[],
+                        cli.output,
+                    )
+                    .await?
+                }
+                AppResourceAction::Users(args) => {
+                    commands::apps::resources(
+                        args.app_id.as_deref(),
+                        args.app.as_deref(),
+                        args.environment.as_deref(),
+                        args.org.as_deref(),
+                        &["users"],
+                        cli.output,
+                    )
+                    .await?
+                }
+                AppResourceAction::Notifiers(args) => {
+                    commands::apps::resources(
+                        args.app_id.as_deref(),
+                        args.app.as_deref(),
+                        args.environment.as_deref(),
+                        args.org.as_deref(),
+                        &["notifiers"],
+                        cli.output,
+                    )
+                    .await?
+                }
+                AppResourceAction::Namespaces(args) => {
+                    commands::apps::resources(
+                        args.app_id.as_deref(),
+                        args.app.as_deref(),
+                        args.environment.as_deref(),
+                        args.org.as_deref(),
+                        &["namespaces"],
+                        cli.output,
+                    )
+                    .await?
+                }
+                AppResourceAction::Dashboards(args) => {
+                    commands::apps::resources(
+                        args.app_id.as_deref(),
+                        args.app.as_deref(),
+                        args.environment.as_deref(),
+                        args.org.as_deref(),
+                        &["dashboards"],
+                        cli.output,
+                    )
+                    .await?
+                }
+                AppResourceAction::DeployMarkers(args) => {
+                    commands::apps::resources(
+                        args.app_id.as_deref(),
+                        args.app.as_deref(),
+                        args.environment.as_deref(),
+                        args.org.as_deref(),
+                        &["deploy_markers"],
+                        cli.output,
+                    )
+                    .await?
+                }
+            },
         },
         Commands::Project { action } => match action {
             ProjectAction::Init {
