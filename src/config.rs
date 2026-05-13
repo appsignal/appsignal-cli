@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+const LOCAL_CONFIG_FILE_NAME: &str = ".appsignal.toml";
 
 /// Describes how the CLI authenticates with the AppSignal API.
 #[derive(Debug, Clone, PartialEq)]
@@ -17,7 +19,7 @@ pub enum AuthMethod {
     },
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     pub token: Option<String>,
     pub org: Option<String>,
@@ -26,6 +28,8 @@ pub struct Config {
     pub oauth_client_id: Option<String>,
     /// OAuth credentials (stored alongside the personal token; OAuth takes precedence).
     pub oauth: Option<OAuthCredentials>,
+    #[serde(skip)]
+    pub(crate) active_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -45,26 +49,124 @@ impl Config {
         Ok(config_dir.join("config.toml"))
     }
 
-    /// Load the config from disk, or return defaults if it doesn't exist.
-    pub fn load() -> Result<Self> {
-        Self::load_from(&Self::default_path()?)
+    /// Returns the nearest project-local config override, if one exists.
+    fn local_override_path() -> Result<Option<PathBuf>> {
+        let current_dir =
+            std::env::current_dir().context("Could not determine current directory")?;
+        Ok(Self::local_override_path_from(&current_dir))
     }
 
-    /// Load the config from a specific path.
-    pub fn load_from(path: &PathBuf) -> Result<Self> {
+    fn local_override_path_from(start_dir: &Path) -> Option<PathBuf> {
+        let project_root = Self::project_root_from(start_dir);
+        Self::local_override_path_with_project_root(start_dir, project_root.as_deref())
+    }
+
+    fn local_override_path_with_project_root(
+        start_dir: &Path,
+        project_root: Option<&Path>,
+    ) -> Option<PathBuf> {
+        for dir in start_dir.ancestors() {
+            let path = dir.join(LOCAL_CONFIG_FILE_NAME);
+            if path.exists() {
+                return Some(path);
+            }
+
+            if project_root == Some(dir) || project_root.is_none() {
+                break;
+            }
+        }
+
+        None
+    }
+
+    fn project_root_from(start_dir: &Path) -> Option<PathBuf> {
+        start_dir
+            .ancestors()
+            .find(|dir| dir.join(".git").exists())
+            .map(Path::to_path_buf)
+    }
+
+    fn local_override_target_path() -> Result<PathBuf> {
+        let current_dir =
+            std::env::current_dir().context("Could not determine current directory")?;
+        Ok(Self::local_override_target_path_from(&current_dir))
+    }
+
+    fn local_override_target_path_from(start_dir: &Path) -> PathBuf {
+        let project_root = Self::project_root_from(start_dir);
+        Self::local_override_target_path_with_project_root(start_dir, project_root.as_deref())
+    }
+
+    fn local_override_target_path_with_project_root(
+        start_dir: &Path,
+        project_root: Option<&Path>,
+    ) -> PathBuf {
+        if let Some(path) = Self::local_override_path_with_project_root(start_dir, project_root) {
+            path
+        } else if let Some(project_root) = project_root {
+            project_root.join(LOCAL_CONFIG_FILE_NAME)
+        } else {
+            start_dir.join(LOCAL_CONFIG_FILE_NAME)
+        }
+    }
+
+    /// Load the effective config from disk.
+    ///
+    /// When the current directory (or one of its parents) contains
+    /// `.appsignal.toml`, that file becomes the active config for the project.
+    /// Otherwise the CLI falls back to `~/.config/appsignal/config.toml`.
+    pub fn load() -> Result<Self> {
+        if let Some(local_path) = Self::local_override_path()? {
+            Self::load_local_only_at(&local_path)
+        } else {
+            let global_path = Self::default_path()?;
+            let mut config = Self::load_from_path(&global_path)?;
+            config.active_path = Some(global_path);
+            Ok(config)
+        }
+    }
+
+    fn load_from_path(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
         }
         let contents = fs::read_to_string(path)
             .with_context(|| format!("Failed to read config at {}", path.display()))?;
-        let config: Config = toml::from_str(&contents)
+        let mut config: Config = toml::from_str(&contents)
             .with_context(|| format!("Failed to parse config at {}", path.display()))?;
+        config.active_path = None;
         Ok(config)
     }
 
-    /// Persist the config to disk.
+    pub(crate) fn load_local_only() -> Result<Self> {
+        let path = Self::local_override_target_path()?;
+        Self::load_local_only_at(&path)
+    }
+
+    fn load_local_only_at(path: &Path) -> Result<Self> {
+        let mut config = Self::load_from_path(path)?;
+        config.active_path = Some(path.to_path_buf());
+        Ok(config)
+    }
+
+    /// Persist the config to the active config file.
+    ///
+    /// Config loaded through `Config::load()` is saved back to the active
+    /// project config when one exists, otherwise to the global config file.
     pub fn save(&self) -> Result<()> {
-        self.save_to(&Self::default_path()?)
+        let path = self.active_path.clone().unwrap_or(Self::default_path()?);
+        self.save_to(&path)
+    }
+
+    /// Clear auth credentials from the active config scope.
+    pub fn clear_credentials(&mut self) {
+        self.token = None;
+        self.oauth = None;
+    }
+
+    /// Returns the config file path currently in use.
+    pub fn active_path(&self) -> Option<&Path> {
+        self.active_path.as_deref()
     }
 
     /// Persist the config to a specific path.
@@ -76,20 +178,6 @@ impl Config {
         let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
         fs::write(path, contents)
             .with_context(|| format!("Failed to write config to {}", path.display()))?;
-        Ok(())
-    }
-
-    /// Delete the config file.
-    pub fn delete() -> Result<()> {
-        Self::delete_at(&Self::default_path()?)
-    }
-
-    /// Delete the config file at a specific path.
-    pub fn delete_at(path: &PathBuf) -> Result<()> {
-        if path.exists() {
-            fs::remove_file(path)
-                .with_context(|| format!("Failed to delete config at {}", path.display()))?;
-        }
         Ok(())
     }
 
@@ -147,6 +235,16 @@ impl Config {
     }
 }
 
+impl PartialEq for Config {
+    fn eq(&self, other: &Self) -> bool {
+        self.token == other.token
+            && self.org == other.org
+            && self.endpoint == other.endpoint
+            && self.oauth_client_id == other.oauth_client_id
+            && self.oauth == other.oauth
+    }
+}
+
 fn normalize_base_url(endpoint: &str) -> Result<String> {
     let mut url =
         url::Url::parse(endpoint).with_context(|| format!("Invalid endpoint URL: {}", endpoint))?;
@@ -171,6 +269,10 @@ mod tests {
 
     fn config_path(dir: &TempDir) -> PathBuf {
         dir.path().join("config.toml")
+    }
+
+    fn local_config_path(dir: &TempDir) -> PathBuf {
+        dir.path().join(LOCAL_CONFIG_FILE_NAME)
     }
 
     #[test]
@@ -230,7 +332,7 @@ mod tests {
     fn test_load_from_missing_file() {
         let dir = TempDir::new().unwrap();
         let path = config_path(&dir);
-        let config = Config::load_from(&path).unwrap();
+        let config = Config::load_from_path(&path).unwrap();
         assert_eq!(config, Config::default());
     }
 
@@ -246,7 +348,7 @@ mod tests {
         };
         config.save_to(&path).unwrap();
 
-        let loaded = Config::load_from(&path).unwrap();
+        let loaded = Config::load_from_path(&path).unwrap();
         assert_eq!(loaded, config);
     }
 
@@ -275,7 +377,7 @@ mod tests {
         config.save_to(&path).unwrap();
         assert!(path.exists());
 
-        Config::delete_at(&path).unwrap();
+        fs::remove_file(&path).unwrap();
         assert!(!path.exists());
     }
 
@@ -284,7 +386,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = config_path(&dir);
         // Should not error when file doesn't exist
-        Config::delete_at(&path).unwrap();
+        if path.exists() {
+            fs::remove_file(&path).unwrap();
+        }
     }
 
     #[test]
@@ -293,9 +397,156 @@ mod tests {
         let path = config_path(&dir);
         fs::write(&path, "token = \"only-token\"\n").unwrap();
 
-        let config = Config::load_from(&path).unwrap();
+        let config = Config::load_from_path(&path).unwrap();
         assert_eq!(config.token, Some("only-token".to_string()));
         assert_eq!(config.org, None);
+    }
+
+    #[test]
+    fn test_local_override_path_from_finds_nearest_project_config() {
+        let dir = TempDir::new().unwrap();
+        let project_root = dir.path().join("project");
+        let nested_dir = project_root.join("src").join("bin");
+        fs::create_dir_all(&nested_dir).unwrap();
+
+        let local_path = project_root.join(LOCAL_CONFIG_FILE_NAME);
+        fs::write(&local_path, "endpoint = \"https://staging.lol\"\n").unwrap();
+
+        assert_eq!(
+            Config::local_override_path_with_project_root(&nested_dir, Some(&project_root)),
+            Some(local_path)
+        );
+    }
+
+    #[test]
+    fn test_load_local_config_does_not_inherit_missing_global_values() {
+        let _global_dir = TempDir::new().unwrap();
+        let local_dir = TempDir::new().unwrap();
+        let local_path = local_config_path(&local_dir);
+
+        fs::write(
+            &local_path,
+            concat!(
+                "org = \"local-org\"\n",
+                "endpoint = \"https://staging.lol\"\n"
+            ),
+        )
+        .unwrap();
+
+        let config = Config::load_local_only_at(&local_path).unwrap();
+
+        assert_eq!(config.token, None);
+        assert_eq!(config.org, Some("local-org".to_string()));
+        assert_eq!(
+            config.endpoint_base_url().unwrap(),
+            Some("https://staging.lol/".to_string())
+        );
+        assert_eq!(config.oauth_client_id(), None);
+        assert_eq!(config.oauth, None);
+    }
+
+    #[test]
+    fn test_load_local_only_at_does_not_copy_global_credentials() {
+        let local_dir = TempDir::new().unwrap();
+        let local_path = local_config_path(&local_dir);
+
+        let config = Config::load_local_only_at(&local_path).unwrap();
+
+        assert_eq!(config.token, None);
+        assert_eq!(config.oauth, None);
+        assert_eq!(config.active_path(), Some(local_path.as_path()));
+    }
+
+    #[test]
+    fn test_local_override_target_path_from_prefers_existing_override() {
+        let dir = TempDir::new().unwrap();
+        let project_root = dir.path().join("project");
+        let nested_dir = project_root.join("src").join("bin");
+        fs::create_dir_all(&nested_dir).unwrap();
+
+        let local_path = project_root.join(LOCAL_CONFIG_FILE_NAME);
+        fs::write(&local_path, "org = \"test-org\"\n").unwrap();
+
+        assert_eq!(
+            Config::local_override_target_path_with_project_root(&nested_dir, Some(&project_root)),
+            local_path
+        );
+    }
+
+    #[test]
+    fn test_local_override_target_path_from_uses_git_root_when_no_override_exists() {
+        let dir = TempDir::new().unwrap();
+        let project_root = dir.path().join("project");
+        let nested_dir = project_root.join("src").join("bin");
+        fs::create_dir_all(project_root.join(".git")).unwrap();
+        fs::create_dir_all(&nested_dir).unwrap();
+
+        assert_eq!(
+            Config::local_override_target_path_with_project_root(&nested_dir, Some(&project_root)),
+            project_root.join(LOCAL_CONFIG_FILE_NAME)
+        );
+    }
+
+    #[test]
+    fn test_local_override_target_path_from_falls_back_to_current_dir() {
+        let dir = TempDir::new().unwrap();
+        let nested_dir = dir.path().join("scratch");
+        fs::create_dir_all(&nested_dir).unwrap();
+
+        assert_eq!(
+            Config::local_override_target_path_with_project_root(&nested_dir, None),
+            nested_dir.join(LOCAL_CONFIG_FILE_NAME)
+        );
+    }
+
+    #[test]
+    fn test_local_override_path_from_does_not_escape_current_dir_outside_git() {
+        let dir = TempDir::new().unwrap();
+        let nested_dir = dir.path().join("scratch");
+        fs::create_dir_all(&nested_dir).unwrap();
+        fs::write(local_config_path(&dir), "org = \"temp-root\"\n").unwrap();
+
+        assert_eq!(
+            Config::local_override_path_with_project_root(&nested_dir, None),
+            None
+        );
+    }
+
+    #[test]
+    fn test_save_persists_to_local_override_when_active() {
+        let local_dir = TempDir::new().unwrap();
+        let local_path = local_config_path(&local_dir);
+
+        fs::write(&local_path, "endpoint = \"https://staging.lol\"\n").unwrap();
+
+        let mut config = Config::load_local_only_at(&local_path).unwrap();
+        config.token = Some("local-token".to_string());
+        config.save().unwrap();
+
+        let local_config = Config::load_from_path(&local_path).unwrap();
+
+        assert_eq!(local_config.token, Some("local-token".to_string()));
+        assert_eq!(
+            local_config.endpoint,
+            Some("https://staging.lol".to_string())
+        );
+    }
+
+    #[test]
+    fn test_clear_credentials_clears_active_config_auth() {
+        let dir = TempDir::new().unwrap();
+        let local_path = local_config_path(&dir);
+
+        let mut config = Config {
+            token: Some("secret".to_string()),
+            active_path: Some(local_path),
+            ..Config::default()
+        };
+
+        config.clear_credentials();
+
+        assert_eq!(config.token, None);
+        assert_eq!(config.oauth, None);
     }
 
     #[test]
@@ -316,7 +567,7 @@ mod tests {
         };
         config2.save_to(&path).unwrap();
 
-        let loaded = Config::load_from(&path).unwrap();
+        let loaded = Config::load_from_path(&path).unwrap();
         assert_eq!(loaded, config2);
     }
 
@@ -371,6 +622,7 @@ mod tests {
                 refresh_token: Some("refresh-tok".to_string()),
                 expires_at: Some(1700000000),
             }),
+            ..Config::default()
         };
         let serialized = toml::to_string_pretty(&config).unwrap();
         let deserialized: Config = toml::from_str(&serialized).unwrap();
@@ -424,10 +676,11 @@ mod tests {
                 refresh_token: Some("ref-tok".to_string()),
                 expires_at: Some(1700000000),
             }),
+            ..Config::default()
         };
         config.save_to(&path).unwrap();
 
-        let loaded = Config::load_from(&path).unwrap();
+        let loaded = Config::load_from_path(&path).unwrap();
         assert_eq!(loaded, config);
     }
 

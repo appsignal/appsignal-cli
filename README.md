@@ -31,6 +31,23 @@ authorizing, the CLI waits for the browser callback on `http://127.0.0.1:9789/ca
 by default, so you usually do not need to copy anything back into the terminal.
 OAuth tokens are automatically refreshed when they expire.
 
+For project-specific setup, initialize `.appsignal.toml` first:
+
+```sh
+appsignal-cli project init
+appsignal-cli auth login --oauth
+```
+
+You can also set a project-specific endpoint, OAuth client ID, and default org
+during initialization:
+
+```sh
+appsignal-cli project init \
+  --endpoint https://staging.lol \
+  --oauth-client-id your-staging-client-id \
+  --org my-sideproject
+```
+
 ### Personal API token
 
 Get your personal API token from https://appsignal.com/users/edit, then:
@@ -39,7 +56,12 @@ Get your personal API token from https://appsignal.com/users/edit, then:
 appsignal-cli auth login --token <your-token>
 ```
 
-Credentials are stored in `~/.config/appsignal/config.toml`.
+Credentials are stored in `~/.config/appsignal/config.toml` by default. Once a
+project-local `.appsignal.toml` exists, commands run in that project use it
+automatically.
+
+`project init` does not copy your stored global token or OAuth credentials into
+the local file. Authenticate afterward if you want project-specific credentials.
 
 ## Quick start
 
@@ -49,6 +71,9 @@ appsignal-cli apps orgs
 
 # List apps in an organization (saves the org as default)
 appsignal-cli apps list --org <org-slug>
+
+# Initialize a project-local config
+appsignal-cli project init --org <org-slug>
 
 # Find an app by name
 appsignal-cli apps find --name "MyApp" --environment "production"
@@ -109,20 +134,26 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
 
 | Command | Description |
 |---|---|
-| `auth login --oauth` | Authenticate via OAuth (opens browser and waits for local callback) |
-| `auth login [--token TOKEN]` | Authenticate with a personal API token (prompts if omitted) |
-| `auth logout` | Remove stored credentials |
+| `auth login --oauth [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth using the active config for the current project or your global config |
+| `auth login [--token TOKEN] [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate with a personal API token using the active config for the current project or your global config |
+| `auth logout` | Remove stored credentials from the active config |
 | `auth status` | Show authentication status and method |
+
+### `project`
+
+| Command | Description |
+|---|---|
+| `project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |
 
 ### `apps`
 
 | Command | Description |
 |---|---|
 | `apps orgs` | List all organizations you have access to |
-| `apps list --org <slug>` | List apps in an organization (saves org as default) |
+| `apps list --org <slug>` | List apps in an organization and save the default org to the active config |
 | `apps info --app-id <id>` | Show details for a specific app |
 | `apps find --name <name> [--environment <env>]` | Find an app by name |
-| `apps set-org --org <slug>` | Set the default organization |
+| `apps set-org --org <slug>` | Set the default organization in the active config |
 | `apps show-org` | Show the current default organization |
 
 ### `incidents`
@@ -272,7 +303,39 @@ appsignal-cli logs sources --app "MyApp" --environment "production"
 
 ## Configuration
 
-Config is stored at `~/.config/appsignal/config.toml`:
+Config is stored globally at `~/.config/appsignal/config.toml`.
+
+You can also add a project-local `.appsignal.toml` anywhere in your project. When
+the CLI runs inside that project (or a subdirectory), it uses the nearest
+`.appsignal.toml` as the only config for that project.
+
+The easiest way to create one is:
+
+```sh
+appsignal-cli project init
+```
+
+If you run that command inside a git checkout, the CLI creates or updates
+`.appsignal.toml` at the repository root. Outside git, it uses the current
+directory.
+
+Example:
+
+```toml
+# .appsignal.toml
+endpoint = "https://staging.lol"
+oauth_client_id = "your-staging-client-id"
+
+[oauth]
+access_token = "..."
+refresh_token = "..."
+expires_at = 1742324400
+```
+
+When a local project config is active, commands read and write only that
+`.appsignal.toml` file. Otherwise they use the global config.
+
+Global config example:
 
 ```toml
 # When using a personal API token:
@@ -301,7 +364,7 @@ When `endpoint` is set to a base URL like `https://staging.lol`, the CLI uses
 `https://staging.lol/graphql` are not supported.
 OAuth always uses the built-in local callback at `http://127.0.0.1:9789/callback`.
 
-The `org` value is saved automatically when you run `apps list --org <slug>` or `apps set-org --org <slug>`, so subsequent commands don't need `--org`.
+The `org` value is saved automatically when you run `apps list --org <slug>` or `apps set-org --org <slug>` into whichever config is active. Use `project init` first if you want those writes to stay local to the project.
 
 ## Development
 
