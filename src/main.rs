@@ -17,6 +17,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Show a more playful overview of the CLI
+    About,
     /// Configure your AppSignal API token
     Auth {
         #[command(subcommand)]
@@ -435,6 +437,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::About => commands::about::show()?,
         Commands::Auth { action } => match action {
             AuthAction::Login { token, oauth } => commands::auth::login(token, oauth).await?,
             AuthAction::Logout => commands::auth::logout()?,
