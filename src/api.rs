@@ -132,13 +132,41 @@ pub struct Dashboard {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Namespace {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct DeployMarker {
+    pub id: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: Option<String>,
+    #[serde(rename = "shortRevision")]
+    pub short_revision: Option<String>,
+    pub revision: Option<String>,
+    #[serde(rename = "gitCompareUrl")]
+    pub git_compare_url: Option<String>,
+    pub user: Option<String>,
+    #[serde(rename = "liveForInWords")]
+    pub live_for_in_words: Option<String>,
+    #[serde(rename = "liveFor")]
+    pub live_for: Option<i64>,
+    #[serde(rename = "exceptionCount")]
+    pub exception_count: Option<i64>,
+    #[serde(rename = "exceptionRate")]
+    pub exception_rate: Option<f64>,
+}
+
 /// Resources available for an application.
 #[derive(Debug, Default, Serialize)]
 pub struct AppResources {
     pub users: Option<Vec<User>>,
     pub notifiers: Option<Vec<Notifier>>,
-    pub namespaces: Option<Vec<String>>,
+    pub namespaces: Option<Vec<Namespace>>,
     pub dashboards: Option<Vec<Dashboard>>,
+    pub deploy_markers: Option<Vec<DeployMarker>>,
 }
 
 // -- Incident types --
@@ -399,8 +427,10 @@ struct AppResourcesData {
 struct AppResourcesInner {
     users: Option<Vec<User>>,
     notifiers: Option<Vec<Notifier>>,
-    namespaces: Option<Vec<String>>,
+    namespaces: Option<Vec<Namespace>>,
     dashboards: Option<Vec<Dashboard>>,
+    #[serde(rename = "deployMarkers")]
+    deploy_markers: Option<Vec<DeployMarker>>,
 }
 
 // -- Mutation response types --
@@ -806,7 +836,7 @@ impl AppSignalClient {
         Ok(app.users.unwrap_or_default())
     }
 
-    /// Get resources for an application (users, notifiers, namespaces, dashboards).
+    /// Get resources for an application (users, notifiers, namespaces, dashboards, deploy markers).
     pub async fn get_app_resources(
         &self,
         app_id: &str,
@@ -824,10 +854,15 @@ impl AppSignalClient {
             fields.push_str("notifiers { id name icon } ");
         }
         if want("namespaces") {
-            fields.push_str("namespaces ");
+            fields.push_str("namespaces { id name } ");
         }
         if want("dashboards") {
             fields.push_str("dashboards { id title description } ");
+        }
+        if want("deploy_markers") {
+            fields.push_str(
+                "deployMarkers(limit: 20) { id createdAt shortRevision revision gitCompareUrl user liveForInWords liveFor exceptionCount exceptionRate } ",
+            );
         }
 
         let query = format!(
@@ -843,6 +878,7 @@ impl AppSignalClient {
             notifiers: app.notifiers,
             namespaces: app.namespaces,
             dashboards: app.dashboards,
+            deploy_markers: app.deploy_markers,
         })
     }
 
@@ -1991,6 +2027,60 @@ mod tests {
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let err = client.get_app("nope").await.unwrap_err();
         assert!(err.to_string().contains("nope"));
+    }
+
+    #[tokio::test]
+    async fn test_get_app_resources_with_deploy_markers() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "users": [{ "id": "u1", "name": "Jane", "email": "jane@example.com" }],
+                        "notifiers": [{ "id": "n1", "name": "Slack", "icon": "slack" }],
+                        "namespaces": [
+                            { "id": "ns1", "name": "web" },
+                            { "id": "ns2", "name": "background" }
+                        ],
+                        "dashboards": [{ "id": "d1", "title": "API", "description": "API metrics" }],
+                        "deployMarkers": [{
+                            "id": "m1",
+                            "createdAt": "2025-06-01T12:00:00Z",
+                            "shortRevision": "abc1234",
+                            "revision": "abc1234567890",
+                            "gitCompareUrl": "https://example.com/compare",
+                            "user": "jeroen",
+                            "liveForInWords": "2 hours",
+                            "liveFor": 7200,
+                            "exceptionCount": 3,
+                            "exceptionRate": 0.25
+                        }]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let resources = client.get_app_resources("app1", &[]).await.unwrap();
+
+        assert_eq!(resources.users.as_ref().unwrap().len(), 1);
+        assert_eq!(resources.notifiers.as_ref().unwrap().len(), 1);
+        let namespaces = resources.namespaces.as_ref().unwrap();
+        assert_eq!(namespaces.len(), 2);
+        assert_eq!(namespaces[0].name, "web");
+        assert_eq!(namespaces[1].name, "background");
+        assert_eq!(resources.dashboards.as_ref().unwrap().len(), 1);
+        assert_eq!(resources.deploy_markers.as_ref().unwrap().len(), 1);
+
+        let marker = &resources.deploy_markers.as_ref().unwrap()[0];
+        assert_eq!(marker.id, "m1");
+        assert_eq!(marker.short_revision.as_deref(), Some("abc1234"));
+        assert_eq!(marker.revision.as_deref(), Some("abc1234567890"));
+        assert_eq!(marker.user.as_deref(), Some("jeroen"));
+        assert_eq!(marker.exception_count, Some(3));
+        assert_eq!(marker.exception_rate, Some(0.25));
     }
 
     #[tokio::test]

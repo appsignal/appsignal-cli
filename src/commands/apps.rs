@@ -36,6 +36,56 @@ struct AppResourcesResponse<'a> {
     resources: &'a AppResources,
 }
 
+#[derive(Tabled)]
+struct UserRow<'a> {
+    #[tabled(rename = "ID")]
+    id: &'a str,
+    #[tabled(rename = "NAME")]
+    name: &'a str,
+    #[tabled(rename = "EMAIL")]
+    email: &'a str,
+}
+
+#[derive(Tabled)]
+struct NotifierRow<'a> {
+    #[tabled(rename = "ID")]
+    id: &'a str,
+    #[tabled(rename = "NAME")]
+    name: &'a str,
+}
+
+#[derive(Tabled)]
+struct NamespaceRow<'a> {
+    #[tabled(rename = "ID")]
+    id: &'a str,
+    #[tabled(rename = "NAME")]
+    name: &'a str,
+}
+
+#[derive(Tabled)]
+struct DashboardRow<'a> {
+    #[tabled(rename = "ID")]
+    id: &'a str,
+    #[tabled(rename = "TITLE")]
+    title: &'a str,
+    #[tabled(rename = "DESCRIPTION")]
+    description: &'a str,
+}
+
+#[derive(Tabled)]
+struct DeployMarkerRow<'a> {
+    #[tabled(rename = "ID")]
+    id: &'a str,
+    #[tabled(rename = "REVISION")]
+    revision: &'a str,
+    #[tabled(rename = "CREATED AT")]
+    created_at: &'a str,
+    #[tabled(rename = "ERRORS")]
+    errors: String,
+    #[tabled(rename = "USER")]
+    user: &'a str,
+}
+
 /// Table view of a single app. Kept separate from `App` so the JSON payload
 /// and the human columns can evolve independently.
 #[derive(Tabled)]
@@ -68,6 +118,84 @@ impl Render for AppListing {
         });
         output::table(w, rows)?;
         writeln!(w, "{} application(s) found.", self.apps.len())
+    }
+}
+
+impl Render for AppResourcesResponse<'_> {
+    fn render_human(&self, w: &mut dyn Write) -> io::Result<()> {
+        let resources = self.resources;
+        let mut wrote_section = false;
+
+        if let Some(users) = &resources.users {
+            writeln!(w, "Users:")?;
+            let rows = users.iter().map(|user| UserRow {
+                id: &user.id,
+                name: user.name.as_deref().unwrap_or("-"),
+                email: user.email.as_deref().unwrap_or("-"),
+            });
+            output::table(w, rows)?;
+            wrote_section = true;
+        }
+
+        if let Some(notifiers) = &resources.notifiers {
+            if wrote_section {
+                writeln!(w)?;
+            }
+            writeln!(w, "Notifiers:")?;
+            let rows = notifiers.iter().map(|notifier| NotifierRow {
+                id: &notifier.id,
+                name: notifier.name.as_deref().unwrap_or("-"),
+            });
+            output::table(w, rows)?;
+            wrote_section = true;
+        }
+
+        if let Some(namespaces) = &resources.namespaces {
+            if wrote_section {
+                writeln!(w)?;
+            }
+            writeln!(w, "Namespaces:")?;
+            let rows = namespaces.iter().map(|namespace| NamespaceRow {
+                id: &namespace.id,
+                name: &namespace.name,
+            });
+            output::table(w, rows)?;
+            wrote_section = true;
+        }
+
+        if let Some(dashboards) = &resources.dashboards {
+            if wrote_section {
+                writeln!(w)?;
+            }
+            writeln!(w, "Dashboards:")?;
+            let rows = dashboards.iter().map(|dashboard| DashboardRow {
+                id: &dashboard.id,
+                title: dashboard.title.as_deref().unwrap_or("-"),
+                description: dashboard.description.as_deref().unwrap_or("-"),
+            });
+            output::table(w, rows)?;
+            wrote_section = true;
+        }
+
+        if let Some(deploy_markers) = &resources.deploy_markers {
+            if wrote_section {
+                writeln!(w)?;
+            }
+            writeln!(w, "Deploy markers:")?;
+            let rows = deploy_markers.iter().map(|marker| DeployMarkerRow {
+                id: &marker.id,
+                revision: marker.short_revision.as_deref().unwrap_or("-"),
+                created_at: marker.created_at.as_deref().unwrap_or("-"),
+                errors: marker
+                    .exception_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                user: marker.user.as_deref().unwrap_or("-"),
+            });
+            output::table(w, rows)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -187,13 +315,13 @@ pub async fn orgs(format: Output) -> Result<()> {
     )
 }
 
-/// Show resources for an application (users, notifiers, namespaces, dashboards).
+/// Show resources for an application (users, notifiers, namespaces, dashboards, deploy markers).
 pub async fn resources(
     app_id: Option<&str>,
     app_name: Option<&str>,
     environment: Option<&str>,
     org: Option<&str>,
-    sections: Option<&str>,
+    sections: &[&str],
     format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
@@ -204,68 +332,96 @@ pub async fn resources(
         .resolve_app_id(&org_slug, app_id, app_name, environment)
         .await?;
 
-    let section_list: Vec<String> = sections
-        .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
-        .unwrap_or_default();
+    let section_list: Vec<String> = sections.iter().map(|section| section.to_string()).collect();
 
     let resources = client
         .get_app_resources(&resolved_app_id, &section_list)
         .await?;
 
-    output::print_with(
-        AppResourcesResponse {
+    output::print(
+        &AppResourcesResponse {
             resources: &resources,
         },
         format,
-        |w| {
-            if let Some(users) = &resources.users {
-                writeln!(w, "Users:")?;
-                for user in users {
-                    writeln!(
-                        w,
-                        "  {}  {}  {}",
-                        user.id,
-                        user.name.as_deref().unwrap_or("-"),
-                        user.email.as_deref().unwrap_or("-")
-                    )?;
-                }
-                writeln!(w)?;
-            }
-
-            if let Some(notifiers) = &resources.notifiers {
-                writeln!(w, "Notifiers:")?;
-                for notifier in notifiers {
-                    writeln!(
-                        w,
-                        "  {}  {}",
-                        notifier.id,
-                        notifier.name.as_deref().unwrap_or("-")
-                    )?;
-                }
-                writeln!(w)?;
-            }
-
-            if let Some(namespaces) = &resources.namespaces {
-                writeln!(w, "Namespaces:")?;
-                for ns in namespaces {
-                    writeln!(w, "  {}", ns)?;
-                }
-                writeln!(w)?;
-            }
-
-            if let Some(dashboards) = &resources.dashboards {
-                writeln!(w, "Dashboards:")?;
-                for dashboard in dashboards {
-                    writeln!(
-                        w,
-                        "  {}  {}",
-                        dashboard.id,
-                        dashboard.title.as_deref().unwrap_or("-")
-                    )?;
-                }
-            }
-
-            Ok(())
-        },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::{Dashboard, DeployMarker, Namespace, Notifier, User};
+
+    #[test]
+    fn app_resources_render_human_uses_tables_for_sections() {
+        let resources = AppResources {
+            users: Some(vec![User {
+                id: "user-1".to_string(),
+                name: Some("Ada".to_string()),
+                email: Some("ada@example.com".to_string()),
+            }]),
+            notifiers: Some(vec![Notifier {
+                id: "notifier-1".to_string(),
+                name: Some("Slack".to_string()),
+                icon: None,
+            }]),
+            namespaces: Some(vec![Namespace {
+                id: "namespace-1".to_string(),
+                name: "web".to_string(),
+            }]),
+            dashboards: Some(vec![Dashboard {
+                id: "dashboard-1".to_string(),
+                title: Some("Overview".to_string()),
+                description: Some("Main dashboard".to_string()),
+            }]),
+            deploy_markers: Some(vec![DeployMarker {
+                id: "marker-1".to_string(),
+                created_at: Some("2026-05-13T12:00:00Z".to_string()),
+                short_revision: Some("abc123".to_string()),
+                revision: None,
+                git_compare_url: None,
+                user: Some("jeroen".to_string()),
+                live_for_in_words: None,
+                live_for: None,
+                exception_count: Some(2),
+                exception_rate: None,
+            }]),
+        };
+        let response = AppResourcesResponse {
+            resources: &resources,
+        };
+
+        let mut buf = Vec::new();
+        response.render_human(&mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        assert!(output.contains("Users:"));
+        assert!(output.contains("| ID"));
+        assert!(output.contains("ada@example.com"));
+        assert!(output.contains("Notifiers:"));
+        assert!(output.contains("Namespaces:"));
+        assert!(output.contains("Dashboards:"));
+        assert!(output.contains("Main dashboard"));
+        assert!(output.contains("Deploy markers:"));
+        assert!(output.contains("abc123"));
+    }
+
+    #[test]
+    fn app_resources_response_serializes_nested_resources_shape() {
+        let resources = AppResources {
+            users: Some(vec![User {
+                id: "user-1".to_string(),
+                name: Some("Ada".to_string()),
+                email: Some("ada@example.com".to_string()),
+            }]),
+            ..AppResources::default()
+        };
+        let response = AppResourcesResponse {
+            resources: &resources,
+        };
+
+        let json = serde_json::to_value(&response).unwrap();
+
+        assert_eq!(json["resources"]["users"][0]["id"], "user-1");
+        assert_eq!(json["resources"]["users"][0]["name"], "Ada");
+    }
 }
