@@ -6,12 +6,15 @@ use reqwest::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::io::Write;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::time::{timeout, Duration};
 
 use crate::config::OAuthCredentials;
 
 const DEFAULT_OAUTH_BASE: &str = "https://appsignal.com";
-const CLIENT_ID: &str = "IimKhAcp18_CojT108_KnthRqTpyT8BCSCddBzSpCZs";
-const REDIRECT_URI: &str = "appsignal://callback";
+const PRODUCTION_CLIENT_ID: &str = "FpXP78S_vXNrjSRYQIMWQ9sREl2AXS0qD0VSWwfHST0";
+const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:9789/callback";
 const SCOPES: &str = "app:read app:write";
 
 /// OAuth configuration for the AppSignal CLI application.
@@ -24,13 +27,13 @@ pub struct OAuthConfig {
 }
 
 impl OAuthConfig {
-    pub fn new(base_url: Option<&str>) -> Self {
+    pub fn new(base_url: Option<&str>, client_id: Option<&str>) -> Self {
         let base = base_url.unwrap_or(DEFAULT_OAUTH_BASE).trim_end_matches('/');
         Self {
-            client_id: CLIENT_ID.to_string(),
+            client_id: client_id.unwrap_or(PRODUCTION_CLIENT_ID).to_string(),
             authorize_url: format!("{}/oauth/authorize", base),
             token_url: format!("{}/oauth/token", base),
-            redirect_uri: REDIRECT_URI.to_string(),
+            redirect_uri: DEFAULT_REDIRECT_URI.to_string(),
             scopes: SCOPES.to_string(),
         }
     }
@@ -69,12 +72,31 @@ fn build_authorize_url(config: &OAuthConfig, state: &str, code_challenge: &str) 
     )
 }
 
-/// Parse the callback URL (e.g. `appsignal://callback?code=...&state=...`)
+fn callback_url_error(redirect_uri: &str) -> String {
+    format!(
+        "Invalid callback URL. Expected a URL starting with: {}",
+        redirect_uri
+    )
+}
+
+/// Parse the callback URL (e.g. `http://127.0.0.1:9789/callback?code=...&state=...`)
 /// and extract the authorization code after validating the state parameter.
-fn parse_callback_url(callback_url: &str, expected_state: &str) -> Result<String> {
-    let url = url::Url::parse(callback_url).context(
-        "Invalid callback URL. Expected a URL like: appsignal://callback?code=...&state=...",
-    )?;
+fn parse_callback_url(
+    callback_url: &str,
+    redirect_uri: &str,
+    expected_state: &str,
+) -> Result<String> {
+    let url = url::Url::parse(callback_url).context(callback_url_error(redirect_uri))?;
+    let expected_url =
+        url::Url::parse(redirect_uri).context("Invalid OAuth redirect URI configured")?;
+
+    if url.scheme() != expected_url.scheme()
+        || url.host_str() != expected_url.host_str()
+        || url.port_or_known_default() != expected_url.port_or_known_default()
+        || url.path() != expected_url.path()
+    {
+        anyhow::bail!(callback_url_error(redirect_uri));
+    }
 
     let params: std::collections::HashMap<String, String> =
         url.query_pairs().into_owned().collect();
@@ -164,9 +186,10 @@ async fn exchange_code(
 /// Refresh an OAuth access token using a refresh token.
 pub async fn refresh_access_token(
     base_url: Option<&str>,
+    client_id: Option<&str>,
     refresh_token: &str,
 ) -> Result<OAuthCredentials> {
-    let config = OAuthConfig::new(base_url);
+    let config = OAuthConfig::new(base_url, client_id);
     let client = Client::new();
 
     let resp = client
@@ -206,24 +229,82 @@ pub async fn refresh_access_token(
     })
 }
 
-/// Prompt the user to paste the callback URL from the browser.
-fn prompt_callback_url() -> Result<String> {
-    print!("Paste the callback URL here: ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
+async fn wait_for_loopback_callback(redirect_uri: &str) -> Result<String> {
+    let redirect_url =
+        url::Url::parse(redirect_uri).context("Invalid OAuth redirect URI configured")?;
+    let port = redirect_url
+        .port_or_known_default()
+        .context("Loopback OAuth redirect URI must include a port")?;
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to bind local OAuth callback listener on port {}",
+                port
+            )
+        })?;
+
+    println!("Waiting for OAuth callback on {} ...", redirect_uri);
+    println!();
+
+    let (mut stream, _) = timeout(Duration::from_secs(300), listener.accept())
+        .await
+        .context("Timed out waiting for OAuth callback")??;
+
+    let mut buffer = [0_u8; 8192];
+    let bytes_read = stream
+        .read(&mut buffer)
+        .await
+        .context("Failed to read OAuth callback request")?;
+
+    let request = std::str::from_utf8(&buffer[..bytes_read])
+        .context("OAuth callback request was not valid UTF-8")?;
+    let request_target = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .context("OAuth callback request was malformed")?;
+
+    let host = redirect_url
+        .host_str()
+        .context("Loopback OAuth redirect URI must include a host")?;
+    let authority = match redirect_url.port() {
+        Some(port) => format!("{}:{}", host, port),
+        None => host.to_string(),
+    };
+    let callback_url = format!(
+        "{}://{}{}",
+        redirect_url.scheme(),
+        authority,
+        request_target
+    );
+
+    let response_body = "Authentication complete. You can return to the terminal.";
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        response_body.len(),
+        response_body
+    );
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .context("Failed to write OAuth callback response")?;
+
+    Ok(callback_url)
 }
 
 /// Run the full OAuth PKCE authorization flow.
 ///
 /// 1. Open the browser to AppSignal's authorization page.
-/// 2. After the user authorizes, the browser redirects to the custom scheme
-///    `appsignal://callback?code=...&state=...`.
-/// 3. The user pastes the callback URL back into the terminal.
+/// 2. After the user authorizes, the browser redirects to the configured
+///    callback URL.
+/// 3. The CLI receives the callback automatically on the local loopback URL.
 /// 4. Exchange the authorization code for access and refresh tokens.
-pub async fn perform_oauth_flow(base_url: Option<&str>) -> Result<OAuthCredentials> {
-    let config = OAuthConfig::new(base_url);
+pub async fn perform_oauth_flow(
+    base_url: Option<&str>,
+    client_id: Option<&str>,
+) -> Result<OAuthCredentials> {
+    let config = OAuthConfig::new(base_url, client_id);
 
     // Step 1: PKCE parameters
     let code_verifier = generate_code_verifier();
@@ -244,19 +325,10 @@ pub async fn perform_oauth_flow(base_url: Option<&str>) -> Result<OAuthCredentia
         println!();
     }
 
-    println!("After you authorize, your browser will redirect to a URL starting");
-    println!("with \"appsignal://callback\". Copy that full URL and paste it below.");
-    println!();
-
-    // Step 3: Get the callback URL from the user
-    let callback_url = prompt_callback_url()?;
-
-    if callback_url.is_empty() {
-        anyhow::bail!("No callback URL provided. Please try again.");
-    }
+    let callback_url = wait_for_loopback_callback(&config.redirect_uri).await?;
 
     // Step 4: Parse the callback URL and extract the authorization code
-    let code = parse_callback_url(&callback_url, &state)?;
+    let code = parse_callback_url(&callback_url, &config.redirect_uri, &state)?;
 
     // Step 5: Exchange the code for tokens
     print!("Exchanging authorization code for tokens... ");
@@ -354,13 +426,13 @@ mod tests {
 
     #[test]
     fn test_build_authorize_url() {
-        let config = OAuthConfig::new(Some("https://test.appsignal.com"));
+        let config = OAuthConfig::new(Some("https://test.appsignal.com"), None);
         let url = build_authorize_url(&config, "mystate", "mychallenge");
 
         assert!(url.starts_with("https://test.appsignal.com/oauth/authorize?"));
         assert!(url.contains("response_type=code"));
-        assert!(url.contains(&format!("client_id={}", CLIENT_ID)));
-        assert!(url.contains("redirect_uri=appsignal%3A%2F%2Fcallback"));
+        assert!(url.contains(&format!("client_id={}", PRODUCTION_CLIENT_ID)));
+        assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A9789%2Fcallback"));
         assert!(url.contains("state=mystate"));
         assert!(url.contains("code_challenge=mychallenge"));
         assert!(url.contains("code_challenge_method=S256"));
@@ -369,76 +441,88 @@ mod tests {
 
     #[test]
     fn test_oauth_config_default_urls() {
-        let config = OAuthConfig::new(None);
+        let config = OAuthConfig::new(None, None);
         assert_eq!(
             config.authorize_url,
             "https://appsignal.com/oauth/authorize"
         );
         assert_eq!(config.token_url, "https://appsignal.com/oauth/token");
-        assert_eq!(config.client_id, CLIENT_ID);
-        assert_eq!(config.redirect_uri, "appsignal://callback");
+        assert_eq!(config.client_id, PRODUCTION_CLIENT_ID);
+        assert_eq!(config.redirect_uri, "http://127.0.0.1:9789/callback");
         assert_eq!(config.scopes, "app:read app:write");
     }
 
     #[test]
     fn test_oauth_config_custom_base() {
-        let config = OAuthConfig::new(Some("https://staging.appsignal.com"));
-        assert_eq!(
-            config.authorize_url,
-            "https://staging.appsignal.com/oauth/authorize"
-        );
-        assert_eq!(
-            config.token_url,
-            "https://staging.appsignal.com/oauth/token"
-        );
+        let config = OAuthConfig::new(Some("https://staging.lol"), None);
+        assert_eq!(config.authorize_url, "https://staging.lol/oauth/authorize");
+        assert_eq!(config.token_url, "https://staging.lol/oauth/token");
         // redirect_uri and client_id are the same regardless of base
-        assert_eq!(config.redirect_uri, "appsignal://callback");
-        assert_eq!(config.client_id, CLIENT_ID);
+        assert_eq!(config.redirect_uri, "http://127.0.0.1:9789/callback");
+        assert_eq!(config.client_id, PRODUCTION_CLIENT_ID);
+    }
+
+    #[test]
+    fn test_oauth_config_custom_client_id_override() {
+        let config = OAuthConfig::new(Some("https://staging.lol"), Some("staging-client-id"));
+        assert_eq!(config.client_id, "staging-client-id");
     }
 
     #[test]
     fn test_parse_callback_url_success() {
-        let url = "appsignal://callback?code=abc123&state=mystate";
-        let code = parse_callback_url(url, "mystate").unwrap();
+        let url = "http://127.0.0.1:9789/callback?code=abc123&state=mystate";
+        let code = parse_callback_url(url, DEFAULT_REDIRECT_URI, "mystate").unwrap();
         assert_eq!(code, "abc123");
     }
 
     #[test]
     fn test_parse_callback_url_state_mismatch() {
-        let url = "appsignal://callback?code=abc123&state=wrong";
-        let result = parse_callback_url(url, "mystate");
+        let url = "http://127.0.0.1:9789/callback?code=abc123&state=wrong";
+        let result = parse_callback_url(url, DEFAULT_REDIRECT_URI, "mystate");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("state mismatch"));
     }
 
     #[test]
     fn test_parse_callback_url_error_response() {
-        let url = "appsignal://callback?error=access_denied&error_description=User+denied";
-        let result = parse_callback_url(url, "mystate");
+        let url =
+            "http://127.0.0.1:9789/callback?error=access_denied&error_description=User+denied";
+        let result = parse_callback_url(url, DEFAULT_REDIRECT_URI, "mystate");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("access_denied"));
     }
 
     #[test]
     fn test_parse_callback_url_missing_code() {
-        let url = "appsignal://callback?state=mystate";
-        let result = parse_callback_url(url, "mystate");
+        let url = "http://127.0.0.1:9789/callback?state=mystate";
+        let result = parse_callback_url(url, DEFAULT_REDIRECT_URI, "mystate");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Missing 'code'"));
     }
 
     #[test]
     fn test_parse_callback_url_missing_state() {
-        let url = "appsignal://callback?code=abc123";
-        let result = parse_callback_url(url, "mystate");
+        let url = "http://127.0.0.1:9789/callback?code=abc123";
+        let result = parse_callback_url(url, DEFAULT_REDIRECT_URI, "mystate");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Missing 'state'"));
     }
 
     #[test]
     fn test_parse_callback_url_invalid_url() {
-        let result = parse_callback_url("not a url", "mystate");
+        let result = parse_callback_url("not a url", DEFAULT_REDIRECT_URI, "mystate");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_callback_url_rejects_wrong_redirect_uri() {
+        let url = "appsignal://callback?code=abc123&state=mystate";
+        let result = parse_callback_url(url, DEFAULT_REDIRECT_URI, "mystate");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Expected a URL starting with"));
     }
 
     #[test]
@@ -476,7 +560,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let config = OAuthConfig::new(Some(&server.uri()));
+        let config = OAuthConfig::new(Some(&server.uri()), None);
         let result = exchange_code(&config, "auth-code", "verifier").await;
 
         let creds = result.unwrap();
@@ -495,7 +579,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let config = OAuthConfig::new(Some(&server.uri()));
+        let config = OAuthConfig::new(Some(&server.uri()), None);
         let result = exchange_code(&config, "bad-code", "verifier").await;
 
         assert!(result.is_err());
@@ -522,7 +606,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let creds = refresh_access_token(Some(&server.uri()), "old-refresh")
+        let creds = refresh_access_token(Some(&server.uri()), None, "old-refresh")
             .await
             .unwrap();
         assert_eq!(creds.access_token, "refreshed-token");
@@ -539,11 +623,41 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = refresh_access_token(Some(&server.uri()), "bad-refresh").await;
+        let result = refresh_access_token(Some(&server.uri()), None, "bad-refresh").await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
             .contains("Token refresh failed"));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_access_token_uses_custom_client_id() {
+        let server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/oauth/token"))
+            .and(wiremock::matchers::body_string_contains(
+                "client_id=staging-client-id",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "access_token": "refreshed-token",
+                    "refresh_token": "new-refresh",
+                    "expires_in": 7200,
+                    "token_type": "Bearer"
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let creds = refresh_access_token(
+            Some(&server.uri()),
+            Some("staging-client-id"),
+            "old-refresh",
+        )
+        .await
+        .unwrap();
+        assert_eq!(creds.access_token, "refreshed-token");
     }
 }

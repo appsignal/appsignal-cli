@@ -22,6 +22,8 @@ pub struct Config {
     pub token: Option<String>,
     pub org: Option<String>,
     pub endpoint: Option<String>,
+    /// Optional OAuth client ID override. Defaults to the production client when unset.
+    pub oauth_client_id: Option<String>,
     /// OAuth credentials (stored alongside the personal token; OAuth takes precedence).
     pub oauth: Option<OAuthCredentials>,
 }
@@ -114,6 +116,25 @@ impl Config {
         Ok(AuthMethod::PersonalToken(token.to_string()))
     }
 
+    /// Return the configured OAuth client ID override, if present and non-empty.
+    pub fn oauth_client_id(&self) -> Option<&str> {
+        self.oauth_client_id
+            .as_deref()
+            .filter(|client_id| !client_id.is_empty())
+    }
+
+    /// Return the configured AppSignal base URL, if present.
+    ///
+    /// The `endpoint` config must be a base URL without a path, for example
+    /// `https://staging.lol`.
+    pub fn endpoint_base_url(&self) -> Result<Option<String>> {
+        self.endpoint
+            .as_deref()
+            .filter(|endpoint| !endpoint.is_empty())
+            .map(normalize_base_url)
+            .transpose()
+    }
+
     /// Returns true if the stored OAuth access token has expired (or will expire within 60 s).
     pub fn oauth_token_expired(&self) -> bool {
         if let Some(ref oauth) = self.oauth {
@@ -124,6 +145,23 @@ impl Config {
         }
         false
     }
+}
+
+fn normalize_base_url(endpoint: &str) -> Result<String> {
+    let mut url =
+        url::Url::parse(endpoint).with_context(|| format!("Invalid endpoint URL: {}", endpoint))?;
+
+    if !matches!(url.path(), "" | "/") {
+        anyhow::bail!(
+            "Invalid endpoint URL: {}. `endpoint` must be a base URL without a path, for example `https://staging.lol`.",
+            endpoint
+        );
+    }
+
+    url.set_path("");
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
 }
 
 #[cfg(test)]
@@ -327,6 +365,7 @@ mod tests {
             token: None,
             org: Some("my-org".to_string()),
             endpoint: None,
+            oauth_client_id: None,
             oauth: Some(OAuthCredentials {
                 access_token: "access-tok".to_string(),
                 refresh_token: Some("refresh-tok".to_string()),
@@ -379,6 +418,7 @@ mod tests {
             token: None,
             org: Some("test-org".to_string()),
             endpoint: None,
+            oauth_client_id: None,
             oauth: Some(OAuthCredentials {
                 access_token: "acc-tok".to_string(),
                 refresh_token: Some("ref-tok".to_string()),
@@ -389,5 +429,59 @@ mod tests {
 
         let loaded = Config::load_from(&path).unwrap();
         assert_eq!(loaded, config);
+    }
+
+    #[test]
+    fn test_oauth_client_id_override_returns_none_when_missing() {
+        let config = Config::default();
+        assert_eq!(config.oauth_client_id(), None);
+    }
+
+    #[test]
+    fn test_oauth_client_id_override_returns_none_when_empty() {
+        let config = Config {
+            oauth_client_id: Some(String::new()),
+            ..Config::default()
+        };
+        assert_eq!(config.oauth_client_id(), None);
+    }
+
+    #[test]
+    fn test_oauth_client_id_override_returns_value_when_present() {
+        let config = Config {
+            oauth_client_id: Some("staging-client-id".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(config.oauth_client_id(), Some("staging-client-id"));
+    }
+
+    #[test]
+    fn test_endpoint_base_url_returns_none_when_missing() {
+        let config = Config::default();
+        assert_eq!(config.endpoint_base_url().unwrap(), None);
+    }
+
+    #[test]
+    fn test_endpoint_base_url_returns_base_url_when_valid() {
+        let config = Config {
+            endpoint: Some("https://staging.lol".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(
+            config.endpoint_base_url().unwrap(),
+            Some("https://staging.lol/".to_string())
+        );
+    }
+
+    #[test]
+    fn test_endpoint_base_url_rejects_graphql_path() {
+        let config = Config {
+            endpoint: Some("https://staging.lol/graphql".to_string()),
+            ..Config::default()
+        };
+        let err = config.endpoint_base_url().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("must be a base URL without a path"));
     }
 }

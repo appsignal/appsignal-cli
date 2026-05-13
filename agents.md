@@ -36,8 +36,9 @@ All API interaction goes through the **GraphQL endpoint**:
 POST https://appsignal.com/graphql
 ```
 
-The endpoint is configurable via the `endpoint` field in config.toml
-(defaults to `https://appsignal.com/graphql`).
+The endpoint is configurable via the `endpoint` field in config.toml.
+It defaults to `https://appsignal.com/graphql`, but configured values must use
+the base URL only (for example `https://staging.lol`).
 
 ### Authentication
 
@@ -146,7 +147,8 @@ The config file at `~/.config/appsignal/config.toml` stores:
 
 - `token` — personal API token (set via `auth login --token`)
 - `org` — default organization slug (auto-saved by `apps list`, or set via `apps set-org`)
-- `endpoint` — (optional) custom GraphQL endpoint URL, defaults to `https://appsignal.com/graphql`
+- `endpoint` — (optional) custom AppSignal base URL, defaults to `https://appsignal.com/graphql`
+- `oauth_client_id` — (optional) OAuth client ID override; defaults to the production client ID when unset
 - `[oauth]` — OAuth credentials (set via `auth login --oauth`):
   - `access_token` — OAuth access token
   - `refresh_token` — OAuth refresh token (used for automatic renewal)
@@ -166,21 +168,27 @@ authentication. Implementation is in `src/oauth.rs`.
 ### Flow
 
 1. CLI generates a PKCE code verifier + S256 challenge and a random state parameter
-2. Opens the browser to `https://appsignal.com/oauth/authorize` with PKCE and state params
-3. User authorizes in the browser; server redirects to `appsignal://callback?code=...&state=...`
-4. User copies the callback URL and pastes it into the terminal
-5. CLI validates the state, then exchanges the code for tokens via `POST /oauth/token`
+2. Opens the browser to `<oauth-base>/oauth/authorize` with PKCE and state params
+3. User authorizes in the browser; server redirects to the configured callback URI
+4. The CLI receives the callback automatically on `http://127.0.0.1:9789/callback`
+5. CLI validates the state, then exchanges the code for tokens via `POST <oauth-base>/oauth/token`
 6. Credentials are saved to `config.toml`
 
-### Configuration (hardcoded in `src/oauth.rs`)
+### Configuration
 
 | Setting | Value |
 |---|---|
-| Client ID | `IimKhAcp18_CojT108_KnthRqTpyT8BCSCddBzSpCZs` |
-| Redirect URI | `appsignal://callback` (custom scheme) |
+| Default client ID | `FpXP78S_vXNrjSRYQIMWQ9sREl2AXS0qD0VSWwfHST0` |
+| Default redirect URI | `http://127.0.0.1:9789/callback` |
 | Scopes | `app:read app:write` |
 | PKCE method | S256 |
 | Grant types | `authorization_code`, `refresh_token` |
+
+The OAuth base defaults to `https://appsignal.com` and is derived from `endpoint`
+when a custom endpoint is configured, for example `https://staging.lol`.
+
+The CLI uses the production OAuth client ID by default for all builds. To use a
+staging-specific OAuth client, set `oauth_client_id` in `config.toml`.
 
 The OAuth provider is Doorkeeper, configured in `appsignal-server`. The CLI
 application is registered as a **non-confidential** (public) client — no client

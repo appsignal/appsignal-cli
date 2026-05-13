@@ -27,7 +27,8 @@ appsignal-cli auth login --oauth
 ```
 
 This opens your browser to authorize the CLI with your AppSignal account. After
-authorizing, copy the callback URL from the browser and paste it into the terminal.
+authorizing, the CLI waits for the browser callback on `http://127.0.0.1:9789/callback`
+by default, so you usually do not need to copy anything back into the terminal.
 OAuth tokens are automatically refreshed when they expire.
 
 ### Personal API token
@@ -93,7 +94,7 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
 
 | Command | Description |
 |---|---|
-| `auth login --oauth` | Authenticate via OAuth (opens browser) |
+| `auth login --oauth` | Authenticate via OAuth (opens browser and waits for local callback) |
 | `auth login [--token TOKEN]` | Authenticate with a personal API token (prompts if omitted) |
 | `auth logout` | Remove stored credentials |
 | `auth status` | Show authentication status and method |
@@ -249,6 +250,13 @@ Config is stored at `~/.config/appsignal/config.toml`:
 token = "your-api-token"
 org = "your-org-slug"
 
+# Optional: point the CLI at a non-production AppSignal server.
+# This must be the base URL, without `/graphql`.
+endpoint = "https://staging.lol"
+
+# Optional: override the default production OAuth client ID
+oauth_client_id = "your-staging-client-id"
+
 # When using OAuth (set automatically by `auth login --oauth`):
 [oauth]
 access_token = "..."
@@ -258,6 +266,11 @@ expires_at = 1742324400
 
 OAuth credentials take precedence over personal tokens when both are present.
 Expired OAuth tokens are automatically refreshed before API calls.
+When `oauth_client_id` is unset, the CLI uses the production OAuth client ID.
+When `endpoint` is set to a base URL like `https://staging.lol`, the CLI uses
+`/graphql` for API calls and the base URL itself for OAuth. Values like
+`https://staging.lol/graphql` are not supported.
+OAuth always uses the built-in local callback at `http://127.0.0.1:9789/callback`.
 
 The `org` value is saved automatically when you run `apps list --org <slug>` or `apps set-org --org <slug>`, so subsequent commands don't need `--org`.
 
