@@ -60,7 +60,7 @@ pub fn install(targets: &[InstallTarget], dir: Option<&str>, force: bool) -> Res
 }
 
 fn expand_targets(targets: &[InstallTarget]) -> Vec<InstallTarget> {
-    if targets.iter().any(|target| *target == InstallTarget::All) {
+    if targets.contains(&InstallTarget::All) {
         vec![
             InstallTarget::Opencode,
             InstallTarget::Codex,
