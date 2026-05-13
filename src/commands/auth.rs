@@ -61,7 +61,6 @@ pub async fn login(options: LoginOptions) -> Result<()> {
         }
 
         // Clear any existing personal token when switching to OAuth
-        config.inherit_auth = None;
         config.token = None;
         config.oauth = Some(credentials);
         config.save()?;
@@ -92,7 +91,6 @@ pub async fn login(options: LoginOptions) -> Result<()> {
         }
 
         // Clear any existing OAuth credentials when switching to a personal token
-        config.inherit_auth = None;
         config.oauth = None;
         config.token = Some(token);
         config.save()?;
@@ -132,7 +130,7 @@ fn print_active_config_path(config: &Config) {
 /// Remove stored credentials.
 pub fn logout() -> Result<()> {
     let mut config = Config::load()?;
-    config.clear_credentials()?;
+    config.clear_credentials();
     config.save()?;
     println!("Logged out. Credentials removed from active config.");
     Ok(())
@@ -146,11 +144,7 @@ pub fn status() -> Result<()> {
         println!("Using config: {}", path.display());
     }
 
-    if let Some(oauth) = config
-        .oauth
-        .as_ref()
-        .filter(|oauth| !oauth.access_token.is_empty())
-    {
+    if let Some(ref oauth) = config.oauth {
         let masked = mask_token(&oauth.access_token);
         let expiry = oauth
             .expires_at

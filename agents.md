@@ -162,9 +162,9 @@ The org slug is used as a default for all commands that need an organization.
 It can always be overridden with `--org <slug>`.
 
 If the current directory (or one of its parents) contains `.appsignal.toml`, the
-CLI loads the global config first and then applies that nearest local file as an
-override. Config writes go back to the active file, so project-specific auth,
-endpoint, and org settings can stay local to the project.
+CLI uses that nearest local file as the only config for the project. Config
+reads and writes go to the active file, so project-specific auth, endpoint, and
+org settings stay isolated from the global config.
 
 ## OAuth
 
@@ -211,11 +211,11 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 
 | Command | Description |
 |---|---|
-| `appsignal-cli auth login --oauth [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth PKCE flow using the active global or project config |
+| `appsignal-cli auth login --oauth [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth PKCE flow using the active config for the current project or the global config |
 | `appsignal-cli auth login [--token TOKEN] [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Store personal API token and optional config overrides in the active config, validates via `{ __typename }` |
 | `appsignal-cli auth logout` | Delete stored credentials from the active config |
 | `appsignal-cli auth status` | Show auth status, method (OAuth/token), and expiry |
-| `appsignal-cli project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml` without copying global credentials |
+| `appsignal-cli project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |
 | `appsignal-cli apps orgs` | List all organizations you have access to |
 | `appsignal-cli apps list --org <slug>` | List apps in an organization and save the default org to the active config |
 | `appsignal-cli apps info --app-id <id>` | Show details for a single app by ID |

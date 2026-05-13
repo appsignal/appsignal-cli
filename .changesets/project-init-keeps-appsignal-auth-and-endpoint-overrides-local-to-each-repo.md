@@ -3,4 +3,4 @@ bump: patch
 type: fix
 ---
 
-Projects can now keep AppSignal auth, endpoint, OAuth client ID, and default org settings in a local `.appsignal.toml` created with `appsignal-cli project init`. That makes it easier to use different AppSignal environments across repos without extra per-command flags, and project logout now clears only the active project's credentials instead of falling back to global auth.
+Projects can now keep AppSignal auth, endpoint, OAuth client ID, and default org settings in a local `.appsignal.toml` created with `appsignal-cli project init`. When that file exists, the CLI uses it as the only config for that project, so missing values no longer fall back to global settings, and project logout clears only the active project's credentials.

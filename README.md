@@ -134,8 +134,8 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
 
 | Command | Description |
 |---|---|
-| `auth login --oauth [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth using the active global or project config |
-| `auth login [--token TOKEN] [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate with a personal API token using the active global or project config |
+| `auth login --oauth [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth using the active config for the current project or your global config |
+| `auth login [--token TOKEN] [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate with a personal API token using the active config for the current project or your global config |
 | `auth logout` | Remove stored credentials from the active config |
 | `auth status` | Show authentication status and method |
 
@@ -143,7 +143,7 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
 
 | Command | Description |
 |---|---|
-| `project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml` without copying global credentials |
+| `project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |
 
 ### `apps`
 
@@ -306,8 +306,8 @@ appsignal-cli logs sources --app "MyApp" --environment "production"
 Config is stored globally at `~/.config/appsignal/config.toml`.
 
 You can also add a project-local `.appsignal.toml` anywhere in your project. When
-the CLI runs inside that project (or a subdirectory), it loads the global config
-first and then applies the nearest `.appsignal.toml` as an override.
+the CLI runs inside that project (or a subdirectory), it uses the nearest
+`.appsignal.toml` as the only config for that project.
 
 The easiest way to create one is:
 
@@ -332,8 +332,8 @@ refresh_token = "..."
 expires_at = 1742324400
 ```
 
-When a local override is active, commands that update config write back to that
-`.appsignal.toml` file. Otherwise they continue to use the global config.
+When a local project config is active, commands read and write only that
+`.appsignal.toml` file. Otherwise they use the global config.
 
 Global config example:
 
