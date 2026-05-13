@@ -3,6 +3,7 @@ pub mod apps;
 pub mod auth;
 pub mod incidents;
 pub mod logs;
+pub mod skill;
 
 use crate::api::AppSignalClient;
 use crate::config::Config;

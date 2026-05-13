@@ -17,6 +17,7 @@ src/
     apps.rs            apps list / info / find / set-org / show-org / orgs
     incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show
     logs.rs            logs tail / search / views / sources
+    skill.rs           skill install (writes bundled AppSignal skills for OpenCode, Codex, or Claude)
 ```
 
 - **CLI framework**: clap v4 with derive macros
@@ -226,6 +227,7 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli logs search [filters] [--json] [--page-all]` | One-shot log search (supports auto-pagination and JSON output) |
 | `appsignal-cli logs views [app options]` | List saved log views (filter presets) |
 | `appsignal-cli logs sources [app options]` | List log sources for an app |
+| `appsignal-cli skill install [--target TARGET] [--dir PATH] [--force]` | Install the bundled AppSignal LLM skill for OpenCode, Codex, or Claude |
 
 ### App resolution
 
