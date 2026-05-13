@@ -6,6 +6,8 @@ mod oauth;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+use crate::commands::skill::InstallTarget;
+
 #[derive(Parser)]
 #[command(name = "appsignal-cli")]
 #[command(about = "CLI for interacting with AppSignal", long_about = None)]
@@ -36,6 +38,27 @@ enum Commands {
     Logs {
         #[command(subcommand)]
         action: LogsAction,
+    },
+    /// Install the bundled AppSignal LLM skill
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillAction {
+    /// Install the bundled AppSignal skill into an agent skills directory
+    Install {
+        /// Install target(s): opencode, codex, claude, or all
+        #[arg(long, value_delimiter = ',', default_value = "opencode")]
+        target: Vec<InstallTarget>,
+        /// Install into this skills root directory instead of the target's default
+        #[arg(long)]
+        dir: Option<String>,
+        /// Overwrite an existing installed skill
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -722,6 +745,11 @@ async fn main() -> Result<()> {
                     org.as_deref(),
                 )
                 .await?
+            }
+        },
+        Commands::Skill { action } => match action {
+            SkillAction::Install { target, dir, force } => {
+                commands::skill::install(&target, dir.as_deref(), force)?
             }
         },
     }

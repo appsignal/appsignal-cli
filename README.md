@@ -83,6 +83,15 @@ appsignal-cli logs tail --app "MyApp" --environment "production"
 # Search logs with JSON output (for LLMs)
 appsignal-cli logs search --app "MyApp" --environment "production" --query "timeout" --json
 
+# Install the bundled AppSignal LLM skill for OpenCode-style agents
+appsignal-cli skill install
+
+# Install for Codex
+appsignal-cli skill install --target codex
+
+# Install for Claude user skills
+appsignal-cli skill install --target claude
+
 # Fetch all logs in a time range (auto-paginate)
 appsignal-cli logs search --app "MyApp" --environment "production" \
   --start "2025-03-16T06:00:00Z" --query "group:notifiers" --page-all --json
@@ -130,6 +139,20 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
 | `logs search` | Search log lines (one-shot query, supports `--json` for LLM use) |
 | `logs views` | List saved log views (filter presets) |
 | `logs sources` | List log sources for an app |
+
+### `skill`
+
+| Command | Description |
+|---|---|
+| `skill install` | Install the bundled AppSignal LLM skill for one or more supported agent targets |
+
+Targets:
+- `opencode` (default): `~/.agents/skills/appsignal/SKILL.md`
+- `codex`: `$CODEX_HOME/skills/appsignal/SKILL.md` or `~/.codex/skills/appsignal/SKILL.md`
+- `claude`: `~/.claude/skills/appsignal/SKILL.md`
+- `all`: install all of the above
+
+Use `skill install --target codex`, `skill install --target claude`, or `skill install --target all` to choose a target. Use `skill install --dir <path>` to install into a custom skills root for a single target, or `skill install --force` to overwrite an existing install.
 
 All log and incident commands accept either `--app-id <id>` or `--app <name> [--environment <env>]` to identify the application. The `--environment` flag is needed when multiple apps share the same name.
 
