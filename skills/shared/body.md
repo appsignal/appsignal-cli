@@ -3,7 +3,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 ## Working Rules
 
 1. Prefer `appsignal-cli <command> --help` when you need exact flag syntax.
-2. Use `logs search --json` when the result needs to be parsed by an LLM or script.
+2. Use the global `--output json` flag when the result needs to be parsed by an LLM or script.
 3. Use `apps list --org <slug>` once to save a default organization before name-based app lookups.
 4. Prefer `--app-id` when known; otherwise use `--app` and `--environment` together for unambiguous app resolution.
 5. Quote names, environments, queries, and note content when they contain spaces or special characters.
@@ -30,7 +30,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents update --number <N> [flags]` | Update state, severity, assignees, or description |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time |
-| `appsignal-cli logs search [filters] [--json] [--page-all]` | Search log lines once |
+| `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
 | `appsignal-cli logs views [app options]` | List saved log views |
 | `appsignal-cli logs sources [app options]` | List log sources |
 | `appsignal-cli skill install [--target TARGET] [--dir PATH] [--force]` | Install the bundled AppSignal skill |
@@ -76,6 +76,20 @@ Useful `incidents update` flags:
 | `--assign <id,id>` | Assign users |
 | `--description "..."` | Update description |
 
+## Output
+
+Use the global output flag on any command:
+
+| Flag | Description |
+|---|---|
+| `--output <human|json>` | Render command results for people or machines |
+
+Example:
+
+```bash
+appsignal-cli --output json incidents show --number 42 --app "MyApp" --environment "production"
+```
+
 ## Log Options
 
 Shared flags for `logs tail` and `logs search`:
@@ -95,7 +109,6 @@ Extra `logs search` flags:
 | `--end <ISO8601>` | End time |
 | `--limit <N>` | Maximum results |
 | `--order <ASC|DESC>` | Sort order |
-| `--json` | Machine-readable JSON output |
 | `--page-all` | Auto-paginate to fetch all results |
 
 ## Log Query Syntax
@@ -173,13 +186,13 @@ appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "produc
 Search logs with JSON output:
 
 ```bash
-appsignal-cli logs search --app "MyApp" --environment "production" --query "timeout" --json
+appsignal-cli --output json logs search --app "MyApp" --environment "production" --query "timeout"
 ```
 
 Search all matching logs in a time window:
 
 ```bash
-appsignal-cli logs search --app "MyApp" --environment "production" --start "2025-03-16T06:00:00Z" --query "group:notifiers" --page-all --json
+appsignal-cli --output json logs search --app "MyApp" --environment "production" --start "2025-03-16T06:00:00Z" --query "group:notifiers" --page-all
 ```
 
 Tail logs using a saved view:

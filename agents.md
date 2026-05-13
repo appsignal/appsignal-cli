@@ -230,7 +230,7 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli incidents update --number <N> [--state S] [--severity S] [--assign IDs] [--description D]` | Update incident state, severity, or assignees |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident (markdown supported) |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time (1-second polling) |
-| `appsignal-cli logs search [filters] [--json] [--page-all]` | One-shot log search (supports auto-pagination and JSON output) |
+| `appsignal-cli logs search [filters] [--page-all]` | One-shot log search (supports auto-pagination and global `--output json`) |
 | `appsignal-cli logs views [app options]` | List saved log views (filter presets) |
 | `appsignal-cli logs sources [app options]` | List log sources for an app |
 | `appsignal-cli skill install [--target TARGET] [--dir PATH] [--force]` | Install the bundled AppSignal LLM skill for OpenCode, Codex, or Claude |
@@ -474,7 +474,7 @@ This matches the frontend's live tail behavior in `useLogTail.js`.
 | Command | Description |
 |---|---|
 | `logs tail [filters]` | Real-time log streaming (1s poll interval) |
-| `logs search [filters] [--json] [--page-all]` | One-shot log query |
+| `logs search [filters] [--page-all]` | One-shot log query |
 | `logs views` | List saved log views for an app |
 | `logs sources` | List log sources for an app |
 
@@ -489,22 +489,22 @@ Additional flags for `search`:
 - `--end <ISO8601>` — end time
 - `--limit <N>` — max results (default 100, max 100)
 - `--order <ASC|DESC>` — sort order (default DESC)
-- `--json` — JSON output for programmatic/LLM consumption
+- `--output <human|json>` — global result format for programmatic/LLM consumption
 - `--page-all` — auto-paginate to fetch all results (ignores --limit/--order)
 
 ### LLM workflow examples
 
 **Search for recent errors:**
 ```bash
-appsignal-cli logs search --app "MyApp" --environment "production" \
-  --severities ERROR,CRITICAL --json
+appsignal-cli --output json logs search --app "MyApp" --environment "production" \
+  --severities ERROR,CRITICAL
 ```
 
 **Count emails sent in a time window:**
 ```bash
-appsignal-cli logs search --app "appsignal" --environment "production" \
+appsignal-cli --output json logs search --app "appsignal" --environment "production" \
   --query "group:notifiers [Email]" \
-  --start "2025-03-16T06:53:00Z" --page-all --json
+  --start "2025-03-16T06:53:00Z" --page-all
 ```
 
 **Tail logs with a saved view:**
@@ -516,8 +516,8 @@ appsignal-cli logs tail --app "MyApp" --environment "production" --view "Error l
 ```bash
 appsignal-cli logs sources --app "MyApp" --environment "production"
 # Then use a source ID:
-appsignal-cli logs search --app "MyApp" --environment "production" \
-  --source-ids "636873bc14ad665402d297e2" --json
+appsignal-cli --output json logs search --app "MyApp" --environment "production" \
+  --source-ids "636873bc14ad665402d297e2"
 ```
 
 ## Adding new GraphQL queries

@@ -1,12 +1,30 @@
 use std::collections::HashSet;
+use std::io::{self, Write};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use serde::Serialize;
 use tokio::time::{sleep, Duration};
 
 use super::{authenticated_client, resolve_org};
 use crate::api::{AppSignalClient, LogLine, LogView};
 use crate::config::Config;
+use crate::output::{self, Output};
+
+#[derive(Serialize)]
+struct LogLinesResponse<'a> {
+    lines: &'a [LogLine],
+}
+
+#[derive(Serialize)]
+struct LogViewsResponse<'a> {
+    views: &'a [LogView],
+}
+
+#[derive(Serialize)]
+struct LogSourcesResponse<'a> {
+    sources: &'a [crate::api::LogSource],
+}
 
 /// Tail (stream) log lines for an application, polling every second.
 /// Supports filtering by query, severities, source IDs, and log view.
@@ -20,6 +38,7 @@ pub async fn tail(
     severities: Option<&str>,
     source_ids: Option<&str>,
     view: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -29,7 +48,6 @@ pub async fn tail(
         .resolve_app_id(&org_slug, app_id, app_name, environment)
         .await?;
 
-    // Resolve log view filters if --view is given
     let (view_query, view_source_ids, view_severities) = if let Some(view_name) = view {
         let lv = resolve_log_view(&client, &resolved_app_id, view_name).await?;
         (
@@ -41,7 +59,6 @@ pub async fn tail(
         (None, None, None)
     };
 
-    // Merge CLI flags with view defaults (CLI flags take precedence)
     let effective_query = query.map(|q| q.to_string()).or(view_query);
     let effective_source_ids = source_ids
         .map(|s| {
@@ -58,7 +75,7 @@ pub async fn tail(
         })
         .or(view_severities);
 
-    eprintln!(
+    crate::status!(
         "Tailing logs{} (Ctrl+C to stop)...",
         if let Some(v) = view {
             format!(" [view: {}]", v)
@@ -91,16 +108,13 @@ pub async fn tail(
 
         for line in &lines {
             if seen_ids.insert(line.id.clone()) {
-                print_log_line(line);
+                print_log_line(line, format)?;
             }
         }
 
-        // Move the window forward: use 2-minute lookback from now for dedup safety
         start = end - chrono::Duration::seconds(120);
 
-        // Prune seen_ids to avoid unbounded growth (keep last 500)
         if seen_ids.len() > 1000 {
-            // Just clear and re-seed from current batch
             seen_ids.clear();
             for line in &lines {
                 seen_ids.insert(line.id.clone());
@@ -127,8 +141,8 @@ pub async fn search(
     end: Option<&str>,
     limit: Option<i64>,
     order: Option<&str>,
-    json_output: bool,
     page_all: bool,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -138,7 +152,6 @@ pub async fn search(
         .resolve_app_id(&org_slug, app_id, app_name, environment)
         .await?;
 
-    // Resolve log view filters if --view is given
     let (view_query, view_source_ids, view_severities) = if let Some(view_name) = view {
         let lv = resolve_log_view(&client, &resolved_app_id, view_name).await?;
         (
@@ -150,7 +163,6 @@ pub async fn search(
         (None, None, None)
     };
 
-    // Merge CLI flags with view defaults (CLI flags take precedence)
     let effective_query = query.map(|q| q.to_string()).or(view_query);
     let effective_source_ids = source_ids
         .map(|s| {
@@ -193,24 +205,17 @@ pub async fn search(
             .await?
     };
 
-    if json_output {
-        let json = serde_json::to_string_pretty(&lines)
-            .context("Failed to serialize log lines to JSON")?;
-        println!("{}", json);
-    } else {
+    output::print_with(LogLinesResponse { lines: &lines }, format, |w| {
         if lines.is_empty() {
-            println!("No log lines found.");
-            return Ok(());
+            return writeln!(w, "No log lines found.");
         }
 
         for line in &lines {
-            print_log_line(line);
+            render_log_line_human(w, line)?;
         }
 
-        eprintln!("\n{} log line(s) returned.", lines.len());
-    }
-
-    Ok(())
+        writeln!(w, "{} log line(s) returned.", lines.len())
+    })
 }
 
 /// Fetch all log lines in a time range by paginating with time-window slicing.
@@ -255,7 +260,7 @@ async fn fetch_all_pages(
             }
         }
 
-        eprintln!(
+        crate::status!(
             "Page {}: fetched {} lines ({} total unique)",
             page,
             batch_len,
@@ -284,6 +289,7 @@ pub async fn views(
     app_name: Option<&str>,
     environment: Option<&str>,
     org: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -295,32 +301,9 @@ pub async fn views(
 
     let views = client.list_log_views(&resolved_app_id).await?;
 
-    if views.is_empty() {
-        println!("No log views found.");
-        return Ok(());
-    }
-
-    println!("{:<28} {:<40} {:<20} SEVERITIES", "ID", "NAME", "QUERY");
-    println!("{}", "-".repeat(100));
-
-    for v in &views {
-        let query_str = v.query.as_deref().unwrap_or("-");
-        let sevs = v
-            .severities
-            .as_ref()
-            .map(|s| s.join(","))
-            .unwrap_or_else(|| "-".to_string());
-        println!(
-            "{:<28} {:<40} {:<20} {}",
-            truncate(&v.id, 26),
-            truncate(&v.name, 38),
-            truncate(query_str, 18),
-            sevs,
-        );
-    }
-
-    println!("\n{} log view(s) found.", views.len());
-    Ok(())
+    output::print_with(LogViewsResponse { views: &views }, format, |w| {
+        render_log_views(w, &views)
+    })
 }
 
 /// List all log sources for an app.
@@ -329,6 +312,7 @@ pub async fn sources(
     app_name: Option<&str>,
     environment: Option<&str>,
     org: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -340,26 +324,9 @@ pub async fn sources(
 
     let sources = client.list_log_sources(&resolved_app_id).await?;
 
-    if sources.is_empty() {
-        println!("No log sources found.");
-        return Ok(());
-    }
-
-    println!("{:<28} {:<30} {:<12} FORMAT", "ID", "NAME", "TYPE");
-    println!("{}", "-".repeat(80));
-
-    for s in &sources {
-        println!(
-            "{:<28} {:<30} {:<12} {}",
-            truncate(&s.id, 26),
-            truncate(&s.name, 28),
-            s.kind.as_deref().unwrap_or("-"),
-            s.fmt.as_deref().unwrap_or("-"),
-        );
-    }
-
-    println!("\n{} log source(s) found.", sources.len());
-    Ok(())
+    output::print_with(LogSourcesResponse { sources: &sources }, format, |w| {
+        render_log_sources(w, &sources)
+    })
 }
 
 // -- Helpers --
@@ -403,7 +370,17 @@ async fn resolve_log_view(
     }
 }
 
-fn print_log_line(line: &LogLine) {
+fn print_log_line(line: &LogLine, format: Output) -> Result<()> {
+    let stdout = io::stdout();
+    let mut w = stdout.lock();
+    match format {
+        Output::Human => render_log_line_human(&mut w, line)?,
+        Output::Json => output::json_line(&mut w, line)?,
+    }
+    Ok(())
+}
+
+fn render_log_line_human(w: &mut dyn Write, line: &LogLine) -> io::Result<()> {
     let source_name = line
         .source
         .as_ref()
@@ -426,7 +403,8 @@ fn print_log_line(line: &LogLine) {
         })
         .unwrap_or_default();
 
-    println!(
+    writeln!(
+        w,
         "{} {:<8} {:<16} {:<24} {}{}",
         &line.timestamp,
         line.severity.to_uppercase(),
@@ -434,7 +412,57 @@ fn print_log_line(line: &LogLine) {
         line.hostname,
         line.message,
         attrs,
-    );
+    )
+}
+
+fn render_log_views(w: &mut dyn Write, views: &[LogView]) -> io::Result<()> {
+    if views.is_empty() {
+        return writeln!(w, "No log views found.");
+    }
+
+    writeln!(w, "{:<28} {:<40} {:<20} SEVERITIES", "ID", "NAME", "QUERY")?;
+    writeln!(w, "{}", "-".repeat(100))?;
+
+    for v in views {
+        let query_str = v.query.as_deref().unwrap_or("-");
+        let sevs = v
+            .severities
+            .as_ref()
+            .map(|s| s.join(","))
+            .unwrap_or_else(|| "-".to_string());
+        writeln!(
+            w,
+            "{:<28} {:<40} {:<20} {}",
+            truncate(&v.id, 26),
+            truncate(&v.name, 38),
+            truncate(query_str, 18),
+            sevs,
+        )?;
+    }
+
+    writeln!(w, "{} log view(s) found.", views.len())
+}
+
+fn render_log_sources(w: &mut dyn Write, sources: &[crate::api::LogSource]) -> io::Result<()> {
+    if sources.is_empty() {
+        return writeln!(w, "No log sources found.");
+    }
+
+    writeln!(w, "{:<28} {:<30} {:<12} FORMAT", "ID", "NAME", "TYPE")?;
+    writeln!(w, "{}", "-".repeat(80))?;
+
+    for s in sources {
+        writeln!(
+            w,
+            "{:<28} {:<30} {:<12} {}",
+            truncate(&s.id, 26),
+            truncate(&s.name, 28),
+            s.kind.as_deref().unwrap_or("-"),
+            s.fmt.as_deref().unwrap_or("-"),
+        )?;
+    }
+
+    writeln!(w, "{} log source(s) found.", sources.len())
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -483,7 +511,7 @@ mod tests {
                 name: Some("Application".to_string()),
             }),
         };
-        print_log_line(&line);
+        print_log_line(&line, Output::Human).unwrap();
     }
 
     #[test]
@@ -498,7 +526,7 @@ mod tests {
             attributes: None,
             source: None,
         };
-        print_log_line(&line);
+        print_log_line(&line, Output::Human).unwrap();
     }
 
     #[test]
@@ -516,7 +544,7 @@ mod tests {
                 name: None,
             }),
         };
-        print_log_line(&line);
+        print_log_line(&line, Output::Human).unwrap();
     }
 
     // -- Helper to build log line JSON for wiremock responses --

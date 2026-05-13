@@ -106,7 +106,7 @@ appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "produc
 appsignal-cli logs tail --app "MyApp" --environment "production"
 
 # Search logs with JSON output (for LLMs)
-appsignal-cli logs search --app "MyApp" --environment "production" --query "timeout" --json
+appsignal-cli --output json logs search --app "MyApp" --environment "production" --query "timeout"
 
 # Install the bundled AppSignal LLM skill for OpenCode-style agents
 appsignal-cli skill install
@@ -118,8 +118,8 @@ appsignal-cli skill install --target codex
 appsignal-cli skill install --target claude
 
 # Fetch all logs in a time range (auto-paginate)
-appsignal-cli logs search --app "MyApp" --environment "production" \
-  --start "2025-03-16T06:00:00Z" --query "group:notifiers" --page-all --json
+appsignal-cli --output json logs search --app "MyApp" --environment "production" \
+  --start "2025-03-16T06:00:00Z" --query "group:notifiers" --page-all
 ```
 
 ## Commands
@@ -173,7 +173,7 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
 | Command | Description |
 |---|---|
 | `logs tail` | Stream log lines in real time (polls every second) |
-| `logs search` | Search log lines (one-shot query, supports `--json` for LLM use) |
+| `logs search` | Search log lines (one-shot query, supports global `--output json` for LLM use) |
 | `logs views` | List saved log views (filter presets) |
 | `logs sources` | List log sources for an app |
 
@@ -247,8 +247,13 @@ All log commands (`tail`, `search`) support these filters:
 | `--end <ISO8601>` | End time |
 | `--limit <N>` | Max results per page (default: 100, max: 100) |
 | `--order <ORDER>` | `ASC` (oldest first) or `DESC` (newest first, default) |
-| `--json` | Output as JSON (for LLM/programmatic consumption) |
 | `--page-all` | Auto-paginate to fetch all results in the time range |
+
+Global output flag for any command:
+
+| Flag | Description |
+|---|---|
+| `--output <human|json>` | Render command results for people or machines |
 
 The `--view` flag resolves a log view by name (case-insensitive) or ID. CLI flags always override the view's saved defaults.
 
@@ -288,11 +293,11 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
   --query 'group=notifiers message:"[Email]"'
 
 # Fetch ALL matching logs (auto-paginate beyond the 100-line API limit)
-appsignal-cli logs search --app "MyApp" --environment "production" \
-  --start "2025-03-16T06:00:00Z" --query 'group=notifiers message:"[Email]"' --page-all --json
+appsignal-cli --output json logs search --app "MyApp" --environment "production" \
+  --start "2025-03-16T06:00:00Z" --query 'group=notifiers message:"[Email]"' --page-all
 
 # Get JSON output for LLM consumption
-appsignal-cli logs search --app "MyApp" --environment "production" --query "error" --json
+appsignal-cli --output json logs search --app "MyApp" --environment "production" --query "error"
 
 # List available log views
 appsignal-cli logs views --app "MyApp" --environment "production"

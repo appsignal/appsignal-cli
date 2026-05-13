@@ -5,7 +5,7 @@ use serde::Serialize;
 use tabled::Tabled;
 
 use super::{authenticated_client, resolve_org};
-use crate::api::App;
+use crate::api::{App, AppResources, ViewerOrganization};
 use crate::config::Config;
 use crate::output::{self, Output, Render};
 
@@ -13,6 +13,27 @@ use crate::output::{self, Output, Render};
 #[derive(Serialize)]
 pub struct AppListing {
     pub apps: Vec<App>,
+}
+
+#[derive(Serialize)]
+struct AppResponse<'a> {
+    app: &'a App,
+}
+
+#[derive(Serialize)]
+struct OrganizationStatus<'a> {
+    org: Option<&'a str>,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct OrganizationListing<'a> {
+    organizations: &'a [ViewerOrganization],
+}
+
+#[derive(Serialize)]
+struct AppResourcesResponse<'a> {
+    resources: &'a AppResources,
 }
 
 /// Table view of a single app. Kept separate from `App` so the JSON payload
@@ -25,6 +46,14 @@ struct AppRow<'a> {
     name: &'a str,
     #[tabled(rename = "ENVIRONMENT")]
     environment: &'a str,
+}
+
+#[derive(Tabled)]
+struct OrganizationRow<'a> {
+    #[tabled(rename = "SLUG")]
+    slug: &'a str,
+    #[tabled(rename = "NAME")]
+    name: &'a str,
 }
 
 impl Render for AppListing {
@@ -56,87 +85,106 @@ pub async fn list(org_slug: &str, format: Output) -> Result<()> {
 }
 
 /// Show details for a specific application.
-pub async fn info(app_id: &str) -> Result<()> {
+pub async fn info(app_id: &str, format: Output) -> Result<()> {
     let mut config = Config::load()?;
     let client = authenticated_client(&mut config).await?;
 
     let app = client.get_app(app_id).await?;
 
-    println!("Application details:");
-    println!("  ID:          {}", app.id);
-    println!("  Name:        {}", app.name.as_deref().unwrap_or("-"));
-    println!(
-        "  Environment: {}",
-        app.environment.as_deref().unwrap_or("-")
-    );
-
-    Ok(())
+    output::print_with(AppResponse { app: &app }, format, |w| {
+        output::detail(
+            w,
+            &[
+                ("ID", app.id.as_str()),
+                ("Name", app.name.as_deref().unwrap_or("-")),
+                ("Environment", app.environment.as_deref().unwrap_or("-")),
+            ],
+        )
+    })
 }
 
 /// Find an application by name and optional environment.
-pub async fn find(name: &str, environment: Option<&str>, org: Option<&str>) -> Result<()> {
+pub async fn find(
+    name: &str,
+    environment: Option<&str>,
+    org: Option<&str>,
+    format: Output,
+) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
     let client = authenticated_client(&mut config).await?;
 
     let app = client.find_app(&org_slug, name, environment).await?;
 
-    println!("Application details:");
-    println!("  ID:          {}", app.id);
-    println!("  Name:        {}", app.name.as_deref().unwrap_or("-"));
-    println!(
-        "  Environment: {}",
-        app.environment.as_deref().unwrap_or("-")
-    );
-
-    Ok(())
+    output::print_with(AppResponse { app: &app }, format, |w| {
+        output::detail(
+            w,
+            &[
+                ("ID", app.id.as_str()),
+                ("Name", app.name.as_deref().unwrap_or("-")),
+                ("Environment", app.environment.as_deref().unwrap_or("-")),
+            ],
+        )
+    })
 }
 
 /// Set the default organization slug.
-pub async fn set_org(org_slug: &str) -> Result<()> {
+pub async fn set_org(org_slug: &str, format: Output) -> Result<()> {
     let mut config = Config::load()?;
     let client = authenticated_client(&mut config).await?;
 
-    // Validate the org exists by listing apps
     let _apps = client.list_apps(org_slug).await?;
 
     config.org = Some(org_slug.to_string());
     config.save()?;
-    println!("Default organization set to '{}'.", org_slug);
-    Ok(())
+    output::print_with(
+        OrganizationStatus {
+            org: Some(org_slug),
+            message: format!("Default organization set to '{}'.", org_slug),
+        },
+        format,
+        |w| writeln!(w, "Default organization set to '{}'.", org_slug),
+    )
 }
 
 /// Show current default organization.
-pub fn show_org() -> Result<()> {
+pub fn show_org(format: Output) -> Result<()> {
     let config = Config::load()?;
-    match config.org.as_deref().filter(|o| !o.is_empty()) {
-        Some(org) => println!("Default organization: {}", org),
-        None => println!("No default organization set."),
-    }
-    Ok(())
+    let org = config.org.as_deref().filter(|o| !o.is_empty());
+    let message = match org {
+        Some(org) => format!("Default organization: {}", org),
+        None => "No default organization set.".to_string(),
+    };
+    let human_message = message.clone();
+    output::print_with(OrganizationStatus { org, message }, format, move |w| {
+        writeln!(w, "{}", human_message)
+    })
 }
 
 /// List all organizations the authenticated user has access to.
-pub async fn orgs() -> Result<()> {
+pub async fn orgs(format: Output) -> Result<()> {
     let mut config = Config::load()?;
     let client = authenticated_client(&mut config).await?;
 
     let orgs = client.list_organizations().await?;
 
-    if orgs.is_empty() {
-        println!("No organizations found.");
-        return Ok(());
-    }
-
-    println!("{:<40} NAME", "SLUG");
-    println!("{}", "-".repeat(60));
-
-    for org in &orgs {
-        println!("{:<40} {}", org.slug, org.name);
-    }
-
-    println!("\n{} organization(s) found.", orgs.len());
-    Ok(())
+    output::print_with(
+        OrganizationListing {
+            organizations: &orgs,
+        },
+        format,
+        |w| {
+            if orgs.is_empty() {
+                return writeln!(w, "No organizations found.");
+            }
+            let rows = orgs.iter().map(|org| OrganizationRow {
+                slug: &org.slug,
+                name: &org.name,
+            });
+            output::table(w, rows)?;
+            writeln!(w, "{} organization(s) found.", orgs.len())
+        },
+    )
 }
 
 /// Show resources for an application (users, notifiers, namespaces, dashboards).
@@ -146,6 +194,7 @@ pub async fn resources(
     environment: Option<&str>,
     org: Option<&str>,
     sections: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -163,56 +212,60 @@ pub async fn resources(
         .get_app_resources(&resolved_app_id, &section_list)
         .await?;
 
-    if let Some(users) = &resources.users {
-        println!("Users:");
-        println!("  {:<28} {:<25} EMAIL", "ID", "NAME");
-        println!("  {}", "-".repeat(80));
-        for user in users {
-            println!(
-                "  {:<28} {:<25} {}",
-                user.id,
-                user.name.as_deref().unwrap_or("-"),
-                user.email.as_deref().unwrap_or("-"),
-            );
-        }
-        println!();
-    }
+    output::print_with(
+        AppResourcesResponse {
+            resources: &resources,
+        },
+        format,
+        |w| {
+            if let Some(users) = &resources.users {
+                writeln!(w, "Users:")?;
+                for user in users {
+                    writeln!(
+                        w,
+                        "  {}  {}  {}",
+                        user.id,
+                        user.name.as_deref().unwrap_or("-"),
+                        user.email.as_deref().unwrap_or("-")
+                    )?;
+                }
+                writeln!(w)?;
+            }
 
-    if let Some(notifiers) = &resources.notifiers {
-        println!("Notifiers:");
-        println!("  {:<28} NAME", "ID");
-        println!("  {}", "-".repeat(60));
-        for notifier in notifiers {
-            println!(
-                "  {:<28} {}",
-                notifier.id,
-                notifier.name.as_deref().unwrap_or("-"),
-            );
-        }
-        println!();
-    }
+            if let Some(notifiers) = &resources.notifiers {
+                writeln!(w, "Notifiers:")?;
+                for notifier in notifiers {
+                    writeln!(
+                        w,
+                        "  {}  {}",
+                        notifier.id,
+                        notifier.name.as_deref().unwrap_or("-")
+                    )?;
+                }
+                writeln!(w)?;
+            }
 
-    if let Some(namespaces) = &resources.namespaces {
-        println!("Namespaces:");
-        for ns in namespaces {
-            println!("  {}", ns);
-        }
-        println!();
-    }
+            if let Some(namespaces) = &resources.namespaces {
+                writeln!(w, "Namespaces:")?;
+                for ns in namespaces {
+                    writeln!(w, "  {}", ns)?;
+                }
+                writeln!(w)?;
+            }
 
-    if let Some(dashboards) = &resources.dashboards {
-        println!("Dashboards:");
-        println!("  {:<28} TITLE", "ID");
-        println!("  {}", "-".repeat(60));
-        for dashboard in dashboards {
-            println!(
-                "  {:<28} {}",
-                dashboard.id,
-                dashboard.title.as_deref().unwrap_or("-"),
-            );
-        }
-        println!();
-    }
+            if let Some(dashboards) = &resources.dashboards {
+                writeln!(w, "Dashboards:")?;
+                for dashboard in dashboards {
+                    writeln!(
+                        w,
+                        "  {}  {}",
+                        dashboard.id,
+                        dashboard.title.as_deref().unwrap_or("-")
+                    )?;
+                }
+            }
 
-    Ok(())
+            Ok(())
+        },
+    )
 }
