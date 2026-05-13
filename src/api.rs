@@ -7,6 +7,22 @@ use crate::config::AuthMethod;
 
 const DEFAULT_GRAPHQL_ENDPOINT: &str = "https://appsignal.com/graphql";
 
+fn normalize_graphql_endpoint(endpoint: Option<&str>) -> String {
+    let endpoint = endpoint.unwrap_or(DEFAULT_GRAPHQL_ENDPOINT);
+
+    match url::Url::parse(endpoint) {
+        Ok(mut url) => {
+            if matches!(url.path(), "" | "/") {
+                url.set_path("/graphql");
+            }
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string()
+        }
+        Err(_) => endpoint.to_string(),
+    }
+}
+
 /// Client for the AppSignal API.
 pub struct AppSignalClient {
     http: Client,
@@ -609,7 +625,7 @@ impl AppSignalClient {
         Self {
             http: Client::new(),
             auth: AuthMethod::PersonalToken(token.to_string()),
-            endpoint: endpoint.unwrap_or(DEFAULT_GRAPHQL_ENDPOINT).to_string(),
+            endpoint: normalize_graphql_endpoint(endpoint),
         }
     }
 
@@ -619,7 +635,7 @@ impl AppSignalClient {
         Self {
             http: Client::new(),
             auth,
-            endpoint: endpoint.unwrap_or(DEFAULT_GRAPHQL_ENDPOINT).to_string(),
+            endpoint: normalize_graphql_endpoint(endpoint),
         }
     }
 
@@ -629,7 +645,7 @@ impl AppSignalClient {
         Self {
             http: Client::new(),
             auth: AuthMethod::PersonalToken(token.to_string()),
-            endpoint: endpoint.to_string(),
+            endpoint: normalize_graphql_endpoint(Some(endpoint)),
         }
     }
 
@@ -2134,6 +2150,30 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("--app-id"));
         assert!(err.to_string().contains("--app"));
+    }
+
+    #[test]
+    fn test_normalize_graphql_endpoint_uses_default() {
+        assert_eq!(
+            normalize_graphql_endpoint(None),
+            "https://appsignal.com/graphql"
+        );
+    }
+
+    #[test]
+    fn test_normalize_graphql_endpoint_appends_graphql_to_base_url() {
+        assert_eq!(
+            normalize_graphql_endpoint(Some("https://staging.lol")),
+            "https://staging.lol/graphql"
+        );
+    }
+
+    #[test]
+    fn test_normalize_graphql_endpoint_preserves_graphql_path() {
+        assert_eq!(
+            normalize_graphql_endpoint(Some("https://staging.lol/graphql")),
+            "https://staging.lol/graphql"
+        );
     }
 
     #[tokio::test]

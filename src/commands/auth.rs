@@ -20,22 +20,12 @@ fn prompt_token() -> Result<String> {
 /// Otherwise, a personal API token is expected via `--token` or interactive prompt.
 pub async fn login(token: Option<String>, use_oauth: bool) -> Result<()> {
     let mut config = Config::load()?;
+    let endpoint = config.endpoint_base_url()?;
 
     if use_oauth {
         // --- OAuth flow ---
-        // Derive the OAuth base URL from a custom GraphQL endpoint if set.
-        let base_url = config.endpoint.as_ref().and_then(|ep| {
-            url::Url::parse(ep).ok().map(|u| {
-                format!(
-                    "{}://{}{}",
-                    u.scheme(),
-                    u.host_str().unwrap_or("appsignal.com"),
-                    u.port().map(|p| format!(":{}", p)).unwrap_or_default()
-                )
-            })
-        });
-
-        let credentials = oauth::perform_oauth_flow(base_url.as_deref()).await?;
+        let credentials =
+            oauth::perform_oauth_flow(endpoint.as_deref(), config.oauth_client_id()).await?;
 
         // Validate the new OAuth token
         print!("Validating OAuth token... ");
@@ -46,7 +36,7 @@ pub async fn login(token: Option<String>, use_oauth: bool) -> Result<()> {
             refresh_token: credentials.refresh_token.clone(),
             expires_at: credentials.expires_at,
         };
-        let client = AppSignalClient::with_auth(auth, config.endpoint.as_deref());
+        let client = AppSignalClient::with_auth(auth, endpoint.as_deref());
         match client.validate_token().await {
             Ok(_) => println!("OK"),
             Err(e) => {
@@ -75,7 +65,7 @@ pub async fn login(token: Option<String>, use_oauth: bool) -> Result<()> {
         print!("Validating token... ");
         io::stdout().flush()?;
 
-        let client = AppSignalClient::new(&token, config.endpoint.as_deref());
+        let client = AppSignalClient::new(&token, endpoint.as_deref());
         match client.validate_token().await {
             Ok(_) => println!("OK"),
             Err(e) => {
