@@ -20,6 +20,8 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli apps list --org <slug>` | List apps in an organization and save the org as default |
 | `appsignal-cli apps info --app-id <id>` | Show details for an app by ID |
 | `appsignal-cli apps find --name <name> [--environment <env>] [--org <slug>]` | Find an app by name |
+| `appsignal-cli apps resources all [app options]` | Show all supported app resources |
+| `appsignal-cli apps resources deploy-markers [app options]` | Show recent deploy markers |
 | `appsignal-cli apps set-org --org <slug>` | Set the default organization |
 | `appsignal-cli apps show-org` | Show the current default organization |
 | `appsignal-cli incidents list [options]` | List all incident types for an app |

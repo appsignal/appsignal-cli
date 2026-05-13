@@ -153,6 +153,12 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 | `apps list --org <slug>` | List apps in an organization and save the default org to the active config |
 | `apps info --app-id <id>` | Show details for a specific app |
 | `apps find --name <name> [--environment <env>]` | Find an app by name |
+| `apps resources all` | Show all supported app resources in one go |
+| `apps resources users` | Show app users |
+| `apps resources notifiers` | Show app notifiers |
+| `apps resources namespaces` | Show app namespaces |
+| `apps resources dashboards` | Show app dashboards |
+| `apps resources deploy-markers` | Show recent deploy markers |
 | `apps set-org --org <slug>` | Set the default organization in the active config |
 | `apps show-org` | Show the current default organization |
 

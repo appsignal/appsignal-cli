@@ -45,16 +45,21 @@ Notes:
 - The org slug is persisted after `apps list --org ...` or `apps set-org --org ...`.
 
 ### `get_app_resources`
-- [~] `apps resources`
-- [x] Resources supported by `apps resources`: `users`, `notifiers`, `namespaces`, `dashboards`
+- [~] `apps resources <resource>`
+- [x] `apps resources users`
+- [x] `apps resources notifiers`
+- [x] `apps resources namespaces`
+- [x] `apps resources dashboards`
+- [x] `apps resources deploy-markers` covers `deploy_markers`
+- [x] `apps resources all` provides the combined view
 - [x] `logs sources` covers `log_sources`
 - [x] `logs views` covers `log_views`
 - [ ] Add `log_line_actions`
-- [ ] Add `deploy_markers`
 
 Notes:
 - The MCP tool returns more resource sections than the current CLI does.
-- `apps resources` is already implemented; the remaining work is extending coverage.
+- The CLI now prefers one resource per call, with `all` as the explicit batch mode.
+- The remaining work is extending coverage.
 
 ---
 
@@ -276,10 +281,9 @@ Likely implementation work:
 ## Suggested Implementation Order
 
 ### Phase 1: Finish Core Read/Write Gaps
-1. Add `deploy_markers` to `apps resources`
-2. Add `log_line_actions` to `apps resources`
-3. Add bulk incident updates
-4. Add missing incident filters where the public API allows them
+1. Add `log_line_actions` to `apps resources`
+2. Add bulk incident updates
+3. Add missing incident filters where the public API allows them
 
 ### Phase 2: Triggers And Metrics
 1. Add `triggers list`
