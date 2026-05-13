@@ -2063,10 +2063,7 @@ mod tests {
             .await;
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
-        let resources = client
-            .get_app_resources("app1", &[])
-            .await
-            .unwrap();
+        let resources = client.get_app_resources("app1", &[]).await.unwrap();
 
         assert_eq!(resources.users.as_ref().unwrap().len(), 1);
         assert_eq!(resources.notifiers.as_ref().unwrap().len(), 1);
