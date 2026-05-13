@@ -555,11 +555,14 @@ async fn main() -> Result<()> {
                 endpoint,
                 oauth_client_id,
                 org,
-            } => commands::project::init(commands::project::InitOptions {
-                endpoint,
-                oauth_client_id,
-                org,
-            })?,
+            } => commands::project::init(
+                commands::project::InitOptions {
+                    endpoint,
+                    oauth_client_id,
+                    org,
+                },
+                cli.output,
+            )?,
         },
         Commands::Incidents { action } => match action {
             IncidentsAction::List {
