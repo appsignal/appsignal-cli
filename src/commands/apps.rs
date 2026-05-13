@@ -1,38 +1,58 @@
+use std::io::{self, Write};
+
 use anyhow::Result;
+use serde::Serialize;
+use tabled::Tabled;
 
 use super::{authenticated_client, resolve_org};
+use crate::api::App;
 use crate::config::Config;
+use crate::output::{self, Output, Render};
+
+/// Response shape for `apps list`. Owns its JSON representation.
+#[derive(Serialize)]
+pub struct AppListing {
+    pub apps: Vec<App>,
+}
+
+/// Table view of a single app. Kept separate from `App` so the JSON payload
+/// and the human columns can evolve independently.
+#[derive(Tabled)]
+struct AppRow<'a> {
+    #[tabled(rename = "ID")]
+    id: &'a str,
+    #[tabled(rename = "NAME")]
+    name: &'a str,
+    #[tabled(rename = "ENVIRONMENT")]
+    environment: &'a str,
+}
+
+impl Render for AppListing {
+    fn render_human(&self, w: &mut dyn Write) -> io::Result<()> {
+        if self.apps.is_empty() {
+            return writeln!(w, "No applications found.");
+        }
+        let rows = self.apps.iter().map(|a| AppRow {
+            id: &a.id,
+            name: a.name.as_deref().unwrap_or("-"),
+            environment: a.environment.as_deref().unwrap_or("-"),
+        });
+        output::table(w, rows)?;
+        writeln!(w, "{} application(s) found.", self.apps.len())
+    }
+}
 
 /// List all applications in an organization (and save the org slug to config).
-pub async fn list(org_slug: &str) -> Result<()> {
+pub async fn list(org_slug: &str, format: Output) -> Result<()> {
     let mut config = Config::load()?;
     let client = authenticated_client(&mut config).await?;
 
     let apps = client.list_apps(org_slug).await?;
 
-    // Save the org slug so future commands don't need it
     config.org = Some(org_slug.to_string());
     config.save()?;
 
-    if apps.is_empty() {
-        println!("No applications found.");
-        return Ok(());
-    }
-
-    println!("{:<28} {:<30} ENVIRONMENT", "ID", "NAME");
-    println!("{}", "-".repeat(73));
-
-    for app in &apps {
-        println!(
-            "{:<28} {:<30} {}",
-            app.id,
-            app.name.as_deref().unwrap_or("-"),
-            app.environment.as_deref().unwrap_or("-"),
-        );
-    }
-
-    println!("\n{} application(s) found.", apps.len());
-    Ok(())
+    output::print(&AppListing { apps }, format)
 }
 
 /// Show details for a specific application.

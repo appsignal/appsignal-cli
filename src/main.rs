@@ -2,17 +2,24 @@ mod api;
 mod commands;
 mod config;
 mod oauth;
+mod output;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands::skill::InstallTarget;
+use crate::output::Output;
 
 #[derive(Parser)]
 #[command(name = "appsignal-cli")]
 #[command(about = "CLI for interacting with AppSignal", long_about = None)]
 #[command(version)]
 struct Cli {
+    /// Output format for command results. `human` is the default; `json` is
+    /// machine-readable. Status messages always go to stderr regardless.
+    #[arg(long, short = 'o', global = true, value_enum, default_value_t = Output::Human)]
+    output: Output,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -512,7 +519,7 @@ async fn main() -> Result<()> {
             AuthAction::Status => commands::auth::status()?,
         },
         Commands::Apps { action } => match action {
-            AppsAction::List { org } => commands::apps::list(&org).await?,
+            AppsAction::List { org } => commands::apps::list(&org, cli.output).await?,
             AppsAction::Info { app_id } => commands::apps::info(&app_id).await?,
             AppsAction::Find {
                 name,

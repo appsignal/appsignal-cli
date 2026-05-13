@@ -19,6 +19,7 @@ rand = "0.8"
 sha2 = "0.10"
 base64 = "0.22"
 url = "2"
+tabled = "0.15"
 
 [dev-dependencies]
 wiremock = "0.6"

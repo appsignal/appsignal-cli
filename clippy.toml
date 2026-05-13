@@ -1,0 +1,6 @@
+disallowed-macros = [
+    { path = "std::println", reason = "use output::print() for command results, status!() for messages — see src/output.rs" },
+    { path = "std::print", reason = "use output::print() for command results, status!() for messages — see src/output.rs" },
+    { path = "std::eprintln", reason = "use the status!() macro — see src/output.rs" },
+    { path = "std::eprint", reason = "use the status!() macro — see src/output.rs" },
+]
