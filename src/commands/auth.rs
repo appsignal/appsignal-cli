@@ -5,6 +5,14 @@ use crate::api::AppSignalClient;
 use crate::config::{AuthMethod, Config};
 use crate::oauth;
 
+pub struct LoginOptions {
+    pub token: Option<String>,
+    pub use_oauth: bool,
+    pub endpoint: Option<String>,
+    pub oauth_client_id: Option<String>,
+    pub org: Option<String>,
+}
+
 /// Prompt the user for a token interactively if not provided via --token.
 fn prompt_token() -> Result<String> {
     print!("Enter your AppSignal personal API token: ");
@@ -18,11 +26,18 @@ fn prompt_token() -> Result<String> {
 ///
 /// When `use_oauth` is true the CLI runs the OAuth PKCE flow (opens a browser).
 /// Otherwise, a personal API token is expected via `--token` or interactive prompt.
-pub async fn login(token: Option<String>, use_oauth: bool) -> Result<()> {
+pub async fn login(options: LoginOptions) -> Result<()> {
     let mut config = Config::load()?;
+    apply_login_config_overrides(
+        &mut config,
+        options.endpoint,
+        options.oauth_client_id,
+        options.org,
+    );
+
     let endpoint = config.endpoint_base_url()?;
 
-    if use_oauth {
+    if options.use_oauth {
         // --- OAuth flow ---
         let credentials =
             oauth::perform_oauth_flow(endpoint.as_deref(), config.oauth_client_id()).await?;
@@ -46,14 +61,16 @@ pub async fn login(token: Option<String>, use_oauth: bool) -> Result<()> {
         }
 
         // Clear any existing personal token when switching to OAuth
+        config.inherit_auth = None;
         config.token = None;
         config.oauth = Some(credentials);
         config.save()?;
 
         println!("OAuth credentials saved. You are now authenticated.");
+        print_active_config_path(&config);
     } else {
         // --- Personal token flow (existing behavior) ---
-        let token = match token {
+        let token = match options.token {
             Some(t) => t,
             None => prompt_token()?,
         };
@@ -75,20 +92,49 @@ pub async fn login(token: Option<String>, use_oauth: bool) -> Result<()> {
         }
 
         // Clear any existing OAuth credentials when switching to a personal token
+        config.inherit_auth = None;
         config.oauth = None;
         config.token = Some(token);
         config.save()?;
 
         println!("Token saved. You are now authenticated.");
+        print_active_config_path(&config);
     }
 
     Ok(())
 }
 
+fn apply_login_config_overrides(
+    config: &mut Config,
+    endpoint: Option<String>,
+    oauth_client_id: Option<String>,
+    org: Option<String>,
+) {
+    if let Some(endpoint) = endpoint {
+        config.endpoint = Some(endpoint);
+    }
+
+    if let Some(oauth_client_id) = oauth_client_id {
+        config.oauth_client_id = Some(oauth_client_id);
+    }
+
+    if let Some(org) = org {
+        config.org = Some(org);
+    }
+}
+
+fn print_active_config_path(config: &Config) {
+    if let Some(path) = config.active_path() {
+        println!("Saved config to {}", path.display());
+    }
+}
+
 /// Remove stored credentials.
 pub fn logout() -> Result<()> {
-    Config::delete()?;
-    println!("Logged out. Credentials removed.");
+    let mut config = Config::load()?;
+    config.clear_credentials()?;
+    config.save()?;
+    println!("Logged out. Credentials removed from active config.");
     Ok(())
 }
 
@@ -96,7 +142,15 @@ pub fn logout() -> Result<()> {
 pub fn status() -> Result<()> {
     let config = Config::load()?;
 
-    if let Some(ref oauth) = config.oauth {
+    if let Some(path) = config.active_path() {
+        println!("Using config: {}", path.display());
+    }
+
+    if let Some(oauth) = config
+        .oauth
+        .as_ref()
+        .filter(|oauth| !oauth.access_token.is_empty())
+    {
         let masked = mask_token(&oauth.access_token);
         let expiry = oauth
             .expires_at
@@ -136,5 +190,29 @@ fn mask_token(token: &str) -> String {
         format!("{}...{}", &token[..4], &token[token.len() - 4..])
     } else {
         "****".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_apply_login_config_overrides_updates_config_values() {
+        let mut config = Config::default();
+
+        apply_login_config_overrides(
+            &mut config,
+            Some("https://staging.lol".to_string()),
+            Some("staging-client-id".to_string()),
+            Some("side-project".to_string()),
+        );
+
+        assert_eq!(config.endpoint, Some("https://staging.lol".to_string()));
+        assert_eq!(
+            config.oauth_client_id,
+            Some("staging-client-id".to_string())
+        );
+        assert_eq!(config.org, Some("side-project".to_string()));
     }
 }

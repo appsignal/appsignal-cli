@@ -144,7 +144,7 @@ or `Authorization: Bearer` header (OAuth tokens).
 
 ## Config
 
-The config file at `~/.config/appsignal/config.toml` stores:
+The global config file at `~/.config/appsignal/config.toml` stores:
 
 - `token` — personal API token (set via `auth login --token`)
 - `org` — default organization slug (auto-saved by `apps list`, or set via `apps set-org`)
@@ -160,6 +160,11 @@ Switching auth methods clears the other (i.e., `--oauth` clears `token`, `--toke
 
 The org slug is used as a default for all commands that need an organization.
 It can always be overridden with `--org <slug>`.
+
+If the current directory (or one of its parents) contains `.appsignal.toml`, the
+CLI loads the global config first and then applies that nearest local file as an
+override. Config writes go back to the active file, so project-specific auth,
+endpoint, and org settings can stay local to the project.
 
 ## OAuth
 
@@ -206,15 +211,16 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 
 | Command | Description |
 |---|---|
-| `appsignal-cli auth login --oauth` | Authenticate via OAuth PKCE flow (opens browser) |
-| `appsignal-cli auth login [--token TOKEN]` | Store personal API token (prompts if omitted), validates via `{ __typename }` |
-| `appsignal-cli auth logout` | Delete stored credentials (both token and OAuth) |
+| `appsignal-cli auth login --oauth [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth PKCE flow using the active global or project config |
+| `appsignal-cli auth login [--token TOKEN] [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Store personal API token and optional config overrides in the active config, validates via `{ __typename }` |
+| `appsignal-cli auth logout` | Delete stored credentials from the active config |
 | `appsignal-cli auth status` | Show auth status, method (OAuth/token), and expiry |
+| `appsignal-cli project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml` without copying global credentials |
 | `appsignal-cli apps orgs` | List all organizations you have access to |
-| `appsignal-cli apps list --org <slug>` | List apps in an organization (saves org as default) |
+| `appsignal-cli apps list --org <slug>` | List apps in an organization and save the default org to the active config |
 | `appsignal-cli apps info --app-id <id>` | Show details for a single app by ID |
 | `appsignal-cli apps find --name <name> [--environment <env>] [--org <slug>]` | Find app by name (case-insensitive) |
-| `appsignal-cli apps set-org --org <slug>` | Set the default organization slug |
+| `appsignal-cli apps set-org --org <slug>` | Set the default organization slug in the active config |
 | `appsignal-cli apps show-org` | Show the current default organization |
 | `appsignal-cli incidents list [options]` | List all incident types for an app |
 | `appsignal-cli incidents list-exceptions [options]` | List exception incidents (supports `--query` text search) |

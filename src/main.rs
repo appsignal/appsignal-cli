@@ -31,6 +31,11 @@ enum Commands {
         #[command(subcommand)]
         action: AppsAction,
     },
+    /// Initialize a project-local AppSignal config
+    Project {
+        #[command(subcommand)]
+        action: ProjectAction,
+    },
     /// List and inspect incidents
     Incidents {
         #[command(subcommand)]
@@ -74,6 +79,15 @@ enum AuthAction {
         /// Authenticate via OAuth (opens your browser)
         #[arg(long)]
         oauth: bool,
+        /// Override the AppSignal base URL (for example `https://staging.lol`)
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Override the OAuth client ID used during login
+        #[arg(long)]
+        oauth_client_id: Option<String>,
+        /// Set the default organization slug during login
+        #[arg(long)]
+        org: Option<String>,
     },
     /// Remove stored credentials
     Logout,
@@ -134,6 +148,22 @@ enum AppsAction {
         /// Comma-separated sections to include: users, notifiers, namespaces, dashboards (default: all)
         #[arg(long)]
         sections: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectAction {
+    /// Create or update the project-local `.appsignal.toml`
+    Init {
+        /// Override the AppSignal base URL (for example `https://staging.lol`)
+        #[arg(long)]
+        endpoint: Option<String>,
+        /// Override the OAuth client ID for this project
+        #[arg(long)]
+        oauth_client_id: Option<String>,
+        /// Set the default organization slug for this project
+        #[arg(long)]
+        org: Option<String>,
     },
 }
 
@@ -462,7 +492,22 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::About => commands::about::show()?,
         Commands::Auth { action } => match action {
-            AuthAction::Login { token, oauth } => commands::auth::login(token, oauth).await?,
+            AuthAction::Login {
+                token,
+                oauth,
+                endpoint,
+                oauth_client_id,
+                org,
+            } => {
+                commands::auth::login(commands::auth::LoginOptions {
+                    token,
+                    use_oauth: oauth,
+                    endpoint,
+                    oauth_client_id,
+                    org,
+                })
+                .await?
+            }
             AuthAction::Logout => commands::auth::logout()?,
             AuthAction::Status => commands::auth::status()?,
         },
@@ -493,6 +538,17 @@ async fn main() -> Result<()> {
                 )
                 .await?
             }
+        },
+        Commands::Project { action } => match action {
+            ProjectAction::Init {
+                endpoint,
+                oauth_client_id,
+                org,
+            } => commands::project::init(commands::project::InitOptions {
+                endpoint,
+                oauth_client_id,
+                org,
+            })?,
         },
         Commands::Incidents { action } => match action {
             IncidentsAction::List {
