@@ -1,3 +1,4 @@
+pub mod about;
 pub mod apps;
 pub mod auth;
 pub mod incidents;

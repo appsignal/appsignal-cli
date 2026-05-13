@@ -90,6 +90,12 @@ appsignal-cli logs search --app "MyApp" --environment "production" \
 
 ## Commands
 
+### `about`
+
+| Command | Description |
+|---|---|
+| `about` | Show the CLI overview screen with version, config, auth, and starter commands |
+
 ### `auth`
 
 | Command | Description |
