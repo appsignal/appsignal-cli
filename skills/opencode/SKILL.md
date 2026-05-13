@@ -2,7 +2,7 @@
 name: appsignal
 description: |
   Use `appsignal-cli` as an LLM-friendly interface to inspect AppSignal applications, incidents, and logs.
-  Includes command guidance, shared flags, and when to prefer `--json` output for machine consumption.
+  Includes command guidance, shared flags, and when to prefer `--output json` for machine consumption.
 triggers:
   - appsignal
   - /appsignal

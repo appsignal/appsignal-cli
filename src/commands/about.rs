@@ -1,6 +1,8 @@
 use crate::config::{AuthMethod, Config};
+use crate::output::Output;
 use anyhow::Result;
 use rand::Rng;
+use serde::Serialize;
 use std::fmt::Write;
 use std::fs;
 use std::path::PathBuf;
@@ -22,29 +24,73 @@ const SUBTITLES: &[&str] = &[
     "signals in :: answers out",
 ];
 
-pub fn show() -> Result<()> {
-    let config = Config::load()?;
-    let subtitle = select_subtitle();
-    print!(
-        "{}",
-        render_about(
-            &config,
-            env!("CARGO_PKG_VERSION"),
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-            subtitle,
-            colors_enabled(),
-        )
-    );
-    Ok(())
+#[derive(Serialize)]
+struct AboutResponse {
+    version: String,
+    platform: String,
+    endpoint: String,
+    default_org: Option<String>,
+    auth: String,
+    subtitle: String,
+    suggested_commands: Vec<&'static str>,
 }
 
+pub fn show(format: Output) -> Result<()> {
+    let config = Config::load()?;
+    let subtitle = select_subtitle();
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    let platform = format!("{} / {}", std::env::consts::OS, std::env::consts::ARCH);
+    let endpoint = config
+        .endpoint
+        .as_deref()
+        .unwrap_or("https://appsignal.com")
+        .to_string();
+    let default_org = config.org.clone().filter(|org| !org.is_empty());
+    let auth = auth_summary(&config);
+    let suggested_commands = vec![
+        "appsignal-cli auth login --oauth",
+        "appsignal-cli apps orgs",
+        "appsignal-cli incidents list --app \"MyApp\" --environment production",
+        "appsignal-cli logs tail --app \"MyApp\" --environment production",
+    ];
+
+    let response = AboutResponse {
+        version: version.clone(),
+        platform: platform.clone(),
+        endpoint: endpoint.clone(),
+        default_org,
+        auth: auth.clone(),
+        subtitle: subtitle.to_string(),
+        suggested_commands: suggested_commands.clone(),
+    };
+
+    crate::output::print_with(response, format, move |w| {
+        write!(
+            w,
+            "{}",
+            render_about(
+                &version,
+                &platform,
+                &endpoint,
+                config.org.as_deref().unwrap_or("not set"),
+                auth.as_str(),
+                subtitle,
+                &suggested_commands,
+                colors_enabled(),
+            )
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_about(
-    config: &Config,
     version: &str,
-    os: &str,
-    arch: &str,
+    platform: &str,
+    endpoint: &str,
+    default_org: &str,
+    auth: &str,
     subtitle: &str,
+    suggested_commands: &[&str],
     color: bool,
 ) -> String {
     let mut output = String::new();
@@ -55,41 +101,15 @@ fn render_about(
     writeln!(&mut output).unwrap();
 
     write_kv(&mut output, "Version", version, MAGENTA, color);
-    write_kv(
-        &mut output,
-        "Platform",
-        &format!("{} / {}", os, arch),
-        MAGENTA,
-        color,
-    );
-    write_kv(
-        &mut output,
-        "Endpoint",
-        config
-            .endpoint
-            .as_deref()
-            .unwrap_or("https://appsignal.com"),
-        MAGENTA,
-        color,
-    );
-    write_kv(
-        &mut output,
-        "Default org",
-        config.org.as_deref().unwrap_or("not set"),
-        MAGENTA,
-        color,
-    );
-    write_kv(&mut output, "Auth", &auth_summary(config), MAGENTA, color);
+    write_kv(&mut output, "Platform", platform, MAGENTA, color);
+    write_kv(&mut output, "Endpoint", endpoint, MAGENTA, color);
+    write_kv(&mut output, "Default org", default_org, MAGENTA, color);
+    write_kv(&mut output, "Auth", auth, MAGENTA, color);
 
     writeln!(&mut output).unwrap();
     writeln!(&mut output, "{}", paint("Try these next:", BOLD, color)).unwrap();
 
-    for command in [
-        "appsignal-cli auth login --oauth",
-        "appsignal-cli apps orgs",
-        "appsignal-cli incidents list --app \"MyApp\" --environment production",
-        "appsignal-cli logs tail --app \"MyApp\" --environment production",
-    ] {
+    for command in suggested_commands {
         writeln!(
             &mut output,
             "  {} {}",
@@ -250,7 +270,21 @@ mod tests {
             ..Config::default()
         };
 
-        let output = render_about(&config, "1.2.3", "linux", "x86_64", SUBTITLES[0], false);
+        let output = render_about(
+            "1.2.3",
+            "linux / x86_64",
+            "https://appsignal.com",
+            config.org.as_deref().unwrap_or("not set"),
+            &auth_summary(&config),
+            SUBTITLES[0],
+            &[
+                "appsignal-cli auth login --oauth",
+                "appsignal-cli apps orgs",
+                "appsignal-cli incidents list --app \"MyApp\" --environment production",
+                "appsignal-cli logs tail --app \"MyApp\" --environment production",
+            ],
+            false,
+        );
 
         assert!(output.contains("APPSIGNAL CLI"));
         assert!(output.contains(SUBTITLES[0]));

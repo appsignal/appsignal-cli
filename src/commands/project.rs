@@ -1,6 +1,14 @@
 use anyhow::Result;
+use serde::Serialize;
 
 use crate::config::Config;
+use crate::output::Output;
+
+#[derive(Serialize)]
+struct ProjectInitResponse {
+    path: String,
+    message: String,
+}
 
 pub struct InitOptions {
     pub endpoint: Option<String>,
@@ -9,7 +17,7 @@ pub struct InitOptions {
 }
 
 /// Initialize a project-local `.appsignal.toml`.
-pub fn init(options: InitOptions) -> Result<()> {
+pub fn init(options: InitOptions, format: Output) -> Result<()> {
     let mut config = Config::load_local_only()?;
     let path = config
         .active_path()
@@ -30,8 +38,15 @@ pub fn init(options: InitOptions) -> Result<()> {
 
     config.save()?;
 
-    println!("Created project config at {}", path.display());
-    Ok(())
+    let path_display = path.display().to_string();
+    crate::output::print_with(
+        ProjectInitResponse {
+            path: path_display.clone(),
+            message: format!("Created project config at {}", path_display),
+        },
+        format,
+        |w| writeln!(w, "Created project config at {}", path_display),
+    )
 }
 
 #[cfg(test)]

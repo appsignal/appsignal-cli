@@ -5,7 +5,6 @@ use rand::Rng;
 use reqwest::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::io::Write;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::time::{timeout, Duration};
@@ -244,8 +243,7 @@ async fn wait_for_loopback_callback(redirect_uri: &str) -> Result<String> {
             )
         })?;
 
-    println!("Waiting for OAuth callback on {} ...", redirect_uri);
-    println!();
+    crate::status!("Waiting for OAuth callback on {} ...", redirect_uri);
 
     let (mut stream, _) = timeout(Duration::from_secs(300), listener.accept())
         .await
@@ -314,15 +312,12 @@ pub async fn perform_oauth_flow(
     // Step 2: Build and open the authorization URL
     let authorize_url = build_authorize_url(&config, &state, &code_challenge);
 
-    println!("Opening your browser to authenticate with AppSignal...");
-    println!();
+    crate::status!("Opening your browser to authenticate with AppSignal...");
 
     if open::that(&authorize_url).is_err() {
-        println!("Could not open browser automatically.");
-        println!("Please open the following URL in your browser:");
-        println!();
-        println!("  {}", authorize_url);
-        println!();
+        crate::status!("Could not open browser automatically.");
+        crate::status!("Please open the following URL in your browser:");
+        crate::status!("  {}", authorize_url);
     }
 
     let callback_url = wait_for_loopback_callback(&config.redirect_uri).await?;
@@ -331,11 +326,10 @@ pub async fn perform_oauth_flow(
     let code = parse_callback_url(&callback_url, &config.redirect_uri, &state)?;
 
     // Step 5: Exchange the code for tokens
-    print!("Exchanging authorization code for tokens... ");
-    std::io::stdout().flush()?;
+    crate::status!("Exchanging authorization code for tokens...");
 
     let credentials = exchange_code(&config, &code, &code_verifier).await?;
-    println!("OK");
+    crate::status!("OK");
 
     Ok(credentials)
 }

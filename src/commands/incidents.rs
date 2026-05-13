@@ -1,8 +1,28 @@
+use std::io::{self, Write};
+
 use anyhow::Result;
+use serde::Serialize;
 
 use super::{authenticated_client, resolve_org};
 use crate::api::{resolve_user_ids, Incident};
 use crate::config::Config;
+use crate::output::{self, Output};
+
+#[derive(Serialize)]
+struct IncidentListResponse<'a> {
+    incidents: &'a [Incident],
+}
+
+#[derive(Serialize)]
+struct IncidentResponse<'a> {
+    incident: &'a Incident,
+}
+
+#[derive(Serialize)]
+struct IncidentNoteResponse {
+    incident_number: i64,
+    message: String,
+}
 
 /// List incidents for an application (all types).
 #[allow(clippy::too_many_arguments)]
@@ -17,6 +37,7 @@ pub async fn list(
     order: Option<&str>,
     namespaces: Option<&str>,
     action_name: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -41,8 +62,13 @@ pub async fn list(
         )
         .await?;
 
-    print_incident_table(&incidents);
-    Ok(())
+    output::print_with(
+        IncidentListResponse {
+            incidents: &incidents,
+        },
+        format,
+        |w| render_incident_table(w, &incidents),
+    )
 }
 
 /// List exception incidents for an application.
@@ -59,6 +85,7 @@ pub async fn list_exceptions(
     namespaces: Option<&str>,
     action_name: Option<&str>,
     query: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -84,8 +111,13 @@ pub async fn list_exceptions(
         )
         .await?;
 
-    print_exception_table(&incidents);
-    Ok(())
+    output::print_with(
+        IncidentListResponse {
+            incidents: &incidents,
+        },
+        format,
+        |w| render_exception_table(w, &incidents),
+    )
 }
 
 /// List anomaly incidents for an application.
@@ -99,6 +131,7 @@ pub async fn list_anomalies(
     offset: Option<i64>,
     state: Option<&str>,
     order: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -112,42 +145,13 @@ pub async fn list_anomalies(
         .list_anomaly_incidents(&resolved_app_id, limit, offset, state, order)
         .await?;
 
-    if incidents.is_empty() {
-        println!("No anomaly incidents found.");
-        return Ok(());
-    }
-
-    println!(
-        "{:<8} {:<10} {:<10} {:<10} {:<8} {:<22} TRIGGER",
-        "#", "STATE", "SEVERITY", "ALERT", "COUNT", "LAST OCCURRED"
-    );
-    println!("{}", "-".repeat(100));
-
-    for incident in &incidents {
-        let trigger_name = if let Incident::AnomalyIncident { trigger, .. } = incident {
-            trigger.as_ref().map(|t| t.name.as_str()).unwrap_or("-")
-        } else {
-            "-"
-        };
-        let alert_state = if let Incident::AnomalyIncident { alert_state, .. } = incident {
-            alert_state.as_deref().unwrap_or("-")
-        } else {
-            "-"
-        };
-        println!(
-            "{:<8} {:<10} {:<10} {:<10} {:<8} {:<22} {}",
-            incident.number(),
-            incident.state(),
-            incident.severity(),
-            alert_state,
-            incident.count(),
-            incident.last_occurred_at(),
-            truncate(trigger_name, 40),
-        );
-    }
-
-    println!("\n{} anomaly incident(s) found.", incidents.len());
-    Ok(())
+    output::print_with(
+        IncidentListResponse {
+            incidents: &incidents,
+        },
+        format,
+        |w| render_anomaly_table(w, &incidents),
+    )
 }
 
 /// List performance incidents for an application.
@@ -164,6 +168,7 @@ pub async fn list_performance(
     namespaces: Option<&str>,
     action_name: Option<&str>,
     query: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -189,8 +194,13 @@ pub async fn list_performance(
         )
         .await?;
 
-    print_performance_table(&incidents);
-    Ok(())
+    output::print_with(
+        IncidentListResponse {
+            incidents: &incidents,
+        },
+        format,
+        |w| render_performance_table(w, &incidents),
+    )
 }
 
 /// Show details for a specific incident.
@@ -200,6 +210,7 @@ pub async fn show(
     app_name: Option<&str>,
     environment: Option<&str>,
     org: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -213,8 +224,13 @@ pub async fn show(
         .get_incident(&resolved_app_id, incident_number)
         .await?;
 
-    print_incident_detail(&incident);
-    Ok(())
+    output::print_with(
+        IncidentResponse {
+            incident: &incident,
+        },
+        format,
+        |w| render_incident_detail(w, &incident),
+    )
 }
 
 /// Update an incident (state, severity, assignees, description).
@@ -231,6 +247,7 @@ pub async fn update(
     assign: Option<&[String]>,
     unassign: Option<&[String]>,
     description: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -283,9 +300,14 @@ pub async fn update(
         )
         .await?;
 
-    println!("Incident #{} updated.", incident_number);
-    print_incident_detail(&incident);
-    Ok(())
+    crate::status!("Incident #{} updated.", incident_number);
+    output::print_with(
+        IncidentResponse {
+            incident: &incident,
+        },
+        format,
+        |w| render_incident_detail(w, &incident),
+    )
 }
 
 /// Add a note to an incident.
@@ -296,6 +318,7 @@ pub async fn add_note(
     app_name: Option<&str>,
     environment: Option<&str>,
     org: Option<&str>,
+    format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
     let org_slug = resolve_org(org, &config)?;
@@ -309,21 +332,27 @@ pub async fn add_note(
         .create_incident_note(&resolved_app_id, incident_number, content)
         .await?;
 
-    println!("Note added to incident #{}.", incident_number);
-    Ok(())
+    output::print_with(
+        IncidentNoteResponse {
+            incident_number,
+            message: format!("Note added to incident #{}.", incident_number),
+        },
+        format,
+        |w| writeln!(w, "Note added to incident #{}.", incident_number),
+    )
 }
 
-fn print_exception_table(incidents: &[Incident]) {
+fn render_exception_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Result<()> {
     if incidents.is_empty() {
-        println!("No exception incidents found.");
-        return;
+        return writeln!(w, "No exception incidents found.");
     }
 
-    println!(
+    writeln!(
+        w,
         "{:<8} {:<10} {:<10} {:<8} {:<22} EXCEPTION",
         "#", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
-    );
-    println!("{}", "-".repeat(100));
+    )?;
+    writeln!(w, "{}", "-".repeat(100))?;
 
     for incident in incidents {
         let exception = if let Incident::ExceptionIncident { exception_name, .. } = incident {
@@ -331,7 +360,8 @@ fn print_exception_table(incidents: &[Incident]) {
         } else {
             "-"
         };
-        println!(
+        writeln!(
+            w,
             "{:<8} {:<10} {:<10} {:<8} {:<22} {}",
             incident.number(),
             incident.state(),
@@ -339,23 +369,23 @@ fn print_exception_table(incidents: &[Incident]) {
             incident.count(),
             incident.last_occurred_at(),
             truncate(exception, 50),
-        );
+        )?;
     }
 
-    println!("\n{} exception incident(s) found.", incidents.len());
+    writeln!(w, "{} exception incident(s) found.", incidents.len())
 }
 
-fn print_performance_table(incidents: &[Incident]) {
+fn render_performance_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Result<()> {
     if incidents.is_empty() {
-        println!("No performance incidents found.");
-        return;
+        return writeln!(w, "No performance incidents found.");
     }
 
-    println!(
+    writeln!(
+        w,
         "{:<8} {:<10} {:<10} {:<8} {:<22} ACTION",
         "#", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
-    );
-    println!("{}", "-".repeat(100));
+    )?;
+    writeln!(w, "{}", "-".repeat(100))?;
 
     for incident in incidents {
         let action = if let Incident::PerformanceIncident { action_names, .. } = incident {
@@ -367,7 +397,8 @@ fn print_performance_table(incidents: &[Incident]) {
         } else {
             "-"
         };
-        println!(
+        writeln!(
+            w,
             "{:<8} {:<10} {:<10} {:<8} {:<22} {}",
             incident.number(),
             incident.state(),
@@ -375,27 +406,28 @@ fn print_performance_table(incidents: &[Incident]) {
             incident.count(),
             incident.last_occurred_at(),
             truncate(action, 50),
-        );
+        )?;
     }
 
-    println!("\n{} performance incident(s) found.", incidents.len());
+    writeln!(w, "{} performance incident(s) found.", incidents.len())
 }
 
-fn print_incident_table(incidents: &[Incident]) {
+fn render_incident_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Result<()> {
     if incidents.is_empty() {
-        println!("No incidents found.");
-        return;
+        return writeln!(w, "No incidents found.");
     }
 
-    println!(
+    writeln!(
+        w,
         "{:<8} {:<12} {:<10} {:<10} {:<8} {:<22} DESCRIPTION",
         "#", "TYPE", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
-    );
-    println!("{}", "-".repeat(100));
+    )?;
+    writeln!(w, "{}", "-".repeat(100))?;
 
     for incident in incidents {
         let desc = truncate(incident.description(), 40);
-        println!(
+        writeln!(
+            w,
             "{:<8} {:<12} {:<10} {:<10} {:<8} {:<22} {}",
             incident.number(),
             incident.kind(),
@@ -404,21 +436,67 @@ fn print_incident_table(incidents: &[Incident]) {
             incident.count(),
             incident.last_occurred_at(),
             desc,
-        );
+        )?;
     }
 
-    println!("\n{} incident(s) found.", incidents.len());
+    writeln!(w, "{} incident(s) found.", incidents.len())
 }
 
-fn print_incident_detail(incident: &Incident) {
-    println!("Incident #{}", incident.number());
-    println!("  Type:           {}", incident.kind());
-    println!("  State:          {}", incident.state());
-    println!("  Severity:       {}", incident.severity());
-    println!("  Count:          {}", incident.count());
-    println!("  Description:    {}", incident.description());
-    println!("  Created at:     {}", incident.created_at());
-    println!("  Last occurred:  {}", incident.last_occurred_at());
+fn render_anomaly_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Result<()> {
+    if incidents.is_empty() {
+        return writeln!(w, "No anomaly incidents found.");
+    }
+
+    writeln!(
+        w,
+        "{:<8} {:<10} {:<10} {:<10} {:<8} {:<22} TRIGGER",
+        "#", "STATE", "SEVERITY", "ALERT", "COUNT", "LAST OCCURRED"
+    )?;
+    writeln!(w, "{}", "-".repeat(100))?;
+
+    for incident in incidents {
+        let trigger_name = if let Incident::AnomalyIncident { trigger, .. } = incident {
+            trigger.as_ref().map(|t| t.name.as_str()).unwrap_or("-")
+        } else {
+            "-"
+        };
+        let alert_state = if let Incident::AnomalyIncident { alert_state, .. } = incident {
+            alert_state.as_deref().unwrap_or("-")
+        } else {
+            "-"
+        };
+        writeln!(
+            w,
+            "{:<8} {:<10} {:<10} {:<10} {:<8} {:<22} {}",
+            incident.number(),
+            incident.state(),
+            incident.severity(),
+            alert_state,
+            incident.count(),
+            incident.last_occurred_at(),
+            truncate(trigger_name, 40),
+        )?;
+    }
+
+    writeln!(w, "{} anomaly incident(s) found.", incidents.len())
+}
+
+fn render_incident_detail(w: &mut dyn Write, incident: &Incident) -> io::Result<()> {
+    let incident_label = format!("#{}", incident.number());
+    let count = incident.count().to_string();
+    output::detail(
+        w,
+        &[
+            ("Incident", &incident_label),
+            ("Type", incident.kind()),
+            ("State", incident.state()),
+            ("Severity", incident.severity()),
+            ("Count", &count),
+            ("Description", incident.description()),
+            ("Created at", incident.created_at()),
+            ("Last occurred", incident.last_occurred_at()),
+        ],
+    )?;
 
     let assignees = incident.assignees();
     if !assignees.is_empty() {
@@ -426,7 +504,7 @@ fn print_incident_detail(incident: &Incident) {
             .iter()
             .map(|u| u.name.as_deref().unwrap_or(&u.id))
             .collect();
-        println!("  Assignees:      {}", names.join(", "));
+        writeln!(w, "Assignees:      {}", names.join(", "))?;
     }
 
     match incident {
@@ -438,24 +516,27 @@ fn print_incident_detail(incident: &Incident) {
             first_backtrace_line,
             ..
         } => {
-            println!(
-                "  Exception:      {}",
+            writeln!(
+                w,
+                "Exception:      {}",
                 exception_name.as_deref().unwrap_or("-")
-            );
-            println!(
-                "  Message:        {}",
+            )?;
+            writeln!(
+                w,
+                "Message:        {}",
                 exception_message.as_deref().unwrap_or("-")
-            );
-            println!("  Namespace:      {}", namespace.as_deref().unwrap_or("-"));
+            )?;
+            writeln!(w, "Namespace:      {}", namespace.as_deref().unwrap_or("-"))?;
             if let Some(actions) = action_names {
                 if !actions.is_empty() {
-                    println!("  Actions:        {}", actions.join(", "));
+                    writeln!(w, "Actions:        {}", actions.join(", "))?;
                 }
             }
-            println!(
-                "  Backtrace:      {}",
+            writeln!(
+                w,
+                "Backtrace:      {}",
                 first_backtrace_line.as_deref().unwrap_or("-")
-            );
+            )?;
         }
         Incident::PerformanceIncident {
             action_names,
@@ -464,16 +545,16 @@ fn print_incident_detail(incident: &Incident) {
             total_duration,
             ..
         } => {
-            println!("  Namespace:      {}", namespace.as_deref().unwrap_or("-"));
+            writeln!(w, "Namespace:      {}", namespace.as_deref().unwrap_or("-"))?;
             if let Some(m) = mean {
-                println!("  Mean duration:  {:.2} ms", m);
+                writeln!(w, "Mean duration:  {:.2} ms", m)?;
             }
             if let Some(td) = total_duration {
-                println!("  Total duration: {:.2} ms", td);
+                writeln!(w, "Total duration: {:.2} ms", td)?;
             }
             if let Some(actions) = action_names {
                 if !actions.is_empty() {
-                    println!("  Actions:        {}", actions.join(", "));
+                    writeln!(w, "Actions:        {}", actions.join(", "))?;
                 }
             }
         }
@@ -484,11 +565,11 @@ fn print_incident_detail(incident: &Incident) {
             ..
         } => {
             if let Some(state) = alert_state {
-                println!("  Alert state:    {}", state);
+                writeln!(w, "Alert state:    {}", state)?;
             }
             if let Some(t) = trigger {
-                println!("  Trigger:        {} ({})", t.name, t.kind);
-                println!("  Metric:         {}", t.metric_name);
+                writeln!(w, "Trigger:        {} ({})", t.name, t.kind)?;
+                writeln!(w, "Metric:         {}", t.metric_name)?;
             }
             if let Some(tags) = tags {
                 if !tags.is_empty() {
@@ -496,12 +577,14 @@ fn print_incident_detail(incident: &Incident) {
                         .iter()
                         .map(|t| format!("{}={}", t.key, t.value.as_deref().unwrap_or("")))
                         .collect();
-                    println!("  Tags:           {}", tag_strs.join(", "));
+                    writeln!(w, "Tags:           {}", tag_strs.join(", "))?;
                 }
             }
         }
         Incident::LogIncident { .. } => {}
     }
+
+    Ok(())
 }
 
 fn truncate(s: &str, max: usize) -> String {

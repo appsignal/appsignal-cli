@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
 use clap::ValueEnum;
+use serde::Serialize;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::output::Output;
 
 const SKILL_NAME: &str = "appsignal";
 const OPENCODE_SKILL_TEMPLATE: &str = include_str!("../../skills/opencode/SKILL.md");
@@ -10,6 +13,18 @@ const CODEX_SKILL_TEMPLATE: &str = include_str!("../../skills/codex/SKILL.md");
 const CLAUDE_SKILL_TEMPLATE: &str = include_str!("../../skills/claude/SKILL.md");
 const SHARED_SKILL_BODY_TEMPLATE: &str = include_str!("../../skills/shared/body.md");
 const BODY_PLACEHOLDER: &str = "{{BODY}}";
+
+#[derive(Serialize)]
+struct SkillInstallEntry {
+    target: String,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct SkillInstallResponse {
+    skill_name: &'static str,
+    installed: Vec<SkillInstallEntry>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum InstallTarget {
@@ -30,7 +45,12 @@ impl InstallTarget {
     }
 }
 
-pub fn install(targets: &[InstallTarget], dir: Option<&str>, force: bool) -> Result<()> {
+pub fn install(
+    targets: &[InstallTarget],
+    dir: Option<&str>,
+    force: bool,
+    format: Output,
+) -> Result<()> {
     let targets = expand_targets(targets);
 
     if dir.is_some() && targets.len() > 1 {
@@ -51,12 +71,28 @@ pub fn install(targets: &[InstallTarget], dir: Option<&str>, force: bool) -> Res
         installed.push((target, installed_path));
     }
 
-    for (target, path) in &installed {
-        println!("Installed {} skill at {}", target.label(), path.display());
-    }
-    println!("Load it in your agent as `{}`.", SKILL_NAME);
+    let response = SkillInstallResponse {
+        skill_name: SKILL_NAME,
+        installed: installed
+            .iter()
+            .map(|(target, path)| SkillInstallEntry {
+                target: target.label().to_string(),
+                path: path.display().to_string(),
+            })
+            .collect(),
+    };
 
-    Ok(())
+    crate::output::print_with(response, format, |w| {
+        for (target, path) in &installed {
+            writeln!(
+                w,
+                "Installed {} skill at {}",
+                target.label(),
+                path.display()
+            )?;
+        }
+        writeln!(w, "Load it in your agent as `{}`.", SKILL_NAME)
+    })
 }
 
 fn expand_targets(targets: &[InstallTarget]) -> Vec<InstallTarget> {
@@ -239,7 +275,7 @@ mod tests {
     #[test]
     fn install_rejects_custom_dir_for_multiple_targets() {
         let targets = vec![InstallTarget::Opencode, InstallTarget::Codex];
-        let err = install(&targets, Some("/tmp/skills"), false).unwrap_err();
+        let err = install(&targets, Some("/tmp/skills"), false, Output::Human).unwrap_err();
 
         assert!(err
             .to_string()

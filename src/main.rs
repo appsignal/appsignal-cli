@@ -2,17 +2,24 @@ mod api;
 mod commands;
 mod config;
 mod oauth;
+mod output;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands::skill::InstallTarget;
+use crate::output::Output;
 
 #[derive(Parser)]
 #[command(name = "appsignal-cli")]
 #[command(about = "CLI for interacting with AppSignal", long_about = None)]
 #[command(version)]
 struct Cli {
+    /// Output format for command results. `human` is the default; `json` is
+    /// machine-readable. Status messages always go to stderr regardless.
+    #[arg(long, short = 'o', global = true, value_enum, default_value_t = Output::Human)]
+    output: Output,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -406,7 +413,7 @@ enum LogsAction {
         #[arg(long)]
         view: Option<String>,
     },
-    /// Search log lines (one-shot query). Use --json for LLM-friendly output.
+    /// Search log lines (one-shot query). Use --output json for machine-readable output.
     Search {
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
@@ -446,9 +453,6 @@ enum LogsAction {
         /// Sort order: ASC (oldest first) or DESC (newest first)
         #[arg(long, default_value = "DESC")]
         order: Option<String>,
-        /// Output results as JSON (useful for LLM/programmatic consumption)
-        #[arg(long)]
-        json: bool,
         /// Automatically paginate to fetch all results (requires --start; ignores --limit and --order)
         #[arg(long)]
         page_all: bool,
@@ -490,7 +494,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::About => commands::about::show()?,
+        Commands::About => commands::about::show(cli.output)?,
         Commands::Auth { action } => match action {
             AuthAction::Login {
                 token,
@@ -499,29 +503,35 @@ async fn main() -> Result<()> {
                 oauth_client_id,
                 org,
             } => {
-                commands::auth::login(commands::auth::LoginOptions {
-                    token,
-                    use_oauth: oauth,
-                    endpoint,
-                    oauth_client_id,
-                    org,
-                })
+                commands::auth::login(
+                    commands::auth::LoginOptions {
+                        token,
+                        use_oauth: oauth,
+                        endpoint,
+                        oauth_client_id,
+                        org,
+                    },
+                    cli.output,
+                )
                 .await?
             }
-            AuthAction::Logout => commands::auth::logout()?,
-            AuthAction::Status => commands::auth::status()?,
+            AuthAction::Logout => commands::auth::logout(cli.output)?,
+            AuthAction::Status => commands::auth::status(cli.output)?,
         },
         Commands::Apps { action } => match action {
-            AppsAction::List { org } => commands::apps::list(&org).await?,
-            AppsAction::Info { app_id } => commands::apps::info(&app_id).await?,
+            AppsAction::List { org } => commands::apps::list(&org, cli.output).await?,
+            AppsAction::Info { app_id } => commands::apps::info(&app_id, cli.output).await?,
             AppsAction::Find {
                 name,
                 environment,
                 org,
-            } => commands::apps::find(&name, environment.as_deref(), org.as_deref()).await?,
-            AppsAction::SetOrg { org } => commands::apps::set_org(&org).await?,
-            AppsAction::ShowOrg => commands::apps::show_org()?,
-            AppsAction::Orgs => commands::apps::orgs().await?,
+            } => {
+                commands::apps::find(&name, environment.as_deref(), org.as_deref(), cli.output)
+                    .await?
+            }
+            AppsAction::SetOrg { org } => commands::apps::set_org(&org, cli.output).await?,
+            AppsAction::ShowOrg => commands::apps::show_org(cli.output)?,
+            AppsAction::Orgs => commands::apps::orgs(cli.output).await?,
             AppsAction::Resources {
                 app_id,
                 app,
@@ -535,6 +545,7 @@ async fn main() -> Result<()> {
                     environment.as_deref(),
                     org.as_deref(),
                     sections.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
@@ -544,11 +555,14 @@ async fn main() -> Result<()> {
                 endpoint,
                 oauth_client_id,
                 org,
-            } => commands::project::init(commands::project::InitOptions {
-                endpoint,
-                oauth_client_id,
-                org,
-            })?,
+            } => commands::project::init(
+                commands::project::InitOptions {
+                    endpoint,
+                    oauth_client_id,
+                    org,
+                },
+                cli.output,
+            )?,
         },
         Commands::Incidents { action } => match action {
             IncidentsAction::List {
@@ -574,6 +588,7 @@ async fn main() -> Result<()> {
                     order.as_deref(),
                     namespaces.as_deref(),
                     action.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
@@ -602,6 +617,7 @@ async fn main() -> Result<()> {
                     namespaces.as_deref(),
                     action.as_deref(),
                     query.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
@@ -630,6 +646,7 @@ async fn main() -> Result<()> {
                     namespaces.as_deref(),
                     action.as_deref(),
                     query.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
@@ -652,6 +669,7 @@ async fn main() -> Result<()> {
                     offset,
                     state.as_deref(),
                     order.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
@@ -668,6 +686,7 @@ async fn main() -> Result<()> {
                     app.as_deref(),
                     environment.as_deref(),
                     org.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
@@ -698,6 +717,7 @@ async fn main() -> Result<()> {
                     assign_list.as_deref(),
                     unassign_list.as_deref(),
                     description.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
@@ -716,6 +736,7 @@ async fn main() -> Result<()> {
                     app.as_deref(),
                     environment.as_deref(),
                     org.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
@@ -740,6 +761,7 @@ async fn main() -> Result<()> {
                     severities.as_deref(),
                     source_ids.as_deref(),
                     view.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
@@ -756,7 +778,6 @@ async fn main() -> Result<()> {
                 end,
                 limit,
                 order,
-                json,
                 page_all,
             } => {
                 commands::logs::search(
@@ -772,8 +793,8 @@ async fn main() -> Result<()> {
                     end.as_deref(),
                     limit,
                     order.as_deref(),
-                    json,
                     page_all,
+                    cli.output,
                 )
                 .await?
             }
@@ -788,6 +809,7 @@ async fn main() -> Result<()> {
                     app.as_deref(),
                     environment.as_deref(),
                     org.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
@@ -802,13 +824,14 @@ async fn main() -> Result<()> {
                     app.as_deref(),
                     environment.as_deref(),
                     org.as_deref(),
+                    cli.output,
                 )
                 .await?
             }
         },
         Commands::Skill { action } => match action {
             SkillAction::Install { target, dir, force } => {
-                commands::skill::install(&target, dir.as_deref(), force)?
+                commands::skill::install(&target, dir.as_deref(), force, cli.output)?
             }
         },
     }
