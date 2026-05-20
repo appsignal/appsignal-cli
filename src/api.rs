@@ -1,19 +1,19 @@
 use anyhow::{Context, Result};
-use reqwest::Client;
+use reqwest::{Client, Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::config::AuthMethod;
 
-const DEFAULT_GRAPHQL_ENDPOINT: &str = "https://appsignal.com/graphql";
+const DEFAULT_BASE_URL: &str = "https://appsignal.com";
 
-fn normalize_graphql_endpoint(endpoint: Option<&str>) -> String {
-    let endpoint = endpoint.unwrap_or(DEFAULT_GRAPHQL_ENDPOINT);
+fn normalize_api_base_url(endpoint: Option<&str>) -> String {
+    let endpoint = endpoint.unwrap_or(DEFAULT_BASE_URL);
 
     match url::Url::parse(endpoint) {
         Ok(mut url) => {
-            if matches!(url.path(), "" | "/") {
-                url.set_path("/graphql");
+            if matches!(url.path(), "" | "/" | "/graphql") {
+                url.set_path("");
             }
             url.set_query(None);
             url.set_fragment(None);
@@ -23,11 +23,23 @@ fn normalize_graphql_endpoint(endpoint: Option<&str>) -> String {
     }
 }
 
+fn join_api_url(base_url: &str, path: &str) -> String {
+    match url::Url::parse(base_url) {
+        Ok(mut url) => {
+            url.set_path(path);
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string()
+        }
+        Err(_) => format!("{}{}", base_url.trim_end_matches('/'), path),
+    }
+}
+
 /// Client for the AppSignal API.
 pub struct AppSignalClient {
     http: Client,
     auth: AuthMethod,
-    endpoint: String,
+    base_url: String,
 }
 
 // -- GraphQL response types --
@@ -67,13 +79,6 @@ struct Organization {
 #[derive(Debug, Deserialize)]
 struct AppData {
     app: Option<App>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TypenameData {
-    #[serde(rename = "__typename")]
-    #[allow(dead_code)]
-    typename: Option<String>,
 }
 
 // -- Viewer types --
@@ -655,7 +660,7 @@ impl AppSignalClient {
         Self {
             http: Client::new(),
             auth: AuthMethod::PersonalToken(token.to_string()),
-            endpoint: normalize_graphql_endpoint(endpoint),
+            base_url: normalize_api_base_url(endpoint),
         }
     }
 
@@ -665,17 +670,36 @@ impl AppSignalClient {
         Self {
             http: Client::new(),
             auth,
-            endpoint: normalize_graphql_endpoint(endpoint),
+            base_url: normalize_api_base_url(endpoint),
         }
     }
 
-    /// Create a client pointing at a custom endpoint.
+    /// Create a client pointing at a custom base or GraphQL endpoint.
     #[cfg(test)]
     pub fn with_endpoint(token: &str, endpoint: &str) -> Self {
         Self {
             http: Client::new(),
             auth: AuthMethod::PersonalToken(token.to_string()),
-            endpoint: normalize_graphql_endpoint(Some(endpoint)),
+            base_url: normalize_api_base_url(Some(endpoint)),
+        }
+    }
+
+    fn graphql_url(&self) -> String {
+        join_api_url(&self.base_url, "/graphql")
+    }
+
+    fn rest_url(&self, path: &str) -> String {
+        join_api_url(&self.base_url, path)
+    }
+
+    fn authenticated_request(&self, method: Method, url: &str) -> RequestBuilder {
+        match &self.auth {
+            AuthMethod::PersonalToken(token) => {
+                self.http.request(method, url).query(&[("token", token)])
+            }
+            AuthMethod::OAuth { access_token, .. } => {
+                self.http.request(method, url).bearer_auth(access_token)
+            }
         }
     }
 
@@ -694,17 +718,10 @@ impl AppSignalClient {
             "variables": variables,
         });
 
-        let request = match &self.auth {
-            AuthMethod::PersonalToken(token) => {
-                let url = format!("{}?token={}", self.endpoint, token);
-                self.http.post(&url).json(&body)
-            }
-            AuthMethod::OAuth { access_token, .. } => self
-                .http
-                .post(&self.endpoint)
-                .bearer_auth(access_token)
-                .json(&body),
-        };
+        let graphql_url = self.graphql_url();
+        let request = self
+            .authenticated_request(Method::POST, &graphql_url)
+            .json(&body);
 
         let resp = request
             .send()
@@ -734,8 +751,19 @@ impl AppSignalClient {
 
     /// Validate that the token is accepted by the API.
     pub async fn validate_token(&self) -> Result<()> {
-        let query = "{ __typename }";
-        let _data: TypenameData = self.graphql(query, json!({})).await?;
+        let auth_url = self.rest_url("/api/v2/auth");
+        let resp = self
+            .authenticated_request(Method::GET, &auth_url)
+            .send()
+            .await
+            .context("Failed to send request to AppSignal")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("AppSignal API returned HTTP {}: {}", status, text);
+        }
+
         Ok(())
     }
 
@@ -1878,12 +1906,9 @@ mod tests {
     #[tokio::test]
     async fn test_validate_token_success() {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/graphql"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(graphql_response(json!({ "__typename": "Query" }))),
-            )
+        Mock::given(method("GET"))
+            .and(path("/api/v2/auth"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "ok": true })))
             .mount(&server)
             .await;
 
@@ -1895,8 +1920,8 @@ mod tests {
     #[tokio::test]
     async fn test_validate_token_http_error() {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/graphql"))
+        Mock::given(method("GET"))
+            .and(path("/api/v2/auth"))
             .respond_with(ResponseTemplate::new(401).set_body_string("Unauthorized"))
             .mount(&server)
             .await;
@@ -1908,21 +1933,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_validate_token_graphql_error() {
+    async fn test_validate_token_accepts_rest_response_body() {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/graphql"))
+        Mock::given(method("GET"))
+            .and(path("/api/v2/auth"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "data": null,
-                "errors": [{"message": "Invalid token"}]
+                "authenticated": true,
+                "account": "test"
             })))
             .mount(&server)
             .await;
 
         let client =
             AppSignalClient::with_endpoint("bad-token", &format!("{}/graphql", server.uri()));
-        let err = client.validate_token().await.unwrap_err();
-        assert!(err.to_string().contains("Invalid token"));
+        client.validate_token().await.unwrap();
     }
 
     #[tokio::test]
@@ -2243,26 +2267,45 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_graphql_endpoint_uses_default() {
+    fn test_normalize_api_base_url_uses_default() {
+        assert_eq!(normalize_api_base_url(None), "https://appsignal.com/");
+    }
+
+    #[test]
+    fn test_normalize_api_base_url_preserves_base_url() {
         assert_eq!(
-            normalize_graphql_endpoint(None),
-            "https://appsignal.com/graphql"
+            normalize_api_base_url(Some("https://staging.lol")),
+            "https://staging.lol/"
         );
     }
 
     #[test]
-    fn test_normalize_graphql_endpoint_appends_graphql_to_base_url() {
+    fn test_normalize_api_base_url_strips_graphql_path() {
         assert_eq!(
-            normalize_graphql_endpoint(Some("https://staging.lol")),
-            "https://staging.lol/graphql"
+            normalize_api_base_url(Some("https://staging.lol/graphql")),
+            "https://staging.lol/"
         );
     }
 
     #[test]
-    fn test_normalize_graphql_endpoint_preserves_graphql_path() {
+    fn test_client_builds_graphql_and_rest_urls_from_base_url() {
+        let client = AppSignalClient::new("tok", Some("https://staging.lol"));
+
+        assert_eq!(client.graphql_url(), "https://staging.lol/graphql");
         assert_eq!(
-            normalize_graphql_endpoint(Some("https://staging.lol/graphql")),
-            "https://staging.lol/graphql"
+            client.rest_url("/api/v2/auth"),
+            "https://staging.lol/api/v2/auth"
+        );
+    }
+
+    #[test]
+    fn test_client_builds_urls_from_graphql_endpoint_input() {
+        let client = AppSignalClient::with_endpoint("tok", "https://staging.lol/graphql");
+
+        assert_eq!(client.graphql_url(), "https://staging.lol/graphql");
+        assert_eq!(
+            client.rest_url("/api/v2/auth"),
+            "https://staging.lol/api/v2/auth"
         );
     }
 
