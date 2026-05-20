@@ -10,7 +10,7 @@ Track which CLI commands should move from GraphQL to the AppSignal v2 REST API.
 - Current code:
   - `src/commands/auth.rs`
   - `src/api.rs` (`validate_token`)
-- Current GraphQL usage:
+- Previous GraphQL usage:
   - GraphQL introspection query: `{ __typename }`
 - REST replacement:
   - `GET /api/v2/auth`
@@ -23,8 +23,8 @@ Track which CLI commands should move from GraphQL to the AppSignal v2 REST API.
 - Command: `logs search`
 - Current code:
   - `src/commands/logs.rs`
-  - `src/api.rs` (`list_log_lines`)
-- Current GraphQL usage:
+  - `src/api.rs` (`list_log_lines_rest`)
+- Previous GraphQL usage:
   - `app.logs.lines`
 - REST replacement:
   - `POST /api/v2/logs/lines`
@@ -32,20 +32,25 @@ Track which CLI commands should move from GraphQL to the AppSignal v2 REST API.
   - REST is the documented log query API
   - GraphQL is capped at 100 results
   - CLI currently works around this with `--page-all` time slicing
+- Status:
+  - Done for `logs search`
 
 ### 3. Log tailing
 
 - Command: `logs tail`
 - Current code:
   - `src/commands/logs.rs`
-  - `src/api.rs` (`list_log_lines`)
-- Current GraphQL usage:
+  - `src/api.rs` (`list_log_lines_rest`)
+- Previous GraphQL usage:
   - `app.logs.lines`
 - REST replacement:
   - `POST /api/v2/logs/lines`
 - Why:
   - REST supports streaming/SSE
   - Current implementation uses polling and deduplication because GraphQL is not ideal for tailing
+- Status:
+  - Done for `logs tail` using the REST log query endpoint
+  - Still polling; SSE streaming can be a follow-up improvement
 
 ## Keep On GraphQL For Now
 
@@ -118,7 +123,7 @@ This is not a direct replacement for `apps resources deploy-markers`.
 ## First Implementation Order
 
 1. [x] Add REST auth validation via `GET /api/v2/auth`
-2. Add a REST log query client for `POST /api/v2/logs/lines`
-3. Migrate `logs search`
-4. Migrate `logs tail`
+2. [x] Add a REST log query client for `POST /api/v2/logs/lines`
+3. [x] Migrate `logs search`
+4. [x] Migrate `logs tail`
 5. Remove or simplify GraphQL-specific log pagination workarounds if REST pagination/streaming fully replaces them
