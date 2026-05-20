@@ -2273,7 +2273,10 @@ mod tests {
 
     #[test]
     fn test_normalize_api_base_url_preserves_base_url() {
-        assert_eq!(normalize_api_base_url(Some("https://staging.lol")), "https://staging.lol/");
+        assert_eq!(
+            normalize_api_base_url(Some("https://staging.lol")),
+            "https://staging.lol/"
+        );
     }
 
     #[test]
@@ -2289,7 +2292,10 @@ mod tests {
         let client = AppSignalClient::new("tok", Some("https://staging.lol"));
 
         assert_eq!(client.graphql_url(), "https://staging.lol/graphql");
-        assert_eq!(client.rest_url("/api/v2/auth"), "https://staging.lol/api/v2/auth");
+        assert_eq!(
+            client.rest_url("/api/v2/auth"),
+            "https://staging.lol/api/v2/auth"
+        );
     }
 
     #[test]
@@ -2297,7 +2303,10 @@ mod tests {
         let client = AppSignalClient::with_endpoint("tok", "https://staging.lol/graphql");
 
         assert_eq!(client.graphql_url(), "https://staging.lol/graphql");
-        assert_eq!(client.rest_url("/api/v2/auth"), "https://staging.lol/api/v2/auth");
+        assert_eq!(
+            client.rest_url("/api/v2/auth"),
+            "https://staging.lol/api/v2/auth"
+        );
     }
 
     #[tokio::test]
