@@ -29,6 +29,10 @@ src/
 - **Time handling**: chrono for UTC timestamps in log tailing/pagination
 - **Testing**: wiremock for HTTP mocking, tempfile for config tests
 
+## Rust Workflow
+
+- Before committing Rust changes, run `cargo fmt` and `cargo clippy -- -D warnings`.
+
 ## AppSignal API
 
 All API interaction goes through the **GraphQL endpoint**:
