@@ -35,15 +35,16 @@ src/
 
 ## AppSignal API
 
-All API interaction goes through the **GraphQL endpoint**:
+The CLI currently uses a mix of **GraphQL** and **REST v2** endpoints:
 
-```
-POST https://appsignal.com/graphql
+```text
+GraphQL: POST https://appsignal.com/graphql
+REST v2: https://appsignal.com/api/v2/...
 ```
 
-The endpoint is configurable via the `endpoint` field in config.toml.
-It defaults to `https://appsignal.com/graphql`, but configured values must use
-the base URL only (for example `https://staging.lol`).
+The configured `endpoint` value is a base URL.
+It defaults to `https://appsignal.com/`, and the client derives `/graphql` or
+`/api/v2/...` paths from that base.
 
 ### Authentication
 
@@ -57,10 +58,10 @@ The CLI supports two authentication methods:
 OAuth credentials take precedence when both are present in the config.
 
 The `AppSignalClient` struct stores an `AuthMethod` enum that determines how
-each request is authenticated. The `graphql()` method applies the correct
-authentication based on the variant:
-- `AuthMethod::PersonalToken(token)` → appends `?token=<token>` to the URL
-- `AuthMethod::OAuth { access_token, .. }` → sets `Authorization: Bearer <token>` header
+each request is authenticated:
+- GraphQL with `AuthMethod::PersonalToken(token)` → appends `?token=<token>` to the URL
+- GraphQL with `AuthMethod::OAuth { access_token, .. }` → sets `Authorization: Bearer <token>`
+- REST v2 with either auth method → sets `Authorization: Bearer <token>`
 
 ### Key schema facts (learned the hard way)
 
@@ -76,8 +77,6 @@ authentication based on the variant:
   `createdAt`, `incidents`, `exceptionIncidents`, `performanceIncidents`,
   `anomalyIncidents`, `logIncidents`, `deployMarkers`, `metrics`, and more.
 - `name` and `environment` are `NON_NULL String` on `App`.
-- Token validation uses `{ __typename }` which is a safe introspection query
-  that succeeds for any valid token.
 - GraphQL errors are returned with HTTP 400, not in the `errors` array of a
   200 response. The client handles both cases.
 - The GraphQL API does **not** expose `start`/`end` time range filters for
@@ -136,15 +135,15 @@ Key fields on `App`:
 
 See https://docs.appsignal.com/api/graphql/examples.html for full examples.
 
-There is also a **REST API** at `https://appsignal.com/api/[app_id]/...` for:
+There is also a legacy **REST API** at `https://appsignal.com/api/[app_id]/...` for:
 - `/graphs.json` — graph data (mean, count, ex_count, ex_rate, pct)
 - `/markers.json` — deploy markers
 - `/samples.json` — transaction samples
 - `/event_names.json` — event names
 - `/sourcemaps` — sourcemap uploads
 
-The REST API uses the same `?token=` query parameter for auth (personal tokens)
-or `Authorization: Bearer` header (OAuth tokens).
+That legacy REST API uses the same `?token=` query parameter for auth (personal
+tokens) or `Authorization: Bearer` header (OAuth tokens).
 
 ## Config
 
@@ -152,7 +151,7 @@ The global config file at `~/.config/appsignal/config.toml` stores:
 
 - `token` — personal API token (set via `auth login --token`)
 - `org` — default organization slug (auto-saved by `apps list`, or set via `apps set-org`)
-- `endpoint` — (optional) custom AppSignal base URL, defaults to `https://appsignal.com/graphql`
+- `endpoint` — (optional) custom AppSignal base URL, defaults to `https://appsignal.com/`
 - `oauth_client_id` — (optional) OAuth client ID override; defaults to the production client ID when unset
 - `[oauth]` — OAuth credentials (set via `auth login --oauth`):
   - `access_token` — OAuth access token
@@ -328,11 +327,11 @@ appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "produc
 Log data lives in **ClickHouse** (not MongoDB). The AppSignal server has two paths
 for querying logs:
 
-1. **GraphQL** (`app.logs.lines`) — used by the CLI. Capped at 100 results per query.
-2. **REST API** (`POST /api/v2/logs/lines`) — served by a separate Rust `bulk_endpoint`
-   service. Supports SSE streaming and cursor-based pagination. Not used by the CLI.
+1. **GraphQL** (`app.logs.lines`) — deprecated and removed server-side.
+2. **REST API** (`POST /api/v2/logs/lines`) — used by the CLI for `logs search`
+   and `logs tail`. Supports cursor-based pagination and SSE streaming.
 
-The CLI uses exclusively the GraphQL path.
+The CLI still uses GraphQL for `logs views` and `logs sources` metadata.
 
 ### Key log types
 
@@ -352,20 +351,9 @@ The CLI uses exclusively the GraphQL path.
 **`LogSource`** — a log ingestion source:
 - `id`, `name`, `type` (vector/custom/vercel), `fmt` (JSON/PLAINTEXT/LOGFMT/AUTODETECT), `key`
 
-### GraphQL queries used
+### Queries used
 
 ```graphql
-# Fetch log lines
-app(id: $appId) {
-  logs {
-    lines(start, end, sourceIds, severities, query, limit, order) {
-      id timestamp severity hostname group message
-      attributes { key value }
-      source { id name }
-    }
-  }
-}
-
 # Fetch log views
 app(id: $appId) {
   logViews { id name query sourceIds severities columns }
@@ -380,6 +368,23 @@ app(id: $appId) {
 app(id: $appId) {
   logs {
     sources { id name type fmt }
+  }
+}
+```
+
+```json
+// Fetch log lines
+POST /api/v2/logs/lines
+{
+  "site_id": "app-id",
+  "from": "2025-06-01T00:00:00Z",
+  "to": "2025-06-01T01:00:00Z",
+  "source_ids": ["source-1"],
+  "query": "message:timeout severity=[error]",
+  "pagination": {
+    "per_page": 100,
+    "order": "desc",
+    "cursor": { "time": null }
   }
 }
 ```
@@ -430,9 +435,9 @@ any line containing the word "email" case-insensitively, not the literal `[Email
 
 #### Severities
 
-The `severities` GraphQL argument is a separate typed filter. The server merges it
-into the query string as `severity=[error,critical]`. Using the `--severities` CLI
-flag is preferred over embedding severity in the query string.
+The CLI merges the `--severities` flag into the REST query string as
+`severity=[error,critical]`. Using the flag is preferred over embedding
+severity filters manually in `--query`.
 
 ### Log view resolution
 
@@ -447,12 +452,13 @@ the view's values.
 
 ### Pagination (`--page-all`)
 
-The GraphQL `logs.lines` field is **capped at 100 results** with no cursor support.
-The `--page-all` flag on `logs search` works around this using time-window slicing:
+The REST `POST /api/v2/logs/lines` endpoint is still queried in pages of 100.
+The `--page-all` flag on `logs search` iterates through those pages using the
+timestamp cursor:
 
 1. Fetch 100 lines in **ASC** order (oldest first)
 2. If the page is full (100 results), use the **last line's timestamp** as the
-   new `start` parameter for the next request
+   next page cursor
 3. **Deduplicate by log line ID** using a `HashSet` — multiple lines can share
    the exact same timestamp, so the boundary between pages may include duplicates
 4. Stop when a page returns fewer than 100 results
@@ -463,7 +469,8 @@ Progress is printed to stderr: `Page N: fetched X lines (Y total unique)`.
 
 ### Tailing (`logs tail`)
 
-Live log tailing is implemented via **polling** (not WebSocket/SSE):
+Live log tailing currently uses the REST log query endpoint with **polling**
+(not SSE yet):
 
 1. Start with a 60-second lookback window
 2. Every **1 second**, query for lines between `start` and `now` in ASC order
@@ -556,8 +563,7 @@ access, giving it capabilities the GraphQL API does not expose:
 - **Trigger ID filter** on anomaly incidents — not available in GraphQL
 - **Incident mutations** (update state/severity/assignees, create notes) — need to discover GraphQL mutations
 - **Metrics REST API** — metric names, tags, timeseries, and aggregations use a separate REST API (`/api/v2/metrics/...`)
-- **Log line pagination** — GraphQL `logs.lines` is capped at 100 results with no cursor.
-  The CLI works around this with time-window slicing (`--page-all`). The REST API
-  (`/api/v2/logs/lines`) supports proper cursor-based pagination but is not used.
+- **Log views/sources metadata** — still GraphQL-backed; there is no documented v2 REST
+  replacement for `logs views` or `logs sources` yet.
 
 See `TODO.md` for the full feature parity tracking document.
