@@ -12,6 +12,9 @@ Key implementation difference:
 - The MCP server has access to internal APIs and direct application data.
 - The CLI currently uses the public GraphQL API, and may need REST endpoints for metrics and other missing features.
 
+REST migration tracking:
+- See `rest-todo.md` for the current GraphQL-to-REST migration inventory and implementation order.
+
 ## Current Summary
 
 Implemented in the CLI today:
