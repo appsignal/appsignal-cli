@@ -14,7 +14,7 @@ fi
 
 # This value is automatically updated during the release process;
 # see `script/write_version`.
-LAST_RELEASE="0.2.0"
+LAST_RELEASE="0.2.1"
 
 VERSION="${APPSIGNAL_RUN_VERSION:-"$LAST_RELEASE"}"
 INSTALL_FOLDER="${APPSIGNAL_RUN_INSTALL_FOLDER:-"/usr/local/bin"}"

@@ -1,5 +1,13 @@
 # AppSignal CLI changelog
 
+## 0.2.1
+
+_Published on 2026-05-21._
+
+### Changed
+
+- Internal changes. (patch [7835bba](https://github.com/appsignal/appsignal-cli/commit/7835bba0e3303183ba58df48063b86c355b7a31a))
+
 ## 0.2.0
 
 _Published on 2026-05-13._
