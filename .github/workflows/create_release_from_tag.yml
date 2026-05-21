@@ -27,6 +27,18 @@ jobs:
         run: |
           echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
+      - name: Get publish user from tag
+        run: |
+          TAGGER_NAME="$(git for-each-ref --format='%(taggername)' "refs/tags/${{ env.TAG_NAME }}")"
+          PUBLISH_USER="$(printf '%s' "$TAGGER_NAME" | sed -n 's/^AppSignal release bot (as \(.*\))$/\1/p')"
+
+          if [ -z "$PUBLISH_USER" ]; then
+            echo "Could not determine publish user from tagger name: $TAGGER_NAME" >&2
+            exit 1
+          fi
+
+          echo "PUBLISH_USER=$PUBLISH_USER" >> $GITHUB_ENV
+
       - name: Get changelog contents from tag
         run: |
           # Use sed to remove everything after "-----BEGIN PGP SIGNATURE-----" if it's present
@@ -50,7 +62,7 @@ jobs:
             --arg category "$CHANGELOG_CATEGORY" \
             --arg version "$(echo "${{ env.TAG_NAME }}" | sed 's/^v//')" \
             --arg changelog "$(cat CHANGELOG_TEXT.txt)" \
-            --arg assignee "${{ github.actor }}" \
+            --arg assignee "${{ env.PUBLISH_USER }}" \
             '{ref: "main", inputs: {title: $title, category: $category, version: $version, changelog: $changelog, assignee: $assignee}}')
 
           curl -X POST \
