@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
 use anyhow::{Context, Result};
@@ -75,6 +75,11 @@ pub async fn tail(
         })
         .or(view_severities);
 
+    let (resolved_source_ids, source_names) =
+        resolve_search_sources(&client, &resolved_app_id, effective_source_ids.as_deref()).await?;
+    let effective_query =
+        merge_rest_log_query(effective_query.as_deref(), effective_severities.as_deref());
+
     crate::status!(
         "Tailing logs{} (Ctrl+C to stop)...",
         if let Some(v) = view {
@@ -93,18 +98,21 @@ pub async fn tail(
         let start_str = start.to_rfc3339();
         let end_str = end.to_rfc3339();
 
-        let lines = client
-            .list_log_lines(
-                &resolved_app_id,
-                Some(&start_str),
-                Some(&end_str),
-                effective_source_ids.as_deref(),
-                effective_severities.as_deref(),
-                effective_query.as_deref(),
-                Some(100),
-                Some("ASC"),
-            )
-            .await?;
+        let lines = AppSignalClient::rest_log_lines_to_log_lines(
+            client
+                .list_log_lines_rest(
+                    &resolved_app_id,
+                    Some(&start_str),
+                    Some(&end_str),
+                    &resolved_source_ids,
+                    &effective_query,
+                    100,
+                    "ASC",
+                    None,
+                )
+                .await?,
+            &source_names,
+        );
 
         for line in &lines {
             if seen_ids.insert(line.id.clone()) {
@@ -179,30 +187,36 @@ pub async fn search(
         })
         .or(view_severities);
 
+    let (resolved_source_ids, source_names) =
+        resolve_search_sources(&client, &resolved_app_id, effective_source_ids.as_deref()).await?;
+    let effective_query =
+        merge_rest_log_query(effective_query.as_deref(), effective_severities.as_deref());
+
     let lines = if page_all {
         fetch_all_pages(
             &client,
             &resolved_app_id,
             start,
             end,
-            effective_source_ids.as_deref(),
-            effective_severities.as_deref(),
-            effective_query.as_deref(),
+            &resolved_source_ids,
+            &effective_query,
+            &source_names,
         )
         .await?
     } else {
-        client
-            .list_log_lines(
+        let raw_lines = client
+            .list_log_lines_rest(
                 &resolved_app_id,
                 start,
                 end,
-                effective_source_ids.as_deref(),
-                effective_severities.as_deref(),
-                effective_query.as_deref(),
-                limit,
-                order,
+                &resolved_source_ids,
+                &effective_query,
+                limit.unwrap_or(100),
+                order.unwrap_or("DESC"),
+                None,
             )
-            .await?
+            .await?;
+        AppSignalClient::rest_log_lines_to_log_lines(raw_lines, &source_names)
     };
 
     output::print_with(LogLinesResponse { lines: &lines }, format, |w| {
@@ -227,30 +241,33 @@ async fn fetch_all_pages(
     app_id: &str,
     start: Option<&str>,
     end: Option<&str>,
-    source_ids: Option<&[String]>,
-    severities: Option<&[String]>,
-    query: Option<&str>,
+    source_ids: &[String],
+    query: &str,
+    source_names: &HashMap<String, String>,
 ) -> Result<Vec<LogLine>> {
     let mut all_lines: Vec<LogLine> = Vec::new();
     let mut seen_ids: HashSet<String> = HashSet::new();
-    let mut current_start = start.map(|s| s.to_string());
+    let mut current_cursor: Option<String> = None;
     let page_limit: i64 = 100;
     let mut page = 0;
 
     loop {
         page += 1;
-        let batch = client
-            .list_log_lines(
-                app_id,
-                current_start.as_deref(),
-                end,
-                source_ids,
-                severities,
-                query,
-                Some(page_limit),
-                Some("ASC"),
-            )
-            .await?;
+        let batch = AppSignalClient::rest_log_lines_to_log_lines(
+            client
+                .list_log_lines_rest(
+                    app_id,
+                    start,
+                    end,
+                    source_ids,
+                    query,
+                    page_limit,
+                    "ASC",
+                    current_cursor.as_deref(),
+                )
+                .await?,
+            source_names,
+        );
 
         let batch_len = batch.len();
 
@@ -277,10 +294,48 @@ async fn fetch_all_pages(
             .last()
             .map(|l| l.timestamp.clone())
             .context("Unexpected empty result after pagination")?;
-        current_start = Some(last_timestamp);
+        current_cursor = Some(last_timestamp);
     }
 
     Ok(all_lines)
+}
+
+async fn resolve_search_sources(
+    client: &AppSignalClient,
+    app_id: &str,
+    requested_source_ids: Option<&[String]>,
+) -> Result<(Vec<String>, HashMap<String, String>)> {
+    let sources = client.list_log_sources(app_id).await?;
+    let source_names: HashMap<String, String> = sources
+        .iter()
+        .map(|source| (source.id.clone(), source.name.clone()))
+        .collect();
+
+    let resolved_source_ids = match requested_source_ids {
+        Some(source_ids) => source_ids.to_vec(),
+        None => sources.into_iter().map(|source| source.id).collect(),
+    };
+
+    Ok((resolved_source_ids, source_names))
+}
+
+fn merge_rest_log_query(query: Option<&str>, severities: Option<&[String]>) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(query) = query.filter(|query| !query.trim().is_empty()) {
+        parts.push(query.trim().to_string());
+    }
+
+    if let Some(severities) = severities.filter(|severities| !severities.is_empty()) {
+        let joined = severities
+            .iter()
+            .map(|severity| severity.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(",");
+        parts.push(format!("severity=[{}]", joined));
+    }
+
+    parts.join(" ")
 }
 
 /// List all log views (saved filter presets) for an app.
@@ -547,9 +602,28 @@ mod tests {
         print_log_line(&line, Output::Human).unwrap();
     }
 
-    // -- Helper to build log line JSON for wiremock responses --
+    fn graphql_log_sources_response(sources: Vec<serde_json::Value>) -> serde_json::Value {
+        json!({
+            "data": {
+                "app": {
+                    "logs": {
+                        "sources": sources
+                    }
+                }
+            }
+        })
+    }
 
-    fn log_line_json(
+    fn log_source_json(id: &str, name: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "name": name,
+            "type": "custom",
+            "fmt": "json"
+        })
+    }
+
+    fn rest_log_line_json(
         id: &str,
         timestamp: &str,
         severity: &str,
@@ -562,21 +636,24 @@ mod tests {
             "hostname": "web-1",
             "group": null,
             "message": message,
-            "attributes": [],
-            "source": null
+            "attributes": {},
+            "source_id": "src-1"
         })
     }
 
-    fn graphql_log_response(lines: Vec<serde_json::Value>) -> serde_json::Value {
-        json!({
-            "data": {
-                "app": {
-                    "logs": {
-                        "lines": lines
-                    }
-                }
-            }
-        })
+    #[test]
+    fn test_merge_rest_log_query_adds_severities() {
+        let query = merge_rest_log_query(
+            Some("message:timeout"),
+            Some(&["ERROR".to_string(), "WARN".to_string()]),
+        );
+        assert_eq!(query, "message:timeout severity=[error,warn]");
+    }
+
+    #[test]
+    fn test_merge_rest_log_query_handles_missing_query() {
+        let query = merge_rest_log_query(None, Some(&["ERROR".to_string()]));
+        assert_eq!(query, "severity=[error]");
     }
 
     // -- fetch_all_pages tests --
@@ -588,23 +665,32 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/graphql"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(graphql_log_response(vec![
-                    log_line_json("l1", "2025-06-01T12:00:00Z", "INFO", "msg1"),
-                    log_line_json("l2", "2025-06-01T12:01:00Z", "ERROR", "msg2"),
+                ResponseTemplate::new(200).set_body_json(graphql_log_sources_response(vec![
+                    log_source_json("src-1", "Application"),
                 ])),
             )
             .mount(&server)
             .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/logs/lines"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(vec![
+                rest_log_line_json("l1", "2025-06-01T12:00:00Z", "INFO", "msg1"),
+                rest_log_line_json("l2", "2025-06-01T12:01:00Z", "ERROR", "msg2"),
+            ]))
+            .mount(&server)
+            .await;
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let (source_ids, source_names) =
+            resolve_search_sources(&client, "app1", None).await.unwrap();
         let lines = fetch_all_pages(
             &client,
             "app1",
             Some("2025-06-01T00:00:00Z"),
             Some("2025-06-02T00:00:00Z"),
-            None,
-            None,
-            None,
+            &source_ids,
+            "",
+            &source_names,
         )
         .await
         .unwrap();
@@ -619,12 +705,23 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/graphql"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(graphql_log_response(vec![])))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_log_sources_response(vec![
+                    log_source_json("src-1", "Application"),
+                ])),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/logs/lines"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(Vec::<serde_json::Value>::new()))
             .mount(&server)
             .await;
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
-        let lines = fetch_all_pages(&client, "app1", None, None, None, None, None)
+        let (source_ids, source_names) =
+            resolve_search_sources(&client, "app1", None).await.unwrap();
+        let lines = fetch_all_pages(&client, "app1", None, None, &source_ids, "", &source_names)
             .await
             .unwrap();
 
@@ -640,13 +737,22 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_log_sources_response(vec![
+                    log_source_json("src-1", "Application"),
+                ])),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/logs/lines"))
             .respond_with(move |_req: &Request| {
                 let count = call_count_clone.fetch_add(1, Ordering::SeqCst);
                 if count == 0 {
                     // First page: exactly 100 lines (triggers pagination)
                     let lines: Vec<serde_json::Value> = (0..100)
                         .map(|i| {
-                            log_line_json(
+                            rest_log_line_json(
                                 &format!("page1-{}", i),
                                 &format!("2025-06-01T12:{:02}:00Z", i % 60),
                                 "INFO",
@@ -654,12 +760,12 @@ mod tests {
                             )
                         })
                         .collect();
-                    ResponseTemplate::new(200).set_body_json(graphql_log_response(lines))
+                    ResponseTemplate::new(200).set_body_json(lines)
                 } else {
                     // Second page: fewer than 100 (terminates pagination)
                     let lines: Vec<serde_json::Value> = (0..30)
                         .map(|i| {
-                            log_line_json(
+                            rest_log_line_json(
                                 &format!("page2-{}", i),
                                 &format!("2025-06-01T13:{:02}:00Z", i % 60),
                                 "ERROR",
@@ -667,21 +773,23 @@ mod tests {
                             )
                         })
                         .collect();
-                    ResponseTemplate::new(200).set_body_json(graphql_log_response(lines))
+                    ResponseTemplate::new(200).set_body_json(lines)
                 }
             })
             .mount(&server)
             .await;
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let (source_ids, source_names) =
+            resolve_search_sources(&client, "app1", None).await.unwrap();
         let lines = fetch_all_pages(
             &client,
             "app1",
             Some("2025-06-01T00:00:00Z"),
             Some("2025-06-02T00:00:00Z"),
-            None,
-            None,
-            None,
+            &source_ids,
+            "",
+            &source_names,
         )
         .await
         .unwrap();
@@ -702,13 +810,22 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_log_sources_response(vec![
+                    log_source_json("src-1", "Application"),
+                ])),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/logs/lines"))
             .respond_with(move |_req: &Request| {
                 let count = call_count_clone.fetch_add(1, Ordering::SeqCst);
                 if count == 0 {
                     // First page: exactly 100 lines
                     let lines: Vec<serde_json::Value> = (0..100)
                         .map(|i| {
-                            log_line_json(
+                            rest_log_line_json(
                                 &format!("line-{}", i),
                                 &format!("2025-06-01T12:{:02}:00Z", i % 60),
                                 "INFO",
@@ -716,12 +833,12 @@ mod tests {
                             )
                         })
                         .collect();
-                    ResponseTemplate::new(200).set_body_json(graphql_log_response(lines))
+                    ResponseTemplate::new(200).set_body_json(lines)
                 } else {
                     // Second page: 5 duplicates from page 1 + 15 new lines = 20 total
                     let mut lines: Vec<serde_json::Value> = (95..100)
                         .map(|i| {
-                            log_line_json(
+                            rest_log_line_json(
                                 &format!("line-{}", i), // duplicate IDs
                                 &format!("2025-06-01T12:{:02}:00Z", i % 60),
                                 "INFO",
@@ -730,21 +847,23 @@ mod tests {
                         })
                         .collect();
                     for i in 0..15 {
-                        lines.push(log_line_json(
+                        lines.push(rest_log_line_json(
                             &format!("new-{}", i),
                             &format!("2025-06-01T13:{:02}:00Z", i % 60),
                             "WARN",
                             &format!("new msg {}", i),
                         ));
                     }
-                    ResponseTemplate::new(200).set_body_json(graphql_log_response(lines))
+                    ResponseTemplate::new(200).set_body_json(lines)
                 }
             })
             .mount(&server)
             .await;
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
-        let lines = fetch_all_pages(&client, "app1", None, None, None, None, None)
+        let (source_ids, source_names) =
+            resolve_search_sources(&client, "app1", None).await.unwrap();
+        let lines = fetch_all_pages(&client, "app1", None, None, &source_ids, "", &source_names)
             .await
             .unwrap();
 

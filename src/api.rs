@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use reqwest::{Client, Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::config::AuthMethod;
 
@@ -494,26 +496,6 @@ pub struct LogView {
 }
 
 #[derive(Debug, Deserialize)]
-struct AppLogsData {
-    app: Option<AppLogs>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AppLogs {
-    logs: Option<LogsInner>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LogsInner {
-    lines: Option<Vec<LogLine>>,
-    #[allow(dead_code)]
-    sources: Option<Vec<LogSource>>,
-    #[serde(rename = "queryWindow")]
-    #[allow(dead_code)]
-    query_window: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
 struct AppLogViewsData {
     app: Option<AppLogViews>,
 }
@@ -532,6 +514,19 @@ struct AppLogSourcesData {
 #[derive(Debug, Deserialize)]
 struct AppLogSources {
     logs: Option<LogSourcesInner>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub(crate) struct RestLogLine {
+    pub id: Option<String>,
+    pub timestamp: String,
+    pub source_id: Option<String>,
+    pub group: Option<String>,
+    pub severity: Option<String>,
+    pub message: Option<String>,
+    pub hostname: Option<String>,
+    #[serde(default)]
+    pub attributes: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -692,11 +687,20 @@ impl AppSignalClient {
         join_api_url(&self.base_url, path)
     }
 
-    fn authenticated_request(&self, method: Method, url: &str) -> RequestBuilder {
+    fn graphql_request(&self, method: Method, url: &str) -> RequestBuilder {
         match &self.auth {
             AuthMethod::PersonalToken(token) => {
                 self.http.request(method, url).query(&[("token", token)])
             }
+            AuthMethod::OAuth { access_token, .. } => {
+                self.http.request(method, url).bearer_auth(access_token)
+            }
+        }
+    }
+
+    fn rest_request(&self, method: Method, url: &str) -> RequestBuilder {
+        match &self.auth {
+            AuthMethod::PersonalToken(token) => self.http.request(method, url).bearer_auth(token),
             AuthMethod::OAuth { access_token, .. } => {
                 self.http.request(method, url).bearer_auth(access_token)
             }
@@ -719,9 +723,7 @@ impl AppSignalClient {
         });
 
         let graphql_url = self.graphql_url();
-        let request = self
-            .authenticated_request(Method::POST, &graphql_url)
-            .json(&body);
+        let request = self.graphql_request(Method::POST, &graphql_url).json(&body);
 
         let resp = request
             .send()
@@ -753,7 +755,7 @@ impl AppSignalClient {
     pub async fn validate_token(&self) -> Result<()> {
         let auth_url = self.rest_url("/api/v2/auth");
         let resp = self
-            .authenticated_request(Method::GET, &auth_url)
+            .rest_request(Method::GET, &auth_url)
             .send()
             .await
             .context("Failed to send request to AppSignal")?;
@@ -1300,68 +1302,94 @@ impl AppSignalClient {
 
     // -- Log methods --
 
-    /// Query log lines for an app via the GraphQL `logs.lines` field.
+    /// Query log lines for an app via the REST `POST /api/v2/logs/lines` endpoint.
     #[allow(clippy::too_many_arguments)]
-    pub async fn list_log_lines(
+    pub async fn list_log_lines_rest(
         &self,
         app_id: &str,
         start: Option<&str>,
         end: Option<&str>,
-        source_ids: Option<&[String]>,
-        severities: Option<&[String]>,
-        query: Option<&str>,
-        limit: Option<i64>,
-        order: Option<&str>,
-    ) -> Result<Vec<LogLine>> {
-        let gql = r#"
-            query AppLogLines($appId: String!, $start: PreciseDateTime, $end: PreciseDateTime,
-                              $sourceIds: [String!], $severities: [SeverityEnum!],
-                              $query: String, $limit: Int, $order: OrderEnum) {
-                app(id: $appId) {
-                    logs {
-                        lines(start: $start, end: $end, sourceIds: $sourceIds,
-                              severities: $severities, query: $query, limit: $limit, order: $order) {
-                            id
-                            timestamp
-                            severity
-                            hostname
-                            group
-                            message
-                            attributes { key value }
-                            source { id name }
-                        }
-                    }
-                }
+        source_ids: &[String],
+        query: &str,
+        limit: i64,
+        order: &str,
+        cursor_time: Option<&str>,
+    ) -> Result<Vec<RestLogLine>> {
+        let rest_url = self.rest_url("/api/v2/logs/lines");
+        let body = json!({
+            "site_id": app_id,
+            "from": start,
+            "to": end,
+            "source_ids": source_ids,
+            "query": query,
+            "pagination": {
+                "per_page": limit,
+                "order": order.to_lowercase(),
+                "cursor": { "time": cursor_time }
             }
-        "#;
+        });
 
-        let mut vars = json!({ "appId": app_id });
-        if let Some(s) = start {
-            vars["start"] = json!(s);
-        }
-        if let Some(e) = end {
-            vars["end"] = json!(e);
-        }
-        if let Some(sids) = source_ids {
-            vars["sourceIds"] = json!(sids);
-        }
-        if let Some(sevs) = severities {
-            vars["severities"] = json!(sevs);
-        }
-        if let Some(q) = query {
-            vars["query"] = json!(q);
-        }
-        if let Some(l) = limit {
-            vars["limit"] = json!(l);
-        }
-        if let Some(o) = order {
-            vars["order"] = json!(o);
+        let resp = self
+            .rest_request(Method::POST, &rest_url)
+            .json(&body)
+            .send()
+            .await
+            .context("Failed to send request to AppSignal")?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("AppSignal API returned HTTP {}: {}", status, text);
         }
 
-        let data: AppLogsData = self.graphql(gql, vars).await?;
-        let app = data.app.context("Application not found")?;
-        let logs = app.logs.context("Logs not available for this app")?;
-        Ok(logs.lines.unwrap_or_default())
+        resp.json()
+            .await
+            .context("Failed to parse AppSignal response")
+    }
+
+    pub(crate) fn rest_log_lines_to_log_lines(
+        lines: Vec<RestLogLine>,
+        source_names: &HashMap<String, String>,
+    ) -> Vec<LogLine> {
+        lines
+            .into_iter()
+            .map(|line| {
+                let attributes = if line.attributes.is_empty() {
+                    None
+                } else {
+                    let mut entries: Vec<KeyStringValue> = line
+                        .attributes
+                        .into_iter()
+                        .map(|(key, value)| KeyStringValue {
+                            key,
+                            value: match value {
+                                Value::Null => None,
+                                Value::String(value) => Some(value),
+                                other => Some(other.to_string()),
+                            },
+                        })
+                        .collect();
+                    entries.sort_by(|left, right| left.key.cmp(&right.key));
+                    Some(entries)
+                };
+
+                let source = line.source_id.as_ref().map(|source_id| LogSourceRef {
+                    id: source_id.clone(),
+                    name: source_names.get(source_id).cloned(),
+                });
+
+                LogLine {
+                    id: line.id.unwrap_or_else(|| line.timestamp.clone()),
+                    timestamp: line.timestamp,
+                    severity: line.severity.unwrap_or_default(),
+                    hostname: line.hostname.unwrap_or_default(),
+                    group: line.group,
+                    message: line.message.unwrap_or_default(),
+                    attributes,
+                    source,
+                }
+            })
+            .collect()
     }
 
     /// List all log views (saved filter presets) for an app.
@@ -1447,7 +1475,7 @@ impl AppSignalClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     // -- Helper to build test apps --
@@ -1908,6 +1936,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/v2/auth"))
+            .and(header("authorization", "Bearer test-token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "ok": true })))
             .mount(&server)
             .await;
@@ -1922,6 +1951,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/v2/auth"))
+            .and(header("authorization", "Bearer bad-token"))
             .respond_with(ResponseTemplate::new(401).set_body_string("Unauthorized"))
             .mount(&server)
             .await;
@@ -1937,6 +1967,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/v2/auth"))
+            .and(header("authorization", "Bearer bad-token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "authenticated": true,
                 "account": "test"
@@ -1947,6 +1978,87 @@ mod tests {
         let client =
             AppSignalClient::with_endpoint("bad-token", &format!("{}/graphql", server.uri()));
         client.validate_token().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_list_log_lines_rest_uses_bearer_auth() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/logs/lines"))
+            .and(header("authorization", "Bearer tok"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {
+                    "id": "log-1",
+                    "timestamp": "2025-06-01T12:00:00Z",
+                    "source_id": "src-1",
+                    "group": "web",
+                    "severity": "error",
+                    "message": "Request failed",
+                    "hostname": "web-1",
+                    "attributes": {"request_id": "123", "duration_ms": 42}
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let lines = client
+            .list_log_lines_rest(
+                "app1",
+                Some("2025-06-01T00:00:00Z"),
+                Some("2025-06-02T00:00:00Z"),
+                &["src-1".to_string()],
+                "severity=[error]",
+                100,
+                "DESC",
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].id.as_deref(), Some("log-1"));
+        assert_eq!(lines[0].source_id.as_deref(), Some("src-1"));
+        assert_eq!(lines[0].attributes.get("request_id"), Some(&json!("123")));
+    }
+
+    #[test]
+    fn test_rest_log_lines_to_log_lines_maps_attributes_and_sources() {
+        let source_names = HashMap::from([("src-1".to_string(), "Application".to_string())]);
+        let lines = AppSignalClient::rest_log_lines_to_log_lines(
+            vec![RestLogLine {
+                id: Some("log-1".to_string()),
+                timestamp: "2025-06-01T12:00:00Z".to_string(),
+                source_id: Some("src-1".to_string()),
+                group: Some("web".to_string()),
+                severity: Some("error".to_string()),
+                message: Some("Request failed".to_string()),
+                hostname: Some("web-1".to_string()),
+                attributes: serde_json::Map::from_iter([
+                    ("duration_ms".to_string(), json!(42)),
+                    ("request_id".to_string(), json!("123")),
+                ]),
+            }],
+            &source_names,
+        );
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0]
+                .source
+                .as_ref()
+                .and_then(|source| source.name.as_deref()),
+            Some("Application")
+        );
+        assert_eq!(
+            lines[0].attributes.as_ref().map(|attrs| attrs.len()),
+            Some(2)
+        );
+        assert_eq!(lines[0].attributes.as_ref().unwrap()[0].key, "duration_ms");
+        assert_eq!(
+            lines[0].attributes.as_ref().unwrap()[0].value.as_deref(),
+            Some("42")
+        );
     }
 
     #[tokio::test]
@@ -2568,124 +2680,6 @@ mod tests {
     }
 
     // -- Wiremock tests for log API methods --
-
-    #[tokio::test]
-    async fn test_list_log_lines() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/graphql"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
-                    "app": {
-                        "logs": {
-                            "lines": [
-                                {
-                                    "id": "line1",
-                                    "timestamp": "2025-06-01T12:00:00Z",
-                                    "severity": "ERROR",
-                                    "hostname": "web-1",
-                                    "group": "notifiers",
-                                    "message": "Something broke",
-                                    "attributes": [{ "key": "req", "value": "123" }],
-                                    "source": { "id": "s1", "name": "app" }
-                                },
-                                {
-                                    "id": "line2",
-                                    "timestamp": "2025-06-01T12:01:00Z",
-                                    "severity": "INFO",
-                                    "hostname": "web-2",
-                                    "group": null,
-                                    "message": "All good",
-                                    "attributes": [],
-                                    "source": null
-                                }
-                            ]
-                        }
-                    }
-                }))),
-            )
-            .mount(&server)
-            .await;
-
-        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
-        let lines = client
-            .list_log_lines("app1", None, None, None, None, None, None, None)
-            .await
-            .unwrap();
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].id, "line1");
-        assert_eq!(lines[0].severity, "ERROR");
-        assert_eq!(lines[0].message, "Something broke");
-        assert_eq!(lines[1].id, "line2");
-        assert_eq!(lines[1].severity, "INFO");
-    }
-
-    #[tokio::test]
-    async fn test_list_log_lines_empty() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/graphql"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
-                    "app": { "logs": { "lines": [] } }
-                }))),
-            )
-            .mount(&server)
-            .await;
-
-        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
-        let lines = client
-            .list_log_lines("app1", None, None, None, None, None, None, None)
-            .await
-            .unwrap();
-        assert!(lines.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_list_log_lines_with_filters() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/graphql"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
-                    "app": {
-                        "logs": {
-                            "lines": [{
-                                "id": "filtered1",
-                                "timestamp": "2025-06-01T12:00:00Z",
-                                "severity": "ERROR",
-                                "hostname": "web-1",
-                                "group": null,
-                                "message": "Filtered result",
-                                "attributes": [],
-                                "source": null
-                            }]
-                        }
-                    }
-                }))),
-            )
-            .mount(&server)
-            .await;
-
-        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
-        let sids = vec!["s1".to_string()];
-        let sevs = vec!["ERROR".to_string()];
-        let lines = client
-            .list_log_lines(
-                "app1",
-                Some("2025-06-01T00:00:00Z"),
-                Some("2025-06-02T00:00:00Z"),
-                Some(&sids),
-                Some(&sevs),
-                Some("timeout"),
-                Some(50),
-                Some("ASC"),
-            )
-            .await
-            .unwrap();
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].id, "filtered1");
-    }
 
     #[tokio::test]
     async fn test_list_log_views() {
