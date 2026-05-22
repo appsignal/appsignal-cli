@@ -41,6 +41,7 @@ struct TriggerRow {
     cooldown: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn list(
     app_id: Option<&str>,
     app_name: Option<&str>,
