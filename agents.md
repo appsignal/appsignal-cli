@@ -266,6 +266,8 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli logs views [app options]` | List saved log views (filter presets) |
 | `appsignal-cli logs sources [app options]` | List log sources for an app |
 | `appsignal-cli skill install [--target TARGET] [--dir PATH] [--force]` | Install the bundled AppSignal LLM skill for OpenCode, Codex, or Claude |
+| `appsignal-cli skill update [--target TARGET] [--dir PATH]` | Update an installed AppSignal LLM skill to the bundled version |
+| `appsignal-cli skill status [--target TARGET] [--dir PATH]` | Show whether installed AppSignal LLM skills are current, outdated, missing, or unversioned; defaults to all supported targets |
 
 ### App resolution
 
