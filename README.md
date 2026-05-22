@@ -188,6 +188,8 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 | Command | Description |
 |---|---|
 | `skill install` | Install the bundled AppSignal LLM skill for one or more supported agent targets |
+| `skill update` | Update an installed AppSignal LLM skill to the bundled version |
+| `skill status` | Show whether an installed AppSignal LLM skill is current, outdated, missing, or unversioned |
 
 Targets:
 - `opencode` (default): `~/.agents/skills/appsignal/SKILL.md`
@@ -196,6 +198,8 @@ Targets:
 - `all`: install all of the above
 
 Use `skill install --target codex`, `skill install --target claude`, or `skill install --target all` to choose a target. Use `skill install --dir <path>` to install into a custom skills root for a single target, or `skill install --force` to overwrite an existing install.
+
+Installed skills include the CLI version that produced them. `skill status` checks all supported targets by default so you get one list of every provider status, and `skill update` refreshes an existing install after upgrading `appsignal-cli`.
 
 All log and incident commands accept either `--app-id <id>` or `--app <name> [--environment <env>]` to identify the application. The `--environment` flag is needed when multiple apps share the same name.
 

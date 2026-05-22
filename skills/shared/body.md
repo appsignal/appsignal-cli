@@ -36,6 +36,8 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli logs views [app options]` | List saved log views |
 | `appsignal-cli logs sources [app options]` | List log sources |
 | `appsignal-cli skill install [--target TARGET] [--dir PATH] [--force]` | Install the bundled AppSignal skill |
+| `appsignal-cli skill update [--target TARGET] [--dir PATH]` | Update an installed AppSignal skill to the bundled version |
+| `appsignal-cli skill status [--target TARGET] [--dir PATH]` | Show whether installed AppSignal skills are current, outdated, missing, or unversioned; defaults to all supported targets |
 
 ## App Selection
 

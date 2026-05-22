@@ -75,6 +75,24 @@ enum SkillAction {
         #[arg(long)]
         force: bool,
     },
+    /// Update an installed AppSignal skill to the bundled version
+    Update {
+        /// Update target(s): opencode, codex, claude, or all
+        #[arg(long, value_delimiter = ',', default_value = "opencode")]
+        target: Vec<InstallTarget>,
+        /// Update a skill installed in this skills root directory instead of the target's default
+        #[arg(long)]
+        dir: Option<String>,
+    },
+    /// Show whether installed AppSignal skills are current
+    Status {
+        /// Status target(s): opencode, codex, claude, or all
+        #[arg(long, value_delimiter = ',', default_value = "all")]
+        target: Vec<InstallTarget>,
+        /// Check a skill installed in this skills root directory instead of the target's default
+        #[arg(long)]
+        dir: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -924,6 +942,12 @@ async fn main() -> Result<()> {
         Commands::Skill { action } => match action {
             SkillAction::Install { target, dir, force } => {
                 commands::skill::install(&target, dir.as_deref(), force, cli.output)?
+            }
+            SkillAction::Update { target, dir } => {
+                commands::skill::update(&target, dir.as_deref(), cli.output)?
+            }
+            SkillAction::Status { target, dir } => {
+                commands::skill::status(&target, dir.as_deref(), cli.output)?
             }
         },
     }
