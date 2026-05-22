@@ -18,7 +18,15 @@ use crate::output::Output;
 struct Cli {
     /// Output format for command results. `human` is the default; `json` is
     /// machine-readable. Status messages always go to stderr regardless.
-    #[arg(long, short = 'o', global = true, value_enum, default_value_t = Output::Human)]
+    /// `--format` is supported as a synonym for `--output`.
+    #[arg(
+        long,
+        visible_alias = "format",
+        short = 'o',
+        global = true,
+        value_enum,
+        default_value_t = Output::Human
+    )]
     output: Output,
 
     #[command(subcommand)]
@@ -456,7 +464,7 @@ enum LogsAction {
         #[arg(long)]
         view: Option<String>,
     },
-    /// Search log lines (one-shot query). Use --output json for machine-readable output.
+    /// Search log lines (one-shot query). Use --output json or --format json for machine-readable output.
     Search {
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
