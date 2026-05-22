@@ -22,9 +22,9 @@ Implemented in the CLI today:
 - App resources: users, notifiers, namespaces, dashboards
 - Incident listing, incident detail, incident update, incident notes
 - Log search, log tail, log views, log sources
+- Trigger listing, creation, update, and archiving
 
 Still missing or incomplete:
-- Trigger management
 - Metrics discovery and querying
 - Dashboard and visual management
 - Trace inspection
@@ -182,25 +182,14 @@ CLI extras:
 ## Triggers
 
 ### `get_triggers`
-- [ ] Not implemented
-
-Missing CLI capabilities:
-- [ ] list triggers for an app
-- [ ] filter by `metric_name`
-- [ ] filter by `kind`
-- [ ] filter by tags
+- [x] `triggers list`
 
 ### `manage_trigger`
-- [ ] Not implemented
-
-Missing CLI capabilities:
-- [ ] create a trigger
-- [ ] update a trigger
-- [ ] attach notifiers
-- [ ] link dashboards
+- [x] `triggers create`
+- [x] `triggers update`
 
 ### `archive_trigger`
-- [ ] Not implemented
+- [x] `triggers archive`
 
 ---
 

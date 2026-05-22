@@ -119,6 +119,47 @@ pub struct TriggerSummary {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TriggerReference {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ThresholdCondition {
+    pub value: f64,
+    #[serde(rename = "comparisonOperator")]
+    pub comparison_operator: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Trigger {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "metricName")]
+    pub metric_name: String,
+    pub field: String,
+    #[serde(rename = "dashboardId")]
+    pub dashboard_id: Option<String>,
+    pub kind: String,
+    #[serde(rename = "warmupDuration")]
+    pub warmup_duration: i64,
+    #[serde(rename = "cooldownDuration")]
+    pub cooldown_duration: i64,
+    pub description: Option<String>,
+    #[serde(rename = "noMatchIsZero")]
+    pub no_match_is_zero: bool,
+    pub format: Option<String>,
+    #[serde(rename = "formatInput")]
+    pub format_input: Option<String>,
+    #[serde(rename = "previousTrigger")]
+    pub previous_trigger: Option<TriggerReference>,
+    #[serde(rename = "thresholdCondition")]
+    pub threshold_condition: ThresholdCondition,
+    pub notifiers: Option<Vec<Notifier>>,
+    pub tags: Option<Vec<KeyStringValue>>,
+    pub user: Option<User>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct User {
     pub id: String,
     pub name: Option<String>,
@@ -413,6 +454,16 @@ struct AppPerformanceIncidents {
     performance_incidents: Option<Vec<Incident>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AppTriggersData {
+    app: Option<AppTriggers>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppTriggers {
+    triggers: Option<Vec<Trigger>>,
+}
+
 // -- App resource response types --
 
 #[derive(Debug, Deserialize)]
@@ -453,6 +504,38 @@ struct CreateIncidentNoteData {
     #[serde(rename = "createIncidentNote")]
     create_incident_note: Option<Incident>,
 }
+
+#[derive(Debug, Deserialize)]
+struct CreateTriggerData {
+    #[serde(rename = "createTrigger")]
+    create_trigger: Option<Trigger>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArchiveTriggerData {
+    #[serde(rename = "archiveTrigger")]
+    archive_trigger: Option<Trigger>,
+}
+
+const TRIGGER_SELECTION: &str = r#"
+    id
+    name
+    metricName
+    field
+    dashboardId
+    kind
+    warmupDuration
+    cooldownDuration
+    description
+    noMatchIsZero
+    format
+    formatInput
+    previousTrigger { id }
+    thresholdCondition { value comparisonOperator }
+    notifiers { id name icon }
+    tags { key value }
+    user { id name }
+"#;
 
 // -- Log types --
 
@@ -1137,6 +1220,35 @@ impl AppSignalClient {
         Ok(app.anomaly_incidents.unwrap_or_default())
     }
 
+    /// List anomaly detection triggers for an app.
+    pub async fn list_triggers(
+        &self,
+        app_id: &str,
+        tags: Option<&[KeyStringValue]>,
+    ) -> Result<Vec<Trigger>> {
+        let query = format!(
+            r#"
+            query AppTriggers($appId: String!, $tags: [KeyStringValueInput!]) {{
+                app(id: $appId) {{
+                    triggers(tags: $tags) {{
+                        {}
+                    }}
+                }}
+            }}
+        "#,
+            TRIGGER_SELECTION
+        );
+
+        let mut vars = json!({ "appId": app_id });
+        if let Some(tags) = tags {
+            vars["tags"] = json!(tags);
+        }
+
+        let data: AppTriggersData = self.graphql(&query, vars).await?;
+        let app = data.app.context("Application not found")?;
+        Ok(app.triggers.unwrap_or_default())
+    }
+
     /// Get a single incident by number.
     pub async fn get_incident(&self, app_id: &str, incident_number: i64) -> Result<Incident> {
         let query = r#"
@@ -1298,6 +1410,136 @@ impl AppSignalClient {
             .await?;
         data.create_incident_note
             .with_context(|| format!("Failed to create note on incident #{}", incident_number))
+    }
+
+    /// Create a trigger, or create a new trigger version when `previous_trigger_id` is provided.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_trigger(
+        &self,
+        app_id: &str,
+        previous_trigger_id: Option<&str>,
+        name: Option<&str>,
+        metric_name: &str,
+        tags: Option<&[KeyStringValue]>,
+        kind: &str,
+        field: &str,
+        comparison_operator: &str,
+        condition_value: f64,
+        warmup_duration: i64,
+        cooldown_duration: i64,
+        notifier_ids: Option<&[String]>,
+        no_match_is_zero: bool,
+        description: Option<&str>,
+        dashboard_id: Option<&str>,
+        format: Option<&str>,
+        format_input: Option<&str>,
+    ) -> Result<Trigger> {
+        let query = format!(
+            r#"
+            mutation CreateTrigger(
+                $previousTriggerId: String,
+                $appId: String!,
+                $name: String,
+                $metricName: String!,
+                $tags: [KeyStringValueInput!],
+                $kind: String!,
+                $field: MetricFieldEnum!,
+                $comparisonOperator: ThresholdAlertSettingComparisonOperationEnum!,
+                $conditionValue: Float!,
+                $warmupDuration: Int!,
+                $cooldownDuration: Int!,
+                $notifierIds: [String!],
+                $noMatchIsZero: Boolean,
+                $description: String,
+                $dashboardId: String,
+                $format: String,
+                $formatInput: String
+            ) {{
+                createTrigger(
+                    previousTriggerId: $previousTriggerId,
+                    appId: $appId,
+                    name: $name,
+                    metricName: $metricName,
+                    tags: $tags,
+                    kind: $kind,
+                    field: $field,
+                    condition: {{ comparisonOperator: $comparisonOperator, value: $conditionValue }},
+                    warmupDuration: $warmupDuration,
+                    cooldownDuration: $cooldownDuration,
+                    notifierIds: $notifierIds,
+                    noMatchIsZero: $noMatchIsZero,
+                    description: $description,
+                    dashboardId: $dashboardId,
+                    format: $format,
+                    formatInput: $formatInput
+                ) {{
+                    {}
+                }}
+            }}
+        "#,
+            TRIGGER_SELECTION
+        );
+
+        let mut vars = json!({
+            "appId": app_id,
+            "metricName": metric_name,
+            "kind": kind,
+            "field": field,
+            "comparisonOperator": comparison_operator,
+            "conditionValue": condition_value,
+            "warmupDuration": warmup_duration,
+            "cooldownDuration": cooldown_duration,
+            "noMatchIsZero": no_match_is_zero,
+        });
+
+        if let Some(previous_trigger_id) = previous_trigger_id {
+            vars["previousTriggerId"] = json!(previous_trigger_id);
+        }
+        if let Some(name) = name {
+            vars["name"] = json!(name);
+        }
+        if let Some(tags) = tags {
+            vars["tags"] = json!(tags);
+        }
+        if let Some(notifier_ids) = notifier_ids {
+            vars["notifierIds"] = json!(notifier_ids);
+        }
+        if let Some(description) = description {
+            vars["description"] = json!(description);
+        }
+        if let Some(dashboard_id) = dashboard_id {
+            vars["dashboardId"] = json!(dashboard_id);
+        }
+        if let Some(format) = format {
+            vars["format"] = json!(format);
+        }
+        if let Some(format_input) = format_input {
+            vars["formatInput"] = json!(format_input);
+        }
+
+        let data: CreateTriggerData = self.graphql(&query, vars).await?;
+        data.create_trigger.context("Failed to create trigger")
+    }
+
+    /// Archive a trigger.
+    pub async fn archive_trigger(&self, app_id: &str, trigger_id: &str) -> Result<Trigger> {
+        let query = format!(
+            r#"
+            mutation ArchiveTrigger($appId: String!, $id: String!) {{
+                archiveTrigger(appId: $appId, id: $id) {{
+                    {}
+                }}
+            }}
+        "#,
+            TRIGGER_SELECTION
+        );
+
+        let data: ArchiveTriggerData = self
+            .graphql(&query, json!({ "appId": app_id, "id": trigger_id }))
+            .await?;
+
+        data.archive_trigger
+            .with_context(|| format!("Failed to archive trigger {}", trigger_id))
     }
 
     // -- Log methods --
@@ -2578,6 +2820,164 @@ mod tests {
             .unwrap();
         assert_eq!(incident.number(), 42);
         assert_eq!(incident.kind(), "exception");
+    }
+
+    #[tokio::test]
+    async fn test_list_triggers() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "triggers": [
+                            {
+                                "id": "trig-1",
+                                "name": "Slow requests",
+                                "metricName": "response_time",
+                                "field": "MEAN",
+                                "dashboardId": "dash-1",
+                                "kind": "Advanced",
+                                "warmupDuration": 5,
+                                "cooldownDuration": 2,
+                                "description": "Investigate latency spikes",
+                                "noMatchIsZero": false,
+                                "format": "duration",
+                                "formatInput": null,
+                                "previousTrigger": null,
+                                "thresholdCondition": {
+                                    "value": 500.0,
+                                    "comparisonOperator": "GREATER_THAN"
+                                },
+                                "notifiers": [
+                                    { "id": "n1", "name": "Slack", "icon": "slack" }
+                                ],
+                                "tags": [
+                                    { "key": "namespace", "value": "web" }
+                                ],
+                                "user": { "id": "u1", "name": "Alice" }
+                            }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let triggers = client.list_triggers("app1", None).await.unwrap();
+
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].id, "trig-1");
+        assert_eq!(triggers[0].metric_name, "response_time");
+        assert_eq!(
+            triggers[0].threshold_condition.comparison_operator,
+            "GREATER_THAN"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_trigger() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "createTrigger": {
+                        "id": "trig-2",
+                        "name": "High CPU",
+                        "metricName": "cpu_usage",
+                        "field": "GAUGE",
+                        "dashboardId": null,
+                        "kind": "HostCPUUsage",
+                        "warmupDuration": 3,
+                        "cooldownDuration": 1,
+                        "description": "CPU is too high",
+                        "noMatchIsZero": false,
+                        "format": "percent",
+                        "formatInput": null,
+                        "previousTrigger": { "id": "trig-1" },
+                        "thresholdCondition": {
+                            "value": 85.0,
+                            "comparisonOperator": "GREATER_THAN"
+                        },
+                        "notifiers": [],
+                        "tags": [],
+                        "user": { "id": "u1", "name": "Alice" }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let trigger = client
+            .create_trigger(
+                "app1",
+                Some("trig-1"),
+                Some("High CPU"),
+                "cpu_usage",
+                None,
+                "HostCPUUsage",
+                "GAUGE",
+                "GREATER_THAN",
+                85.0,
+                3,
+                1,
+                None,
+                false,
+                Some("CPU is too high"),
+                None,
+                Some("percent"),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(trigger.id, "trig-2");
+        assert_eq!(trigger.previous_trigger.as_ref().unwrap().id, "trig-1");
+        assert_eq!(trigger.threshold_condition.value, 85.0);
+    }
+
+    #[tokio::test]
+    async fn test_archive_trigger() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "archiveTrigger": {
+                        "id": "trig-9",
+                        "name": "Old trigger",
+                        "metricName": "response_time",
+                        "field": "MEAN",
+                        "dashboardId": null,
+                        "kind": "Advanced",
+                        "warmupDuration": 5,
+                        "cooldownDuration": 2,
+                        "description": null,
+                        "noMatchIsZero": false,
+                        "format": null,
+                        "formatInput": null,
+                        "previousTrigger": null,
+                        "thresholdCondition": {
+                            "value": 500.0,
+                            "comparisonOperator": "GREATER_THAN"
+                        },
+                        "notifiers": [],
+                        "tags": [],
+                        "user": null
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let trigger = client.archive_trigger("app1", "trig-9").await.unwrap();
+
+        assert_eq!(trigger.id, "trig-9");
+        assert_eq!(trigger.kind, "Advanced");
     }
 
     // -- LogLine deserialization tests --

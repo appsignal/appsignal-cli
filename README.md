@@ -105,6 +105,17 @@ appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "produc
 # Tail logs in real time
 appsignal-cli logs tail --app "MyApp" --environment "production"
 
+# List anomaly detection triggers
+appsignal-cli triggers list --app "MyApp" --environment "production"
+
+# Create a trigger
+appsignal-cli triggers create --app "MyApp" --environment "production" \
+  --name "Slow web requests" \
+  --metric-name response_time --kind Advanced --field mean \
+  --comparison-operator ">" --condition-value 500 \
+  --description "Alert when mean response time stays above 500ms" \
+  --warmup-duration 5 --cooldown-duration 2
+
 # Search logs with JSON output (for LLMs)
 appsignal-cli --output json logs search --app "MyApp" --environment "production" --query "timeout"
 
@@ -182,6 +193,23 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 | `logs search` | Search log lines (one-shot query, supports global `--output json` for LLM use) |
 | `logs views` | List saved log views (filter presets) |
 | `logs sources` | List log sources for an app |
+
+### `triggers`
+
+| Command | Description |
+|---|---|
+| `triggers list` | List anomaly detection triggers for an app |
+| `triggers create` | Create a new anomaly detection trigger |
+| `triggers update --id <id>` | Update a trigger by creating a new version |
+| `triggers archive --id <id>` | Archive a trigger |
+
+#### Trigger naming options
+
+| Flag | Description |
+|---|---|
+| `--name <text>` | Human-readable trigger name shown in alerts and lists |
+| `--metric-name <metric>` | Actual metric the trigger monitors |
+| `--description <text>` | Optional longer description/instructions for the trigger |
 
 ### `skill`
 
