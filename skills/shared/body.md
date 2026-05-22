@@ -35,6 +35,10 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
 | `appsignal-cli logs views [app options]` | List saved log views |
 | `appsignal-cli logs sources [app options]` | List log sources |
+| `appsignal-cli triggers list [app options] [filters]` | List anomaly detection triggers |
+| `appsignal-cli triggers create [app options] [definition flags]` | Create an anomaly detection trigger |
+| `appsignal-cli triggers update --id <id> [app options] [definition flags]` | Update a trigger by creating a new version |
+| `appsignal-cli triggers archive --id <id> [app options]` | Archive a trigger |
 | `appsignal-cli skill install [--target TARGET] [--dir PATH] [--force]` | Install the bundled AppSignal skill |
 
 ## App Selection
@@ -91,6 +95,36 @@ Example:
 ```bash
 appsignal-cli --output json incidents show --number 42 --app "MyApp" --environment "production"
 ```
+
+## Trigger Options
+
+Useful `triggers list` flags:
+
+| Flag | Description |
+|---|---|
+| `--metric-name <metric>` | Filter by the metric being monitored |
+| `--kind <kind>` | Filter by trigger kind |
+| `--tag key=value` | Filter by trigger tags; repeat or comma-separate |
+
+Useful `triggers create` and `triggers update` flags:
+
+| Flag | Description |
+|---|---|
+| `--name <text>` | Human-readable trigger name shown in alerts and lists |
+| `--metric-name <metric>` | Actual metric the trigger monitors |
+| `--kind <kind>` | Trigger kind such as `Advanced` or `HostCPUUsage` |
+| `--field <count|counter|gauge|mean|p90|p95>` | Metric field used for comparisons |
+| `--comparison-operator <op>` | One of `>`, `>=`, `<`, `<=`, `==`, `!=` |
+| `--condition-value <number>` | Threshold value to compare against |
+| `--warmup-duration <minutes>` | Minutes the condition must hold before opening |
+| `--cooldown-duration <minutes>` | Minutes the condition must clear before closing |
+| `--notifier-ids <id,id>` | Comma-separated notifier IDs |
+| `--tag key=value` | Trigger tags; repeat or comma-separate |
+| `--description <text>` | Optional longer description or runbook hint |
+| `--no-match-is-zero` | Treat missing datapoints as zero |
+| `--dashboard-id <id>` | Link a dashboard in notifications |
+| `--format <name>` | Value display format, such as `duration` or `percent` |
+| `--format-input <name>` | Input unit for size formats |
 
 ## Log Options
 
@@ -189,6 +223,27 @@ Search logs with JSON output:
 
 ```bash
 appsignal-cli --output json logs search --app "MyApp" --environment "production" --query "timeout"
+```
+
+List triggers for an app:
+
+```bash
+appsignal-cli triggers list --app "MyApp" --environment "production"
+```
+
+Create a trigger with distinct trigger and metric names:
+
+```bash
+appsignal-cli triggers create --app "MyApp" --environment "production" \
+  --name "Slow web requests" \
+  --metric-name response_time \
+  --kind Advanced \
+  --field mean \
+  --comparison-operator ">" \
+  --condition-value 500 \
+  --description "Alert when mean response time stays above 500ms" \
+  --warmup-duration 5 \
+  --cooldown-duration 2
 ```
 
 Search all matching logs in a time window:
