@@ -54,6 +54,11 @@ enum Commands {
         #[command(subcommand)]
         action: LogsAction,
     },
+    /// List and manage anomaly detection triggers
+    Triggers {
+        #[command(subcommand)]
+        action: TriggerAction,
+    },
     /// Install the bundled AppSignal LLM skill
     Skill {
         #[command(subcommand)]
@@ -509,6 +514,114 @@ enum LogsAction {
     },
 }
 
+#[derive(Args)]
+struct TriggerAppArgs {
+    /// Application ID (alternative to --app + --environment)
+    #[arg(long)]
+    app_id: Option<String>,
+    /// Application name — used with optional --environment to find the app
+    #[arg(long)]
+    app: Option<String>,
+    /// Environment filter (e.g. "production") — used with --app
+    #[arg(long)]
+    environment: Option<String>,
+    /// Organization slug (uses saved default if omitted)
+    #[arg(long)]
+    org: Option<String>,
+}
+
+#[derive(Args)]
+struct TriggerDefinitionArgs {
+    /// Display name for the trigger. Defaults to the metric name if omitted.
+    #[arg(long)]
+    name: Option<String>,
+    /// Metric name to monitor
+    #[arg(long)]
+    metric_name: String,
+    /// Trigger kind/classification (for example: Advanced, Performance, HostCPUUsage)
+    #[arg(long)]
+    kind: String,
+    /// Metric field to compare: count, counter, gauge, mean, p90, or p95
+    #[arg(long)]
+    field: String,
+    /// Comparison operator: >, >=, <, <=, ==, !=
+    #[arg(long)]
+    comparison_operator: String,
+    /// Threshold value to compare against
+    #[arg(long)]
+    condition_value: f64,
+    /// Warmup duration in minutes before opening an alert
+    #[arg(long)]
+    warmup_duration: i64,
+    /// Cooldown duration in minutes before closing an alert
+    #[arg(long)]
+    cooldown_duration: i64,
+    /// Comma-separated notifier IDs to attach to the trigger
+    #[arg(long)]
+    notifier_ids: Option<String>,
+    /// Tag filter(s) in key=value form. Repeat the flag or use commas.
+    #[arg(long = "tag", value_delimiter = ',')]
+    tags: Vec<String>,
+    /// Optional description shown with the trigger
+    #[arg(long)]
+    description: Option<String>,
+    /// Treat missing datapoints as 0
+    #[arg(long, default_value_t = false)]
+    no_match_is_zero: bool,
+    /// Dashboard ID to link from notifications
+    #[arg(long)]
+    dashboard_id: Option<String>,
+    /// Output format for the metric value (for example: duration, number, percent)
+    #[arg(long)]
+    format: Option<String>,
+    /// Input unit for the size format (for example: byte, kilobyte, megabyte)
+    #[arg(long)]
+    format_input: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum TriggerAction {
+    /// List triggers for an application
+    List {
+        #[command(flatten)]
+        app: TriggerAppArgs,
+        /// Filter by metric name
+        #[arg(long)]
+        metric_name: Option<String>,
+        /// Filter by trigger kind
+        #[arg(long)]
+        kind: Option<String>,
+        /// Tag filter(s) in key=value form. Repeat the flag or use commas.
+        #[arg(long = "tag", value_delimiter = ',')]
+        tags: Vec<String>,
+    },
+    /// Create a new anomaly detection trigger
+    Create {
+        #[command(flatten)]
+        app: TriggerAppArgs,
+        #[command(flatten)]
+        definition: TriggerDefinitionArgs,
+    },
+    /// Update a trigger by creating a new version linked to the existing trigger
+    Update {
+        #[command(flatten)]
+        app: TriggerAppArgs,
+        /// ID of the existing trigger to update
+        #[arg(long)]
+        id: String,
+        #[command(flatten)]
+        definition: TriggerDefinitionArgs,
+    },
+    /// Archive a trigger and close its associated alerts/incidents
+    Archive {
+        #[command(flatten)]
+        app: TriggerAppArgs,
+        /// ID of the trigger to archive
+        #[arg(long)]
+        id: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -916,6 +1029,92 @@ async fn main() -> Result<()> {
                     app.as_deref(),
                     environment.as_deref(),
                     org.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+        },
+        Commands::Triggers { action } => match action {
+            TriggerAction::List {
+                app,
+                metric_name,
+                kind,
+                tags,
+            } => {
+                commands::triggers::list(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    metric_name.as_deref(),
+                    kind.as_deref(),
+                    &tags,
+                    cli.output,
+                )
+                .await?
+            }
+            TriggerAction::Create { app, definition } => {
+                commands::triggers::create(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    definition.name.as_deref(),
+                    &definition.metric_name,
+                    &definition.kind,
+                    &definition.field,
+                    &definition.comparison_operator,
+                    definition.condition_value,
+                    definition.warmup_duration,
+                    definition.cooldown_duration,
+                    definition.notifier_ids.as_deref(),
+                    &definition.tags,
+                    definition.description.as_deref(),
+                    definition.no_match_is_zero,
+                    definition.dashboard_id.as_deref(),
+                    definition.format.as_deref(),
+                    definition.format_input.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+            TriggerAction::Update {
+                app,
+                id,
+                definition,
+            } => {
+                commands::triggers::update(
+                    &id,
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    definition.name.as_deref(),
+                    &definition.metric_name,
+                    &definition.kind,
+                    &definition.field,
+                    &definition.comparison_operator,
+                    definition.condition_value,
+                    definition.warmup_duration,
+                    definition.cooldown_duration,
+                    definition.notifier_ids.as_deref(),
+                    &definition.tags,
+                    definition.description.as_deref(),
+                    definition.no_match_is_zero,
+                    definition.dashboard_id.as_deref(),
+                    definition.format.as_deref(),
+                    definition.format_input.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+            TriggerAction::Archive { app, id } => {
+                commands::triggers::archive(
+                    &id,
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
                     cli.output,
                 )
                 .await?
