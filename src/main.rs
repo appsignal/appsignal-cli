@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod oauth;
 mod output;
+mod version_check;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
@@ -511,6 +512,14 @@ enum LogsAction {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if let Some(latest_version) = version_check::newer_version_available().await {
+        crate::output::status_box(&[
+            "Newer appsignal-cli version available".to_string(),
+            format!("Current: {}", env!("CARGO_PKG_VERSION")),
+            format!("Latest:  {latest_version}"),
+        ]);
+    }
 
     match cli.command {
         Commands::About => commands::about::show(cli.output)?,

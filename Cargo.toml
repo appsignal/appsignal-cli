@@ -16,6 +16,7 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 open = "5"
 rand = "0.8"
+semver = "1"
 sha2 = "0.10"
 base64 = "0.22"
 url = "2"

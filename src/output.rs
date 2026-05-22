@@ -94,6 +94,35 @@ pub fn json_line<T: Serialize>(w: &mut dyn Write, value: &T) -> Result<()> {
     Ok(())
 }
 
+fn render_boxed_lines<T: AsRef<str>>(lines: &[T]) -> String {
+    let width = lines
+        .iter()
+        .map(|line| line.as_ref().len())
+        .max()
+        .unwrap_or(0);
+    let mut output = String::new();
+
+    output.push('+');
+    output.push_str(&"-".repeat(width + 2));
+    output.push('+');
+    output.push('\n');
+
+    for line in lines {
+        output.push_str(&format!("| {:<width$} |\n", line.as_ref(), width = width));
+    }
+
+    output.push('+');
+    output.push_str(&"-".repeat(width + 2));
+    output.push('+');
+
+    output
+}
+
+/// Print a boxed status message to stderr.
+pub fn status_box<T: AsRef<str>>(lines: &[T]) {
+    crate::status!("{}", render_boxed_lines(lines));
+}
+
 /// Render key/value pairs as a detail panel. For "show one thing" commands.
 #[allow(dead_code)] // part of the demonstrated surface; first caller lands in the migration
 pub fn detail(w: &mut dyn Write, pairs: &[(&str, &str)]) -> io::Result<()> {
@@ -116,4 +145,24 @@ macro_rules! status {
         let mut stderr = stderr.lock();
         let _ = writeln!(stderr, $($arg)*);
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_boxed_lines;
+
+    #[test]
+    fn render_boxed_lines_wraps_content_in_ascii_box() {
+        let rendered = render_boxed_lines(&[
+            "Newer appsignal-cli version available",
+            "Current: 0.2.0",
+            "Latest:  0.3.0",
+        ]);
+
+        assert!(rendered.starts_with('+'));
+        assert!(rendered.contains("| Newer appsignal-cli version available |"));
+        assert!(rendered.contains("Current: 0.2.0"));
+        assert!(rendered.contains("Latest:  0.3.0"));
+        assert!(rendered.ends_with('+'));
+    }
 }

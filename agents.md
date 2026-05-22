@@ -33,6 +33,35 @@ src/
 
 - Before committing Rust changes, run `cargo fmt` and `cargo clippy -- -D warnings`.
 
+## Git Workflow
+
+- Prefer descriptive branch names. Avoid cliché names like `fix-bug` or `wip`, keep
+  names longer than 3 characters, avoid leading/trailing punctuation, and do not
+  use a ticket number as the whole branch name.
+- Prefer rebasing feature branches instead of merging base branches back into
+  them. Avoid local merge commits from `git pull`; use `git pull --rebase` (or a
+  Git config like `pull.rebase=true` or `pull.ff=only`) instead.
+- Do not leave `fixup!`, `squash!`, or amend-style commits in a branch that is
+  ready for review. Autosquash them before pushing or merging.
+- Write commit subjects in imperative mood, with a capitalized first letter,
+  without trailing punctuation, and keep them under 50 characters.
+- Do not use conventional-commit prefixes like `fix:` or `feat:` in the subject.
+  Do not put ticket numbers, `[skip ci]`, or similar tags in the subject either;
+  move that metadata into the commit body.
+- Avoid vague subjects like `Fix bug`, `Update README`, or `WIP`. The subject
+  should describe the actual change.
+- Always include a commit body separated from the subject by a blank line.
+  Explain why the change was needed, what was changed, and any important
+  constraints or rejected alternatives.
+- Wrap commit body lines at 72 characters when practical. URLs may stay on one
+  line.
+- Put ticket references like `Closes #123` or `Related #123` in the body, not in
+  the subject.
+- Keep trailer lines like `Co-authored-by:` and `Signed-off-by:` at the end of
+  the commit body.
+- In this repo, when a code change does not need a user-facing changeset,
+  include `[skip changeset]` in the commit body rather than the subject.
+
 ## AppSignal API
 
 The CLI currently uses a mix of **GraphQL** and **REST v2** endpoints:
