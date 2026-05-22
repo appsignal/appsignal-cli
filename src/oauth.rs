@@ -4,6 +4,7 @@ use base64::Engine;
 use rand::Rng;
 use reqwest::Client;
 use serde::Deserialize;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -26,6 +27,18 @@ pub struct OAuthConfig {
     pub scopes: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct AuthorizationServerMetadata {
+    authorization_endpoint: Option<String>,
+    token_endpoint: Option<String>,
+    registration_endpoint: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistrationResponse {
+    client_id: String,
+}
+
 impl OAuthConfig {
     pub fn new(base_url: Option<&str>, client_id: Option<&str>) -> Self {
         let base = base_url.unwrap_or(DEFAULT_OAUTH_BASE).trim_end_matches('/');
@@ -37,6 +50,86 @@ impl OAuthConfig {
             scopes: SCOPES.to_string(),
         }
     }
+}
+
+async fn discover_authorization_server_metadata(
+    base_url: &str,
+) -> Result<Option<AuthorizationServerMetadata>> {
+    let url = format!(
+        "{}/.well-known/oauth-authorization-server",
+        base_url.trim_end_matches('/')
+    );
+    let resp = Client::new()
+        .get(url)
+        .send()
+        .await
+        .context("Failed to fetch OAuth authorization server metadata")?;
+
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+
+    let metadata = resp
+        .json()
+        .await
+        .context("Failed to parse OAuth authorization server metadata")?;
+    Ok(Some(metadata))
+}
+
+async fn register_dynamic_client(registration_endpoint: &str, redirect_uri: &str) -> Result<String> {
+    let resp = Client::new()
+        .post(registration_endpoint)
+        .json(&json!({
+            "client_name": "appsignal-cli",
+            "redirect_uris": [redirect_uri],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_method": "none"
+        }))
+        .send()
+        .await
+        .context("Failed to register OAuth client")?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("OAuth client registration failed (HTTP {}): {}", status, text);
+    }
+
+    let registration: RegistrationResponse = resp
+        .json()
+        .await
+        .context("Failed to parse OAuth client registration response")?;
+    Ok(registration.client_id)
+}
+
+async fn resolve_oauth_config(base_url: Option<&str>, client_id: Option<&str>) -> Result<OAuthConfig> {
+    let mut config = OAuthConfig::new(base_url, client_id);
+
+    if client_id.is_some() {
+        return Ok(config);
+    }
+
+    let Some(base_url) = base_url else {
+        return Ok(config);
+    };
+
+    let Some(metadata) = discover_authorization_server_metadata(base_url).await? else {
+        return Ok(config);
+    };
+
+    if let Some(authorization_endpoint) = metadata.authorization_endpoint {
+        config.authorize_url = authorization_endpoint;
+    }
+
+    if let Some(token_endpoint) = metadata.token_endpoint {
+        config.token_url = token_endpoint;
+    }
+
+    if let Some(registration_endpoint) = metadata.registration_endpoint {
+        config.client_id = register_dynamic_client(&registration_endpoint, &config.redirect_uri).await?;
+    }
+
+    Ok(config)
 }
 
 /// Generate a cryptographically random code verifier for PKCE.
@@ -194,7 +287,7 @@ pub async fn refresh_access_token(
     client_id: Option<&str>,
     refresh_token: &str,
 ) -> Result<OAuthCredentials> {
-    let config = OAuthConfig::new(base_url, client_id);
+    let config = resolve_oauth_config(base_url, client_id).await?;
     let client = Client::new();
 
     let resp = client
@@ -297,7 +390,7 @@ pub async fn perform_oauth_flow(
     base_url: Option<&str>,
     client_id: Option<&str>,
 ) -> Result<OAuthCredentials> {
-    let config = OAuthConfig::new(base_url, client_id);
+    let config = resolve_oauth_config(base_url, client_id).await?;
 
     // Step 1: PKCE parameters
     let code_verifier = generate_code_verifier();
@@ -455,6 +548,101 @@ mod tests {
     fn test_oauth_config_custom_client_id_override() {
         let config = OAuthConfig::new(Some("https://staging.lol"), Some("staging-client-id"));
         assert_eq!(config.client_id, "staging-client-id");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_oauth_config_uses_dynamic_client_registration() {
+        let server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "authorization_endpoint": format!("{}/oauth/authorize", server.uri()),
+                    "token_endpoint": format!("{}/oauth/token", server.uri()),
+                    "registration_endpoint": format!("{}/oauth/register", server.uri())
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/oauth/register"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                    "client_id": "dynamic-client-id"
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let config = resolve_oauth_config(Some(&server.uri()), None).await.unwrap();
+
+        assert_eq!(config.client_id, "dynamic-client-id");
+        assert_eq!(config.authorize_url, format!("{}/oauth/authorize", server.uri()));
+        assert_eq!(config.token_url, format!("{}/oauth/token", server.uri()));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_oauth_config_falls_back_when_metadata_missing() {
+        let server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let config = resolve_oauth_config(Some(&server.uri()), None).await.unwrap();
+
+        assert_eq!(config.client_id, PRODUCTION_CLIENT_ID);
+        assert_eq!(config.authorize_url, format!("{}/oauth/authorize", server.uri()));
+        assert_eq!(config.token_url, format!("{}/oauth/token", server.uri()));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_access_token_uses_dynamic_registered_client_id() {
+        let server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "registration_endpoint": format!("{}/oauth/register", server.uri()),
+                    "token_endpoint": format!("{}/oauth/token", server.uri())
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/oauth/register"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                    "client_id": "dynamic-client-id"
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/oauth/token"))
+            .and(wiremock::matchers::body_string_contains("client_id=dynamic-client-id"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "access_token": "refreshed-token",
+                    "refresh_token": "new-refresh",
+                    "expires_in": 7200,
+                    "token_type": "Bearer"
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let creds = refresh_access_token(Some(&server.uri()), None, "old-refresh")
+            .await
+            .unwrap();
+        assert_eq!(creds.access_token, "refreshed-token");
     }
 
     #[test]

@@ -416,6 +416,9 @@ expires_at = 1742324400
 OAuth credentials take precedence over personal tokens when both are present.
 Expired OAuth tokens are automatically refreshed before API calls.
 When `oauth_client_id` is unset, the CLI uses the production OAuth client ID.
+For custom endpoints that advertise an OAuth `registration_endpoint`, the CLI
+automatically registers a public client and uses the returned `client_id`
+instead.
 When `endpoint` is set to a base URL like `https://staging.lol`, the CLI uses
 `/graphql` for API calls and the base URL itself for OAuth. Values like
 `https://staging.lol/graphql` are not supported.
