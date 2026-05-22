@@ -153,16 +153,13 @@ mod tests {
 
     #[test]
     fn render_boxed_lines_wraps_content_in_ascii_box() {
-        let rendered = render_boxed_lines(&[
-            "Newer appsignal-cli version available",
-            "Current: 0.2.0",
-            "Latest:  0.3.0",
-        ]);
+        let rendered =
+            render_boxed_lines(&["Upgrade required", "Current: 0.2.1", "Latest:  1.0.0"]);
 
         assert!(rendered.starts_with('+'));
-        assert!(rendered.contains("| Newer appsignal-cli version available |"));
-        assert!(rendered.contains("Current: 0.2.0"));
-        assert!(rendered.contains("Latest:  0.3.0"));
+        assert!(rendered.contains("| Upgrade required |"));
+        assert!(rendered.contains("Current: 0.2.1"));
+        assert!(rendered.contains("Latest:  1.0.0"));
         assert!(rendered.ends_with('+'));
     }
 }

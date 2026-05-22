@@ -5,7 +5,7 @@ mod oauth;
 mod output;
 mod version_check;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand};
 
 use crate::commands::skill::InstallTarget;
@@ -513,12 +513,25 @@ enum LogsAction {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if let Some(latest_version) = version_check::newer_version_available().await {
-        crate::output::status_box(&[
-            "Newer appsignal-cli version available".to_string(),
-            format!("Current: {}", env!("CARGO_PKG_VERSION")),
-            format!("Latest:  {latest_version}"),
-        ]);
+    match version_check::check().await {
+        version_check::VersionCheck::UpToDate => {}
+        version_check::VersionCheck::UpgradeAvailable(latest_version) => {
+            crate::output::status_box(&[
+                "Newer appsignal-cli version available".to_string(),
+                format!("Current: {}", env!("CARGO_PKG_VERSION")),
+                format!("Latest:  {latest_version}"),
+            ]);
+        }
+        version_check::VersionCheck::UpgradeRequired(latest_version) => {
+            crate::output::status_box(&[
+                "Upgrade required".to_string(),
+                "A new major appsignal-cli version is available.".to_string(),
+                format!("Current: {}", env!("CARGO_PKG_VERSION")),
+                format!("Latest:  {latest_version}"),
+                "Install the latest major version to continue.".to_string(),
+            ]);
+            bail!("Please upgrade appsignal-cli to continue.");
+        }
     }
 
     match cli.command {
