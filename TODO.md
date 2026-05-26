@@ -57,7 +57,7 @@ Notes:
 - [x] `apps resources all` provides the combined view
 - [x] `logs sources` covers `log_sources`
 - [x] `logs views` covers `log_views`
-- [ ] Add `log_line_actions`
+- [n/a] Do not expose `log_line_actions` directly; use `logs metrics` and `logs triggers`
 
 Notes:
 - The MCP tool returns more resource sections than the current CLI does.
@@ -245,21 +245,37 @@ Likely implementation work:
 ## Log Line Actions
 
 ### `manage_log_line_action`
-- [ ] Not implemented
+- [~] Public CLI UX is split by product concept instead of exposing raw actions
+
+Implemented today:
+- [x] `logs metrics list`
+- [x] `logs metrics create`
+- [x] `logs metrics update`
+- [x] `logs metrics delete`
+- [x] `logs triggers list`
+- [x] `logs triggers create`
+- [x] `logs triggers update`
+- [x] `logs triggers delete`
+
+Still missing / undecided:
+- [ ] Decide whether log filters need a public CLI surface
 
 ### `delete_log_line_action`
-- [ ] Not implemented
+- [~] Covered indirectly by `logs metrics delete` and `logs triggers delete`
 
 ### `reorder_log_line_actions`
-- [ ] Not implemented
+- [n/a] Internal ingestion-order concept, not part of the public CLI UX for now
 
 Likely implementation work:
-- [ ] Expose `log_line_actions` via `apps resources`
-- [ ] Add `logs actions list`
-- [ ] Add `logs actions create`
-- [ ] Add `logs actions update`
-- [ ] Add `logs actions delete`
-- [ ] Add `logs actions reorder`
+- [x] Add `logs metrics list`
+- [x] Add `logs metrics create`
+- [x] Add `logs metrics update`
+- [x] Add `logs metrics delete`
+- [x] Add `logs triggers list`
+- [x] Add `logs triggers create`
+- [x] Add `logs triggers update`
+- [x] Add `logs triggers delete`
+- [ ] Decide whether to add public `logs filters ...` commands
 
 ---
 
@@ -273,20 +289,20 @@ Likely implementation work:
 ## Suggested Implementation Order
 
 ### Phase 1: Finish Core Read/Write Gaps
-1. Add `log_line_actions` to `apps resources`
-2. Add bulk incident updates
-3. Add missing incident filters where the public API allows them
+1. Add bulk incident updates
+2. Add missing incident filters where the public API allows them
 
 ### Phase 2: Triggers And Metrics
 1. Add `triggers list`
 2. Add metrics name and tag discovery
 3. Add metrics timeseries and aggregated list queries
 4. Add broader metrics discovery if the underlying API supports it cleanly
+5. Evaluate whether log filters need a public CLI surface
 
 ### Phase 3: Dashboards And Log Ingestion Controls
 1. Add dashboard create/update
 2. Add dashboard visual create/update
-3. Add log line action list/create/update/delete/reorder
+3. Add log filter CLI support if product requirements justify it
 
 ### Phase 4: Traces And Full Performance Parity
 1. Add trace listing and inspection
@@ -299,5 +315,5 @@ Likely implementation work:
 
 - The public GraphQL API already covers more than the previous TODO suggested; this file was stale.
 - Metrics likely require REST support in the CLI in addition to the existing GraphQL client.
-- Trigger, dashboard, trace, and log line action parity depends on whether the public API exposes the needed queries and mutations.
+- Trigger, dashboard, trace, and log rule parity depends on whether the public API exposes the needed queries and mutations.
 - Anomaly state handling may differ from exception/performance incident state enums, so state support should be verified before designing CLI flags.

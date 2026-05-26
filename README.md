@@ -343,6 +343,19 @@ appsignal-cli logs views --app "MyApp" --environment "production"
 
 # List log sources
 appsignal-cli logs sources --app "MyApp" --environment "production"
+
+# Create a log-derived metric from matching log lines
+appsignal-cli logs metrics create --app "MyApp" --environment "production" \
+  --name "Track error count" \
+  --query 'severity:error' \
+  --metric 'name=log.error_count,type=counter'
+
+# Create a log-based trigger for matching log lines
+appsignal-cli logs triggers create --app "MyApp" --environment "production" \
+  --name "Root login" \
+  --query 'message:root' \
+  --severity ERROR \
+  --notifier-id notifier_123
 ```
 
 ## Configuration
