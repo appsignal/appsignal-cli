@@ -37,6 +37,18 @@ fn join_api_url(base_url: &str, path: &str) -> String {
     }
 }
 
+fn normalize_log_line_action_type(action_type: &str) -> Result<&'static str> {
+    match action_type.trim().to_ascii_lowercase().as_str() {
+        "trigger" => Ok("TRIGGER"),
+        "filter" => Ok("FILTER"),
+        "metrics" => Ok("METRICS"),
+        other => anyhow::bail!(
+            "Unsupported log line action type '{}'. Use trigger, filter, or metrics.",
+            other
+        ),
+    }
+}
+
 /// Client for the AppSignal API.
 pub struct AppSignalClient {
     http: Client,
@@ -517,6 +529,40 @@ struct ArchiveTriggerData {
     archive_trigger: Option<Trigger>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AppLogLineActionsData {
+    app: Option<AppLogLineActions>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppLogLineActions {
+    logs: Option<LogLineActionsInner>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LogLineActionsInner {
+    #[serde(rename = "logLineActions")]
+    log_line_actions: Option<Vec<LogLineAction>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateLogLineActionData {
+    #[serde(rename = "createLogLineAction")]
+    create_log_line_action: Option<LogLineAction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateLogLineActionData {
+    #[serde(rename = "updateLogLineAction")]
+    update_log_line_action: Option<LogLineAction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteLogLineActionData {
+    #[serde(rename = "deleteLogLineAction")]
+    delete_log_line_action: Option<LogLineAction>,
+}
+
 const TRIGGER_SELECTION: &str = r#"
     id
     name
@@ -535,6 +581,46 @@ const TRIGGER_SELECTION: &str = r#"
     notifiers { id name icon }
     tags { key value }
     user { id name }
+"#;
+
+const LOG_LINE_ACTION_SELECTION: &str = r#"
+    __typename
+    ... on LogLineActionTrigger {
+        id
+        name
+        description
+        query
+        sourceIds
+        severities
+        actionType
+        sources { id name type fmt }
+        order
+        user { id name email }
+        previousTrigger { id }
+        notificationOptions
+        notificationTriggerValue
+        notifiers { id name icon }
+    }
+    ... on LogLineActionFilter {
+        id
+        name
+        query
+        sourceIds
+        actionType
+        sources { id name type fmt }
+        order
+    }
+    ... on LogLineActionMetrics {
+        id
+        name
+        query
+        sourceIds
+        actionType
+        sources { id name type fmt }
+        logLineMetrics { id name field tags metricType }
+        order
+        user { id name email }
+    }
 "#;
 
 // -- Log types --
@@ -576,6 +662,184 @@ pub struct LogView {
     pub source_ids: Option<Vec<String>>,
     pub severities: Option<Vec<String>>,
     pub columns: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LogLineActionTriggerReference {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LogLineMetricDefinition {
+    pub id: Option<String>,
+    pub name: String,
+    pub field: Option<String>,
+    #[serde(default)]
+    pub tags: serde_json::Map<String, Value>,
+    #[serde(rename = "metricType")]
+    pub metric_type: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(tag = "__typename")]
+#[allow(clippy::enum_variant_names)]
+pub enum LogLineAction {
+    LogLineActionTrigger {
+        id: String,
+        name: String,
+        description: Option<String>,
+        query: String,
+        #[serde(rename = "sourceIds")]
+        source_ids: Vec<String>,
+        severities: Vec<String>,
+        #[serde(rename = "actionType")]
+        action_type: String,
+        sources: Vec<LogSource>,
+        order: i64,
+        user: Option<User>,
+        #[serde(rename = "previousTrigger")]
+        previous_trigger: Option<LogLineActionTriggerReference>,
+        #[serde(rename = "notificationOptions")]
+        notification_options: Option<String>,
+        #[serde(rename = "notificationTriggerValue")]
+        notification_trigger_value: Option<i64>,
+        notifiers: Option<Vec<Notifier>>,
+    },
+    LogLineActionFilter {
+        id: String,
+        name: String,
+        query: String,
+        #[serde(rename = "sourceIds")]
+        source_ids: Vec<String>,
+        #[serde(rename = "actionType")]
+        action_type: String,
+        sources: Vec<LogSource>,
+        order: i64,
+    },
+    LogLineActionMetrics {
+        id: String,
+        name: String,
+        query: String,
+        #[serde(rename = "sourceIds")]
+        source_ids: Vec<String>,
+        #[serde(rename = "actionType")]
+        action_type: String,
+        sources: Vec<LogSource>,
+        #[serde(rename = "logLineMetrics")]
+        log_line_metrics: Vec<LogLineMetricDefinition>,
+        order: i64,
+        user: Option<User>,
+    },
+}
+
+impl LogLineAction {
+    pub fn id(&self) -> &str {
+        match self {
+            LogLineAction::LogLineActionTrigger { id, .. }
+            | LogLineAction::LogLineActionFilter { id, .. }
+            | LogLineAction::LogLineActionMetrics { id, .. } => id,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            LogLineAction::LogLineActionTrigger { name, .. }
+            | LogLineAction::LogLineActionFilter { name, .. }
+            | LogLineAction::LogLineActionMetrics { name, .. } => name,
+        }
+    }
+
+    pub fn query(&self) -> &str {
+        match self {
+            LogLineAction::LogLineActionTrigger { query, .. }
+            | LogLineAction::LogLineActionFilter { query, .. }
+            | LogLineAction::LogLineActionMetrics { query, .. } => query,
+        }
+    }
+
+    pub fn action_type(&self) -> &str {
+        match self {
+            LogLineAction::LogLineActionTrigger { action_type, .. }
+            | LogLineAction::LogLineActionFilter { action_type, .. }
+            | LogLineAction::LogLineActionMetrics { action_type, .. } => action_type,
+        }
+    }
+
+    pub fn order(&self) -> i64 {
+        match self {
+            LogLineAction::LogLineActionTrigger { order, .. }
+            | LogLineAction::LogLineActionFilter { order, .. }
+            | LogLineAction::LogLineActionMetrics { order, .. } => *order,
+        }
+    }
+
+    pub fn source_ids(&self) -> &[String] {
+        match self {
+            LogLineAction::LogLineActionTrigger { source_ids, .. }
+            | LogLineAction::LogLineActionFilter { source_ids, .. }
+            | LogLineAction::LogLineActionMetrics { source_ids, .. } => source_ids,
+        }
+    }
+
+    pub fn sources(&self) -> &[LogSource] {
+        match self {
+            LogLineAction::LogLineActionTrigger { sources, .. }
+            | LogLineAction::LogLineActionFilter { sources, .. }
+            | LogLineAction::LogLineActionMetrics { sources, .. } => sources,
+        }
+    }
+
+    pub fn trigger_description(&self) -> Option<&str> {
+        match self {
+            LogLineAction::LogLineActionTrigger { description, .. } => description.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub fn trigger_severities(&self) -> &[String] {
+        match self {
+            LogLineAction::LogLineActionTrigger { severities, .. } => severities,
+            _ => &[],
+        }
+    }
+
+    pub fn trigger_notifiers(&self) -> &[Notifier] {
+        match self {
+            LogLineAction::LogLineActionTrigger { notifiers, .. } => {
+                notifiers.as_deref().unwrap_or(&[])
+            }
+            _ => &[],
+        }
+    }
+
+    pub fn metrics(&self) -> &[LogLineMetricDefinition] {
+        match self {
+            LogLineAction::LogLineActionMetrics {
+                log_line_metrics, ..
+            } => log_line_metrics,
+            _ => &[],
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct LogLineMetricInput {
+    pub name: String,
+    pub field: Option<String>,
+    #[serde(rename = "metricType")]
+    pub metric_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<serde_json::Map<String, Value>>,
+}
+
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct LogLineActionTriggerInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(rename = "notifierIds", skip_serializing_if = "Option::is_none")]
+    pub notifier_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1542,6 +1806,178 @@ impl AppSignalClient {
             .with_context(|| format!("Failed to archive trigger {}", trigger_id))
     }
 
+    /// List log line actions for an app.
+    pub async fn list_log_line_actions(&self, app_id: &str) -> Result<Vec<LogLineAction>> {
+        let query = format!(
+            r#"
+            query AppLogLineActions($appId: String!) {{
+                app(id: $appId) {{
+                    logs {{
+                        logLineActions {{
+                            {}
+                        }}
+                    }}
+                }}
+            }}
+        "#,
+            LOG_LINE_ACTION_SELECTION
+        );
+
+        let data: AppLogLineActionsData = self.graphql(&query, json!({ "appId": app_id })).await?;
+        let app = data.app.context("Application not found")?;
+
+        Ok(app
+            .logs
+            .and_then(|logs| logs.log_line_actions)
+            .unwrap_or_default())
+    }
+
+    /// Create a log line action.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_log_line_action(
+        &self,
+        app_id: &str,
+        name: &str,
+        query_text: &str,
+        action_type: &str,
+        source_ids: Option<&[String]>,
+        metrics: Option<&[LogLineMetricInput]>,
+        trigger: Option<&LogLineActionTriggerInput>,
+    ) -> Result<LogLineAction> {
+        let query = format!(
+            r#"
+            mutation CreateLogLineAction(
+                $appId: String!,
+                $name: String!,
+                $query: String!,
+                $actionType: LogLineActionTypeEnum!,
+                $sourceIds: [String!],
+                $logLineMetrics: [LogLineMetricInput!],
+                $trigger: LogLineTriggerInput
+            ) {{
+                createLogLineAction(
+                    appId: $appId,
+                    name: $name,
+                    query: $query,
+                    actionType: $actionType,
+                    sourceIds: $sourceIds,
+                    logLineMetrics: $logLineMetrics,
+                    trigger: $trigger
+                ) {{
+                    {}
+                }}
+            }}
+        "#,
+            LOG_LINE_ACTION_SELECTION
+        );
+
+        let mut vars = json!({
+            "appId": app_id,
+            "name": name,
+            "query": query_text,
+            "actionType": normalize_log_line_action_type(action_type)?,
+        });
+
+        if let Some(source_ids) = source_ids {
+            vars["sourceIds"] = json!(source_ids);
+        }
+        if let Some(metrics) = metrics {
+            vars["logLineMetrics"] = json!(metrics);
+        }
+        if let Some(trigger) = trigger {
+            vars["trigger"] = json!(trigger);
+        }
+
+        let data: CreateLogLineActionData = self.graphql(&query, vars).await?;
+        data.create_log_line_action
+            .context("Failed to create log line action")
+    }
+
+    /// Update a log line action.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_log_line_action(
+        &self,
+        app_id: &str,
+        id: &str,
+        name: Option<&str>,
+        query_text: Option<&str>,
+        source_ids: Option<&[String]>,
+        metrics: Option<&[LogLineMetricInput]>,
+        trigger: Option<&LogLineActionTriggerInput>,
+    ) -> Result<LogLineAction> {
+        let query = format!(
+            r#"
+            mutation UpdateLogLineAction(
+                $appId: String!,
+                $id: String!,
+                $name: String,
+                $query: String,
+                $sourceIds: [String!],
+                $logLineMetrics: [LogLineMetricInput!],
+                $trigger: LogLineTriggerInput
+            ) {{
+                updateLogLineAction(
+                    appId: $appId,
+                    id: $id,
+                    name: $name,
+                    query: $query,
+                    sourceIds: $sourceIds,
+                    logLineMetrics: $logLineMetrics,
+                    trigger: $trigger
+                ) {{
+                    {}
+                }}
+            }}
+        "#,
+            LOG_LINE_ACTION_SELECTION
+        );
+
+        let mut vars = json!({
+            "appId": app_id,
+            "id": id,
+        });
+
+        if let Some(name) = name {
+            vars["name"] = json!(name);
+        }
+        if let Some(query_text) = query_text {
+            vars["query"] = json!(query_text);
+        }
+        if let Some(source_ids) = source_ids {
+            vars["sourceIds"] = json!(source_ids);
+        }
+        if let Some(metrics) = metrics {
+            vars["logLineMetrics"] = json!(metrics);
+        }
+        if let Some(trigger) = trigger {
+            vars["trigger"] = json!(trigger);
+        }
+
+        let data: UpdateLogLineActionData = self.graphql(&query, vars).await?;
+        data.update_log_line_action
+            .with_context(|| format!("Failed to update log line action {}", id))
+    }
+
+    /// Delete a log line action.
+    pub async fn delete_log_line_action(&self, app_id: &str, id: &str) -> Result<LogLineAction> {
+        let query = format!(
+            r#"
+            mutation DeleteLogLineAction($appId: String!, $id: String!) {{
+                deleteLogLineAction(appId: $appId, id: $id) {{
+                    {}
+                }}
+            }}
+        "#,
+            LOG_LINE_ACTION_SELECTION
+        );
+
+        let data: DeleteLogLineActionData = self
+            .graphql(&query, json!({ "appId": app_id, "id": id }))
+            .await?;
+        data.delete_log_line_action
+            .with_context(|| format!("Failed to delete log line action {}", id))
+    }
+
     // -- Log methods --
 
     /// Query log lines for an app via the REST `POST /api/v2/logs/lines` endpoint.
@@ -2171,6 +2607,40 @@ mod tests {
 
     fn graphql_response(data: serde_json::Value) -> serde_json::Value {
         json!({ "data": data })
+    }
+
+    fn log_line_action_filter_json(id: &str, order: i64) -> serde_json::Value {
+        json!({
+            "__typename": "LogLineActionFilter",
+            "id": id,
+            "name": "Drop health checks",
+            "query": "message:\"GET /health\"",
+            "sourceIds": ["src-1"],
+            "actionType": "FILTER",
+            "sources": [{ "id": "src-1", "name": "nginx", "type": "custom", "fmt": "json" }],
+            "order": order
+        })
+    }
+
+    fn log_line_action_metrics_json(id: &str, order: i64) -> serde_json::Value {
+        json!({
+            "__typename": "LogLineActionMetrics",
+            "id": id,
+            "name": "Track error count",
+            "query": "severity:error",
+            "sourceIds": [],
+            "actionType": "METRICS",
+            "sources": [],
+            "logLineMetrics": [{
+                "id": "metric-1",
+                "name": "log.error_count",
+                "field": null,
+                "tags": { "hostname": "web-1" },
+                "metricType": "COUNTER"
+            }],
+            "order": order,
+            "user": { "id": "u1", "name": "Alice", "email": "alice@example.com" }
+        })
     }
 
     #[tokio::test]
@@ -2978,6 +3448,70 @@ mod tests {
 
         assert_eq!(trigger.id, "trig-9");
         assert_eq!(trigger.kind, "Advanced");
+    }
+
+    #[tokio::test]
+    async fn test_list_log_line_actions() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "logs": {
+                            "logLineActions": [
+                                log_line_action_filter_json("action-1", 0),
+                                log_line_action_metrics_json("action-2", 1)
+                            ]
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let actions = client.list_log_line_actions("app1").await.unwrap();
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].action_type(), "FILTER");
+        assert_eq!(actions[1].metrics()[0].name, "log.error_count");
+    }
+
+    #[tokio::test]
+    async fn test_create_log_line_action() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "createLogLineAction": log_line_action_metrics_json("action-2", 1)
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let action = client
+            .create_log_line_action(
+                "app1",
+                "Track error count",
+                "severity:error",
+                "metrics",
+                None,
+                Some(&[LogLineMetricInput {
+                    name: "log.error_count".to_string(),
+                    field: None,
+                    metric_type: "COUNTER".to_string(),
+                    tags: None,
+                }]),
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(action.id(), "action-2");
+        assert_eq!(action.action_type(), "METRICS");
     }
 
     // -- LogLine deserialization tests --
