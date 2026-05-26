@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use reqwest::{Client, Method, RequestBuilder};
@@ -34,18 +35,6 @@ fn join_api_url(base_url: &str, path: &str) -> String {
             url.to_string()
         }
         Err(_) => format!("{}{}", base_url.trim_end_matches('/'), path),
-    }
-}
-
-fn normalize_log_line_action_type(action_type: &str) -> Result<&'static str> {
-    match action_type.trim().to_ascii_lowercase().as_str() {
-        "trigger" => Ok("TRIGGER"),
-        "filter" => Ok("FILTER"),
-        "metrics" => Ok("METRICS"),
-        other => anyhow::bail!(
-            "Unsupported log line action type '{}'. Use trigger, filter, or metrics.",
-            other
-        ),
     }
 }
 
@@ -675,27 +664,69 @@ pub struct LogLineMetricDefinition {
     pub name: String,
     pub field: Option<String>,
     #[serde(default)]
-    pub tags: serde_json::Map<String, Value>,
+    pub tags: std::collections::BTreeMap<String, String>,
     #[serde(rename = "metricType")]
     pub metric_type: String,
 }
 
+/// Which flavor of log-line action the CLI is operating on.
+///
+/// The GraphQL API exposes a wider set including `FILTER`, but the CLI only
+/// surfaces `METRICS` and `TRIGGER` today.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogLineActionKind {
+    Metrics,
+    Trigger,
+}
+
+impl LogLineActionKind {
+    /// Canonical wire value sent to the GraphQL `LogLineActionTypeEnum`.
+    pub fn as_api_str(self) -> &'static str {
+        match self {
+            Self::Metrics => "METRICS",
+            Self::Trigger => "TRIGGER",
+        }
+    }
+
+    /// Match this kind against an `actionType` value returned by the API.
+    pub fn matches_api(self, api_value: &str) -> bool {
+        api_value.eq_ignore_ascii_case(self.as_api_str())
+    }
+}
+
+impl Serialize for LogLineActionKind {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_api_str())
+    }
+}
+
+/// Fields shared by every `LogLineAction` variant. Flattened into each variant
+/// so the accessors don't need a match arm per kind.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LogLineActionCommon {
+    pub id: String,
+    pub name: String,
+    pub query: String,
+    #[serde(rename = "sourceIds")]
+    pub source_ids: Vec<String>,
+    #[serde(rename = "actionType")]
+    pub action_type: String,
+    pub sources: Vec<LogSource>,
+    pub order: i64,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(tag = "__typename")]
-#[allow(clippy::enum_variant_names)]
 pub enum LogLineAction {
-    LogLineActionTrigger {
-        id: String,
-        name: String,
+    #[serde(rename = "LogLineActionTrigger")]
+    Trigger {
+        #[serde(flatten)]
+        common: LogLineActionCommon,
         description: Option<String>,
-        query: String,
-        #[serde(rename = "sourceIds")]
-        source_ids: Vec<String>,
         severities: Vec<String>,
-        #[serde(rename = "actionType")]
-        action_type: String,
-        sources: Vec<LogSource>,
-        order: i64,
         user: Option<User>,
         #[serde(rename = "previousTrigger")]
         previous_trigger: Option<LogLineActionTriggerReference>,
@@ -705,116 +736,82 @@ pub enum LogLineAction {
         notification_trigger_value: Option<i64>,
         notifiers: Option<Vec<Notifier>>,
     },
-    LogLineActionFilter {
-        id: String,
-        name: String,
-        query: String,
-        #[serde(rename = "sourceIds")]
-        source_ids: Vec<String>,
-        #[serde(rename = "actionType")]
-        action_type: String,
-        sources: Vec<LogSource>,
-        order: i64,
+    #[serde(rename = "LogLineActionFilter")]
+    Filter {
+        #[serde(flatten)]
+        common: LogLineActionCommon,
     },
-    LogLineActionMetrics {
-        id: String,
-        name: String,
-        query: String,
-        #[serde(rename = "sourceIds")]
-        source_ids: Vec<String>,
-        #[serde(rename = "actionType")]
-        action_type: String,
-        sources: Vec<LogSource>,
+    #[serde(rename = "LogLineActionMetrics")]
+    Metrics {
+        #[serde(flatten)]
+        common: LogLineActionCommon,
         #[serde(rename = "logLineMetrics")]
         log_line_metrics: Vec<LogLineMetricDefinition>,
-        order: i64,
         user: Option<User>,
     },
 }
 
 impl LogLineAction {
-    pub fn id(&self) -> &str {
+    pub fn common(&self) -> &LogLineActionCommon {
         match self {
-            LogLineAction::LogLineActionTrigger { id, .. }
-            | LogLineAction::LogLineActionFilter { id, .. }
-            | LogLineAction::LogLineActionMetrics { id, .. } => id,
+            LogLineAction::Trigger { common, .. }
+            | LogLineAction::Filter { common, .. }
+            | LogLineAction::Metrics { common, .. } => common,
         }
+    }
+
+    pub fn id(&self) -> &str {
+        &self.common().id
     }
 
     pub fn name(&self) -> &str {
-        match self {
-            LogLineAction::LogLineActionTrigger { name, .. }
-            | LogLineAction::LogLineActionFilter { name, .. }
-            | LogLineAction::LogLineActionMetrics { name, .. } => name,
-        }
+        &self.common().name
     }
 
     pub fn query(&self) -> &str {
-        match self {
-            LogLineAction::LogLineActionTrigger { query, .. }
-            | LogLineAction::LogLineActionFilter { query, .. }
-            | LogLineAction::LogLineActionMetrics { query, .. } => query,
-        }
+        &self.common().query
     }
 
     pub fn action_type(&self) -> &str {
-        match self {
-            LogLineAction::LogLineActionTrigger { action_type, .. }
-            | LogLineAction::LogLineActionFilter { action_type, .. }
-            | LogLineAction::LogLineActionMetrics { action_type, .. } => action_type,
-        }
+        &self.common().action_type
     }
 
     pub fn order(&self) -> i64 {
-        match self {
-            LogLineAction::LogLineActionTrigger { order, .. }
-            | LogLineAction::LogLineActionFilter { order, .. }
-            | LogLineAction::LogLineActionMetrics { order, .. } => *order,
-        }
+        self.common().order
     }
 
     pub fn source_ids(&self) -> &[String] {
-        match self {
-            LogLineAction::LogLineActionTrigger { source_ids, .. }
-            | LogLineAction::LogLineActionFilter { source_ids, .. }
-            | LogLineAction::LogLineActionMetrics { source_ids, .. } => source_ids,
-        }
+        &self.common().source_ids
     }
 
     pub fn sources(&self) -> &[LogSource] {
-        match self {
-            LogLineAction::LogLineActionTrigger { sources, .. }
-            | LogLineAction::LogLineActionFilter { sources, .. }
-            | LogLineAction::LogLineActionMetrics { sources, .. } => sources,
-        }
+        &self.common().sources
     }
 
     pub fn trigger_description(&self) -> Option<&str> {
         match self {
-            LogLineAction::LogLineActionTrigger { description, .. } => description.as_deref(),
+            LogLineAction::Trigger { description, .. } => description.as_deref(),
             _ => None,
         }
     }
 
     pub fn trigger_severities(&self) -> &[String] {
         match self {
-            LogLineAction::LogLineActionTrigger { severities, .. } => severities,
+            LogLineAction::Trigger { severities, .. } => severities,
             _ => &[],
         }
     }
 
     pub fn trigger_notifiers(&self) -> &[Notifier] {
         match self {
-            LogLineAction::LogLineActionTrigger { notifiers, .. } => {
-                notifiers.as_deref().unwrap_or(&[])
-            }
+            LogLineAction::Trigger { notifiers, .. } => notifiers.as_deref().unwrap_or(&[]),
             _ => &[],
         }
     }
 
     pub fn metrics(&self) -> &[LogLineMetricDefinition] {
         match self {
-            LogLineAction::LogLineActionMetrics {
+            LogLineAction::Metrics {
                 log_line_metrics, ..
             } => log_line_metrics,
             _ => &[],
@@ -822,20 +819,151 @@ impl LogLineAction {
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
+/// Tri-state for fields on update mutations.
+///
+/// `Option<T>` collapses "absent" and "explicit null" into the same value;
+/// `Patch` keeps them apart so the CLI can say "don't touch this" vs "clear
+/// this" without ambiguity. Field-level `#[serde(skip_serializing_if =
+/// "Patch::is_unchanged")]` ensures `Unchanged` is omitted from the request
+/// entirely, `Clear` serializes as JSON `null`, and `Set(v)` serializes as
+/// `v`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Patch<T> {
+    /// Leave the field unchanged on the server (omit from request).
+    #[default]
+    Unchanged,
+    /// Clear the field (send JSON `null`).
+    Clear,
+    /// Set the field to a new value.
+    Set(T),
+}
+
+impl<T> Patch<T> {
+    pub fn is_unchanged(&self) -> bool {
+        matches!(self, Patch::Unchanged)
+    }
+}
+
+impl<T: Serialize> Serialize for Patch<T> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            // `Unchanged` is normally skipped via `skip_serializing_if`; if it
+            // reaches here (e.g. inside a non-skipping container), emit null.
+            Patch::Unchanged | Patch::Clear => serializer.serialize_none(),
+            Patch::Set(value) => value.serialize(serializer),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct LogLineMetricInput {
     pub name: String,
     pub field: Option<String>,
     #[serde(rename = "metricType")]
     pub metric_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<serde_json::Map<String, Value>>,
+    pub tags: Option<std::collections::BTreeMap<String, String>>,
+}
+
+impl FromStr for LogLineMetricInput {
+    type Err = String;
+
+    /// Parse a `--metric` spec like
+    /// `name=log.error_count,type=counter` or
+    /// `name=log.request_duration,type=distribution,field=duration_ms,tag.hostname=web-1`.
+    ///
+    /// Returns a `String` error so clap can surface parse failures at
+    /// argument-parse time with its standard formatting.
+    fn from_str(spec: &str) -> std::result::Result<Self, Self::Err> {
+        let mut name: Option<String> = None;
+        let mut field: Option<String> = None;
+        let mut metric_type: Option<String> = None;
+        let mut tags: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+
+        for part in spec.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+
+            let (key, value) = part
+                .split_once('=')
+                .ok_or_else(|| format!("Invalid metric component `{}` in `{}`", part, spec))?;
+            let key = key.trim();
+            let value = value.trim();
+
+            if key.eq_ignore_ascii_case("name") {
+                if value.is_empty() {
+                    return Err(format!("Metric `name=` in `{}` cannot be empty.", spec));
+                }
+                name = Some(value.to_string());
+            } else if key.eq_ignore_ascii_case("field") {
+                if value.is_empty() {
+                    return Err(format!("Metric `field=` in `{}` cannot be empty.", spec));
+                }
+                field = Some(value.to_string());
+            } else if key.eq_ignore_ascii_case("type") || key.eq_ignore_ascii_case("metric_type") {
+                metric_type = Some(normalize_metric_type(value)?);
+            } else if let Some(tag_name) = key.strip_prefix("tag.") {
+                let tag_name = tag_name.trim();
+                if tag_name.is_empty() {
+                    return Err(format!("Metric tag keys cannot be empty in `{}`", spec));
+                }
+                if value.is_empty() {
+                    return Err(format!(
+                        "Metric tag `{}` in `{}` cannot be empty.",
+                        tag_name, spec
+                    ));
+                }
+                tags.insert(tag_name.to_string(), value.to_string());
+            } else {
+                return Err(format!(
+                    "Unsupported metric key `{}` in `{}`. Use name=..., type=..., field=..., and tag.<name>=...",
+                    key, spec
+                ));
+            }
+        }
+
+        let name = name.ok_or_else(|| "Metric definitions require `name=...`".to_string())?;
+        let metric_type =
+            metric_type.ok_or_else(|| "Metric definitions require `type=...`".to_string())?;
+        if matches!(metric_type.as_str(), "GAUGE" | "DISTRIBUTION") && field.is_none() {
+            return Err(format!(
+                "Metric `{}` uses type `{}` and requires `field=...`.",
+                name,
+                metric_type.to_ascii_lowercase()
+            ));
+        }
+
+        Ok(LogLineMetricInput {
+            name,
+            field,
+            metric_type,
+            tags: (!tags.is_empty()).then_some(tags),
+        })
+    }
+}
+
+fn normalize_metric_type(metric_type: &str) -> std::result::Result<String, String> {
+    match metric_type.trim().to_ascii_lowercase().as_str() {
+        "counter" => Ok("COUNTER".to_string()),
+        "gauge" => Ok("GAUGE".to_string()),
+        "distribution" => Ok("DISTRIBUTION".to_string()),
+        other => Err(format!(
+            "Unsupported metric type '{}'. Use counter, gauge, or distribution.",
+            other
+        )),
+    }
 }
 
 #[derive(Debug, Serialize, Clone, Default)]
 pub struct LogLineActionTriggerInput {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Patch::is_unchanged")]
+    pub description: Patch<String>,
     #[serde(rename = "notifierIds", skip_serializing_if = "Option::is_none")]
     pub notifier_ids: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1839,7 +1967,7 @@ impl AppSignalClient {
         app_id: &str,
         name: &str,
         query_text: &str,
-        action_type: &str,
+        action_type: LogLineActionKind,
         source_ids: Option<&[String]>,
         metrics: Option<&[LogLineMetricInput]>,
         trigger: Option<&LogLineActionTriggerInput>,
@@ -1875,7 +2003,7 @@ impl AppSignalClient {
             "appId": app_id,
             "name": name,
             "query": query_text,
-            "actionType": normalize_log_line_action_type(action_type)?,
+            "actionType": action_type.as_api_str(),
         });
 
         if let Some(source_ids) = source_ids {
@@ -3497,7 +3625,7 @@ mod tests {
                 "app1",
                 "Track error count",
                 "severity:error",
-                "metrics",
+                LogLineActionKind::Metrics,
                 None,
                 Some(&[LogLineMetricInput {
                     name: "log.error_count".to_string(),
@@ -3512,6 +3640,58 @@ mod tests {
 
         assert_eq!(action.id(), "action-2");
         assert_eq!(action.action_type(), "METRICS");
+    }
+
+    #[tokio::test]
+    async fn test_update_log_line_action() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "updateLogLineAction": log_line_action_metrics_json("action-2", 1)
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let action = client
+            .update_log_line_action(
+                "app1",
+                "action-2",
+                Some("Renamed metric"),
+                None,
+                Some(&[]),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(action.id(), "action-2");
+    }
+
+    #[tokio::test]
+    async fn test_delete_log_line_action() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "deleteLogLineAction": log_line_action_metrics_json("action-2", 1)
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let action = client
+            .delete_log_line_action("app1", "action-2")
+            .await
+            .unwrap();
+
+        assert_eq!(action.id(), "action-2");
     }
 
     // -- LogLine deserialization tests --

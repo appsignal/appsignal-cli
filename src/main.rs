@@ -572,6 +572,43 @@ struct LogActionAppArgs {
     org: Option<String>,
 }
 
+impl LogActionAppArgs {
+    fn as_ref(&self) -> commands::logs::actions::AppRef<'_> {
+        commands::logs::actions::AppRef {
+            app_id: self.app_id.as_deref(),
+            app_name: self.app.as_deref(),
+            environment: self.environment.as_deref(),
+            org: self.org.as_deref(),
+        }
+    }
+}
+
+/// Resolve a `Vec<T>` flag into the three states our action mutations care
+/// about: leave the field untouched (`None`), clear it (`Some(empty)`), or
+/// replace it (`Some(non-empty)`).
+fn replace_or_clear<T>(values: Vec<T>, clear: bool) -> Option<Vec<T>> {
+    if clear {
+        Some(Vec::new())
+    } else if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
+/// Same tri-state as `replace_or_clear`, but for scalar fields. The `clear`
+/// flag wins if both are set (clap already enforces `conflicts_with`).
+fn replace_or_clear_scalar<T>(value: Option<T>, clear: bool) -> api::Patch<T> {
+    if clear {
+        api::Patch::Clear
+    } else {
+        match value {
+            Some(v) => api::Patch::Set(v),
+            None => api::Patch::Unchanged,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum LogMetricAction {
     /// List log-derived metrics for an app
@@ -597,7 +634,7 @@ enum LogMetricAction {
         source_ids: Vec<String>,
         /// Metric definition in key=value form (required, repeat for multiple metrics). Example: `name=log.error_count,type=counter` or `name=log.request_duration,type=distribution,field=duration_ms,tag.hostname=web-1`
         #[arg(long = "metric")]
-        metrics: Vec<String>,
+        metrics: Vec<api::LogLineMetricInput>,
     },
     /// Update a log-derived metric
     #[command(
@@ -623,7 +660,7 @@ enum LogMetricAction {
         clear_sources: bool,
         /// Replace metric definitions with these values. Repeat for multiple metrics.
         #[arg(long = "metric", conflicts_with = "clear_metrics")]
-        metrics: Vec<String>,
+        metrics: Vec<api::LogLineMetricInput>,
         /// Remove all metric definitions from this metric configuration
         #[arg(long, conflicts_with = "metrics")]
         clear_metrics: bool,
@@ -694,8 +731,11 @@ enum LogTriggerAction {
         #[arg(long, conflicts_with = "source_ids")]
         clear_sources: bool,
         /// Update trigger description
-        #[arg(long)]
+        #[arg(long, conflicts_with = "clear_description")]
         description: Option<String>,
+        /// Clear the trigger description
+        #[arg(long, conflicts_with = "description")]
+        clear_description: bool,
         /// Replace notifier IDs with these values. Repeat to add more.
         #[arg(long = "notifier-id", conflicts_with = "clear_notifiers")]
         notifier_ids: Vec<String>,
@@ -1240,11 +1280,9 @@ async fn main() -> Result<()> {
             }
             LogsAction::Metrics { action } => match action {
                 LogMetricAction::List { app } => {
-                    commands::logs::list_metrics(
-                        app.app_id.as_deref(),
-                        app.app.as_deref(),
-                        app.environment.as_deref(),
-                        app.org.as_deref(),
+                    commands::logs::actions::list(
+                        api::LogLineActionKind::Metrics,
+                        &app.as_ref(),
                         cli.output,
                     )
                     .await?
@@ -1256,11 +1294,8 @@ async fn main() -> Result<()> {
                     source_ids,
                     metrics,
                 } => {
-                    commands::logs::create_metric(
-                        app.app_id.as_deref(),
-                        app.app.as_deref(),
-                        app.environment.as_deref(),
-                        app.org.as_deref(),
+                    commands::logs::actions::create_metric(
+                        &app.as_ref(),
                         &name,
                         &query,
                         &source_ids,
@@ -1279,41 +1314,22 @@ async fn main() -> Result<()> {
                     metrics,
                     clear_metrics,
                 } => {
-                    let source_ids = if clear_sources {
-                        Some(Vec::new())
-                    } else if source_ids.is_empty() {
-                        None
-                    } else {
-                        Some(source_ids)
-                    };
-                    let metrics = if clear_metrics {
-                        Some(Vec::new())
-                    } else if metrics.is_empty() {
-                        None
-                    } else {
-                        Some(metrics)
-                    };
-                    commands::logs::update_metric(
+                    commands::logs::actions::update_metric(
+                        &app.as_ref(),
                         &id,
-                        app.app_id.as_deref(),
-                        app.app.as_deref(),
-                        app.environment.as_deref(),
-                        app.org.as_deref(),
                         name.as_deref(),
                         query.as_deref(),
-                        source_ids,
-                        metrics,
+                        replace_or_clear(source_ids, clear_sources),
+                        replace_or_clear(metrics, clear_metrics),
                         cli.output,
                     )
                     .await?
                 }
                 LogMetricAction::Delete { app, id } => {
-                    commands::logs::delete_metric(
+                    commands::logs::actions::delete(
+                        api::LogLineActionKind::Metrics,
+                        &app.as_ref(),
                         &id,
-                        app.app_id.as_deref(),
-                        app.app.as_deref(),
-                        app.environment.as_deref(),
-                        app.org.as_deref(),
                         cli.output,
                     )
                     .await?
@@ -1321,11 +1337,9 @@ async fn main() -> Result<()> {
             },
             LogsAction::Triggers { action } => match action {
                 LogTriggerAction::List { app } => {
-                    commands::logs::list_log_triggers(
-                        app.app_id.as_deref(),
-                        app.app.as_deref(),
-                        app.environment.as_deref(),
-                        app.org.as_deref(),
+                    commands::logs::actions::list(
+                        api::LogLineActionKind::Trigger,
+                        &app.as_ref(),
                         cli.output,
                     )
                     .await?
@@ -1339,17 +1353,16 @@ async fn main() -> Result<()> {
                     notifier_ids,
                     severities,
                 } => {
-                    commands::logs::create_log_trigger(
-                        app.app_id.as_deref(),
-                        app.app.as_deref(),
-                        app.environment.as_deref(),
-                        app.org.as_deref(),
+                    commands::logs::actions::create_trigger(
+                        &app.as_ref(),
                         &name,
                         &query,
                         &source_ids,
-                        description.as_deref(),
-                        &notifier_ids,
-                        &severities,
+                        commands::logs::actions::TriggerFields {
+                            description: replace_or_clear_scalar(description, false),
+                            notifier_ids: (!notifier_ids.is_empty()).then_some(notifier_ids),
+                            severities: (!severities.is_empty()).then_some(severities),
+                        },
                         cli.output,
                     )
                     .await?
@@ -1362,55 +1375,32 @@ async fn main() -> Result<()> {
                     source_ids,
                     clear_sources,
                     description,
+                    clear_description,
                     notifier_ids,
                     clear_notifiers,
                     severities,
                     clear_severities,
                 } => {
-                    let source_ids = if clear_sources {
-                        Some(Vec::new())
-                    } else if source_ids.is_empty() {
-                        None
-                    } else {
-                        Some(source_ids)
-                    };
-                    let notifier_ids = if clear_notifiers {
-                        Some(Vec::new())
-                    } else if notifier_ids.is_empty() {
-                        None
-                    } else {
-                        Some(notifier_ids)
-                    };
-                    let severities = if clear_severities {
-                        Some(Vec::new())
-                    } else if severities.is_empty() {
-                        None
-                    } else {
-                        Some(severities)
-                    };
-                    commands::logs::update_log_trigger(
+                    commands::logs::actions::update_trigger(
+                        &app.as_ref(),
                         &id,
-                        app.app_id.as_deref(),
-                        app.app.as_deref(),
-                        app.environment.as_deref(),
-                        app.org.as_deref(),
                         name.as_deref(),
                         query.as_deref(),
-                        source_ids,
-                        description.as_deref(),
-                        notifier_ids,
-                        severities,
+                        replace_or_clear(source_ids, clear_sources),
+                        commands::logs::actions::TriggerFields {
+                            description: replace_or_clear_scalar(description, clear_description),
+                            notifier_ids: replace_or_clear(notifier_ids, clear_notifiers),
+                            severities: replace_or_clear(severities, clear_severities),
+                        },
                         cli.output,
                     )
                     .await?
                 }
                 LogTriggerAction::Delete { app, id } => {
-                    commands::logs::delete_log_trigger(
+                    commands::logs::actions::delete(
+                        api::LogLineActionKind::Trigger,
+                        &app.as_ref(),
                         &id,
-                        app.app_id.as_deref(),
-                        app.app.as_deref(),
-                        app.environment.as_deref(),
-                        app.org.as_deref(),
                         cli.output,
                     )
                     .await?
