@@ -4,6 +4,7 @@ use std::io::{self, Write};
 
 use crate::api::AppSignalClient;
 use crate::config::{AuthMethod, Config};
+use crate::error::CliError;
 use crate::oauth;
 use crate::output::Output;
 
@@ -74,7 +75,7 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
             Ok(_) => crate::status!("OK"),
             Err(e) => {
                 crate::status!("FAILED");
-                anyhow::bail!("OAuth token validation failed: {}", e);
+                return Err(e);
             }
         }
 
@@ -100,7 +101,7 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
     };
 
     if token.is_empty() {
-        anyhow::bail!("Token cannot be empty");
+        anyhow::bail!(CliError::msg("Token cannot be empty"));
     }
 
     crate::status!("Validating token...");
@@ -110,7 +111,7 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
         Ok(_) => crate::status!("OK"),
         Err(e) => {
             crate::status!("FAILED");
-            anyhow::bail!("Token validation failed: {}", e);
+            return Err(e);
         }
     }
 

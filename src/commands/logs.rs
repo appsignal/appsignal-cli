@@ -9,6 +9,7 @@ use tokio::time::{sleep, Duration};
 use super::{authenticated_client, resolve_org};
 use crate::api::{AppSignalClient, LogLine, LogView};
 use crate::config::Config;
+use crate::error::CliError;
 use crate::output::{self, Output};
 
 #[derive(Serialize)]
@@ -406,21 +407,21 @@ async fn resolve_log_view(
         .collect();
 
     match matches.len() {
-        0 => anyhow::bail!(
+        0 => anyhow::bail!(CliError::msg(format!(
             "No log view found matching '{}'. Use `logs views` to list available views.",
             name_or_id
-        ),
+        ))),
         1 => Ok(matches[0].clone()),
         _ => {
             let descriptions: Vec<String> = matches
                 .iter()
                 .map(|v| format!("  {} ({})", v.id, v.name))
                 .collect();
-            anyhow::bail!(
+            anyhow::bail!(CliError::msg(format!(
                 "Multiple log views match '{}'. Use the view ID to disambiguate:\n{}",
                 name_or_id,
                 descriptions.join("\n")
-            )
+            )))
         }
     }
 }

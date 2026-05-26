@@ -1,6 +1,7 @@
 mod api;
 mod commands;
 mod config;
+mod error;
 mod oauth;
 mod output;
 mod version_check;
@@ -9,6 +10,7 @@ use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand};
 
 use crate::commands::skill::InstallTarget;
+use crate::error::CliError;
 use crate::output::Output;
 
 #[derive(Parser)]
@@ -677,7 +679,7 @@ async fn run(cli: Cli) -> Result<()> {
                 format!("Latest:  {latest_version}"),
                 "Install the latest major version to continue.".to_string(),
             ]);
-            bail!("Please upgrade appsignal-cli to continue.");
+            bail!(CliError::msg("Please upgrade appsignal-cli to continue."));
         }
     }
 

@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use reqwest::{Client, Method, RequestBuilder, StatusCode};
+use reqwest::{Client, Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::config::AuthMethod;
+use crate::error::CliError;
 
 const DEFAULT_BASE_URL: &str = "https://appsignal.com";
 
@@ -35,69 +36,6 @@ fn join_api_url(base_url: &str, path: &str) -> String {
         }
         Err(_) => format!("{}{}", base_url.trim_end_matches('/'), path),
     }
-}
-
-fn extract_error_detail(value: &Value) -> Option<String> {
-    match value {
-        Value::String(message) => {
-            Some(message.trim().to_string()).filter(|message| !message.is_empty())
-        }
-        Value::Array(values) => values
-            .iter()
-            .filter_map(extract_error_detail)
-            .find(|message| !message.is_empty()),
-        Value::Object(map) => ["message", "error", "detail", "errors"]
-            .iter()
-            .filter_map(|key| map.get(*key))
-            .filter_map(extract_error_detail)
-            .find(|message| !message.is_empty()),
-        _ => None,
-    }
-}
-
-pub(crate) fn summarize_http_error(status: StatusCode, body: &str) -> String {
-    let detail = body
-        .trim()
-        .strip_prefix("GraphQL errors: ")
-        .map(str::to_string)
-        .or_else(|| {
-            serde_json::from_str::<Value>(body)
-                .ok()
-                .and_then(|value| extract_error_detail(&value))
-        })
-        .or_else(|| {
-            let body = body.trim();
-            if body.is_empty() {
-                None
-            } else {
-                Some(body.lines().next().unwrap_or(body).trim().to_string())
-            }
-        })
-        .filter(|detail| !detail.is_empty());
-
-    let mut message = match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-            "Authentication failed. Your AppSignal credentials were rejected. Run `appsignal-cli auth login` again.".to_string()
-        }
-        StatusCode::NOT_FOUND => "AppSignal could not find the requested resource.".to_string(),
-        StatusCode::TOO_MANY_REQUESTS => {
-            "AppSignal rate limited this request. Please try again in a moment.".to_string()
-        }
-        status if status.is_server_error() => {
-            "AppSignal is unavailable right now. Please try again shortly.".to_string()
-        }
-        _ => format!("AppSignal request failed with HTTP {}.", status),
-    };
-
-    if let Some(detail) = detail {
-        let detail = detail.trim();
-        if !detail.is_empty() && !message.contains(detail) {
-            message.push_str(" Details: ");
-            message.push_str(detail);
-        }
-    }
-
-    message
 }
 
 /// Client for the AppSignal API.
@@ -715,11 +653,11 @@ pub fn resolve_user_ids(identifiers: &[String], users: &[User]) -> Result<Vec<St
                         )
                     })
                     .collect();
-                anyhow::bail!(
+                anyhow::bail!(CliError::msg(format!(
                     "Multiple users match '{}'. Use an email or ID to disambiguate:\n{}",
                     ident,
                     descriptions.join("\n")
-                )
+                )))
             }
         }
     }
@@ -771,7 +709,7 @@ pub fn filter_apps(
                     name, org_slug
                 )
             };
-            anyhow::bail!(msg)
+            anyhow::bail!(CliError::msg(msg))
         }
         1 => Ok(matching.into_iter().next().unwrap()),
         _ => {
@@ -786,11 +724,11 @@ pub fn filter_apps(
                     )
                 })
                 .collect();
-            anyhow::bail!(
+            anyhow::bail!(CliError::msg(format!(
                 "Multiple apps match name '{}'. Use --environment to disambiguate:\n{}",
                 name,
                 descriptions.join("\n")
-            )
+            )))
         }
     }
 }
@@ -871,30 +809,23 @@ impl AppSignalClient {
         let graphql_url = self.graphql_url();
         let request = self.graphql_request(Method::POST, &graphql_url).json(&body);
 
-        let resp = request
-            .send()
-            .await
-            .context("Failed to send request to AppSignal")?;
+        let resp = request.send().await.context(CliError::NetworkUnreachable)?;
 
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!(summarize_http_error(status, &text));
+            anyhow::bail!(CliError::from_http(status, &text));
         }
 
-        let gql_resp: GraphQLResponse<T> = resp
-            .json()
-            .await
-            .context("Failed to parse AppSignal response")?;
+        let gql_resp: GraphQLResponse<T> =
+            resp.json().await.context(CliError::UnexpectedResponse)?;
 
         if let Some(errors) = gql_resp.errors {
             let msgs: Vec<String> = errors.into_iter().map(|e| e.message).collect();
-            anyhow::bail!("AppSignal rejected the request. {}", msgs.join("; "));
+            anyhow::bail!(CliError::GraphQlRejected(msgs.join("; ")));
         }
 
-        gql_resp
-            .data
-            .context("No data in AppSignal GraphQL response")
+        gql_resp.data.context(CliError::UnexpectedResponse)
     }
 
     /// Validate that the token is accepted by the API.
@@ -904,12 +835,12 @@ impl AppSignalClient {
             .rest_request(Method::GET, &auth_url)
             .send()
             .await
-            .context("Failed to send request to AppSignal")?;
+            .context(CliError::NetworkUnreachable)?;
 
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!(summarize_http_error(status, &text));
+            anyhow::bail!(CliError::from_http(status, &text));
         }
 
         Ok(())
@@ -928,7 +859,9 @@ impl AppSignalClient {
             }
         "#;
         let data: ViewerData = self.graphql(query, json!({})).await?;
-        let viewer = data.viewer.context("Could not fetch viewer data")?;
+        let viewer = data
+            .viewer
+            .context(CliError::msg("Could not fetch viewer data"))?;
         Ok(viewer.organizations.unwrap_or_default())
     }
 
@@ -948,7 +881,7 @@ impl AppSignalClient {
         let data: OrganizationData = self.graphql(query, json!({ "slug": org_slug })).await?;
         let org = data
             .organization
-            .with_context(|| format!("Organization '{}' not found", org_slug))?;
+            .with_context(|| CliError::msg(format!("Organization '{}' not found", org_slug)))?;
         Ok(org.apps.unwrap_or_default())
     }
 
@@ -965,7 +898,7 @@ impl AppSignalClient {
         "#;
         let data: AppData = self.graphql(query, json!({ "appId": app_id })).await?;
         data.app
-            .with_context(|| format!("Application '{}' not found", app_id))
+            .with_context(|| CliError::msg(format!("Application '{}' not found", app_id)))
     }
 
     /// Find an app by name and optional environment within an organization.
@@ -995,7 +928,9 @@ impl AppSignalClient {
             let app = self.find_app(org_slug, name, environment).await?;
             return Ok(app.id);
         }
-        anyhow::bail!("Provide either --app-id or --app (with optional --environment)")
+        anyhow::bail!(CliError::msg(
+            "Provide either --app-id or --app (with optional --environment)"
+        ))
     }
 
     /// List users for an application.
@@ -1008,7 +943,7 @@ impl AppSignalClient {
             }
         "#;
         let data: AppUsersData = self.graphql(query, json!({ "appId": app_id })).await?;
-        let app = data.app.context("Application not found")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
         Ok(app.users.unwrap_or_default())
     }
 
@@ -1047,7 +982,7 @@ impl AppSignalClient {
         );
 
         let data: AppResourcesData = self.graphql(&query, json!({ "appId": app_id })).await?;
-        let app = data.app.context("Application not found")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
 
         Ok(AppResources {
             users: app.users,
@@ -1126,7 +1061,7 @@ impl AppSignalClient {
         }
 
         let data: AppIncidentsData = self.graphql(query, vars).await?;
-        let app = data.app.context("Application not found")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
         Ok(app.incidents.unwrap_or_default())
     }
 
@@ -1181,7 +1116,7 @@ impl AppSignalClient {
         }
 
         let data: AppExceptionIncidentsData = self.graphql(query, vars).await?;
-        let app = data.app.context("Application not found")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
         Ok(app.exception_incidents.unwrap_or_default())
     }
 
@@ -1236,7 +1171,7 @@ impl AppSignalClient {
         }
 
         let data: AppPerformanceIncidentsData = self.graphql(query, vars).await?;
-        let app = data.app.context("Application not found")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
         Ok(app.performance_incidents.unwrap_or_default())
     }
 
@@ -1279,7 +1214,7 @@ impl AppSignalClient {
         }
 
         let data: AppAnomalyIncidentsData = self.graphql(query, vars).await?;
-        let app = data.app.context("Application not found")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
         Ok(app.anomaly_incidents.unwrap_or_default())
     }
 
@@ -1308,7 +1243,7 @@ impl AppSignalClient {
         }
 
         let data: AppTriggersData = self.graphql(&query, vars).await?;
-        let app = data.app.context("Application not found")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
         Ok(app.triggers.unwrap_or_default())
     }
 
@@ -1355,9 +1290,9 @@ impl AppSignalClient {
                 json!({ "appId": app_id, "incidentNumber": incident_number }),
             )
             .await?;
-        let app = data.app.context("Application not found")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
         app.incident
-            .with_context(|| format!("Incident #{} not found", incident_number))
+            .with_context(|| CliError::msg(format!("Incident #{} not found", incident_number)))
     }
 
     /// Update a single incident (state, severity, assignees, description).
@@ -1418,8 +1353,9 @@ impl AppSignalClient {
         }
 
         let data: UpdateIncidentData = self.graphql(query, vars).await?;
-        data.update_incident
-            .with_context(|| format!("Failed to update incident #{}", incident_number))
+        data.update_incident.with_context(|| {
+            CliError::msg(format!("Failed to update incident #{}", incident_number))
+        })
     }
 
     /// Create a note on an incident.
@@ -1471,8 +1407,12 @@ impl AppSignalClient {
                 }),
             )
             .await?;
-        data.create_incident_note
-            .with_context(|| format!("Failed to create note on incident #{}", incident_number))
+        data.create_incident_note.with_context(|| {
+            CliError::msg(format!(
+                "Failed to create note on incident #{}",
+                incident_number
+            ))
+        })
     }
 
     /// Create a trigger, or create a new trigger version when `previous_trigger_id` is provided.
@@ -1581,7 +1521,8 @@ impl AppSignalClient {
         }
 
         let data: CreateTriggerData = self.graphql(&query, vars).await?;
-        data.create_trigger.context("Failed to create trigger")
+        data.create_trigger
+            .context(CliError::msg("Failed to create trigger"))
     }
 
     /// Archive a trigger.
@@ -1602,7 +1543,7 @@ impl AppSignalClient {
             .await?;
 
         data.archive_trigger
-            .with_context(|| format!("Failed to archive trigger {}", trigger_id))
+            .with_context(|| CliError::msg(format!("Failed to archive trigger {}", trigger_id)))
     }
 
     // -- Log methods --
@@ -1639,17 +1580,15 @@ impl AppSignalClient {
             .json(&body)
             .send()
             .await
-            .context("Failed to send request to AppSignal")?;
+            .context(CliError::NetworkUnreachable)?;
 
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!(summarize_http_error(status, &text));
+            anyhow::bail!(CliError::from_http(status, &text));
         }
 
-        resp.json()
-            .await
-            .context("Failed to parse AppSignal response")
+        resp.json().await.context(CliError::UnexpectedResponse)
     }
 
     pub(crate) fn rest_log_lines_to_log_lines(
@@ -1714,7 +1653,7 @@ impl AppSignalClient {
             }
         "#;
         let data: AppLogViewsData = self.graphql(gql, json!({ "appId": app_id })).await?;
-        let app = data.app.context("Application not found")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
         Ok(app.log_views.unwrap_or_default())
     }
 
@@ -1749,9 +1688,9 @@ impl AppSignalClient {
         let data: AppLogViewData = self
             .graphql(gql, json!({ "appId": app_id, "viewId": view_id }))
             .await?;
-        let app = data.app.context("Application not found")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
         app.log_view
-            .with_context(|| format!("Log view '{}' not found", view_id))
+            .with_context(|| CliError::msg(format!("Log view '{}' not found", view_id)))
     }
 
     /// List all log sources for an app.
@@ -1771,8 +1710,10 @@ impl AppSignalClient {
             }
         "#;
         let data: AppLogSourcesData = self.graphql(gql, json!({ "appId": app_id })).await?;
-        let app = data.app.context("Application not found")?;
-        let logs = app.logs.context("Logs not available for this app")?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
+        let logs = app
+            .logs
+            .context(CliError::msg("Logs not available for this app"))?;
         Ok(logs.sources.unwrap_or_default())
     }
 }
@@ -2228,15 +2169,6 @@ mod tests {
         ];
         let err = resolve_user_ids(&["Alice".to_string()], &users).unwrap_err();
         assert!(err.to_string().contains("Multiple users match"));
-    }
-
-    #[test]
-    fn test_summarize_http_error_for_auth_failure() {
-        let message = summarize_http_error(StatusCode::UNAUTHORIZED, "Unauthorized");
-
-        assert!(message.contains("Authentication failed"));
-        assert!(message.contains("auth login"));
-        assert!(!message.contains("HTTP 401"));
     }
 
     // -- Wiremock integration tests for API client --

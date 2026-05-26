@@ -9,8 +9,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::time::{timeout, Duration};
 
-use crate::api::summarize_http_error;
 use crate::config::OAuthCredentials;
+use crate::error::{extract_detail, CliError};
 
 const DEFAULT_OAUTH_BASE: &str = "https://appsignal.com";
 const PRODUCTION_CLIENT_ID: &str = "FpXP78S_vXNrjSRYQIMWQ9sREl2AXS0qD0VSWwfHST0";
@@ -86,16 +86,17 @@ fn parse_callback_url(
     redirect_uri: &str,
     expected_state: &str,
 ) -> Result<String> {
-    let url = url::Url::parse(callback_url).context(callback_url_error(redirect_uri))?;
-    let expected_url =
-        url::Url::parse(redirect_uri).context("Invalid OAuth redirect URI configured")?;
+    let url = url::Url::parse(callback_url)
+        .with_context(|| CliError::msg(callback_url_error(redirect_uri)))?;
+    let expected_url = url::Url::parse(redirect_uri)
+        .with_context(|| CliError::msg("Invalid OAuth redirect URI configured"))?;
 
     if url.scheme() != expected_url.scheme()
         || url.host_str() != expected_url.host_str()
         || url.port_or_known_default() != expected_url.port_or_known_default()
         || url.path() != expected_url.path()
     {
-        anyhow::bail!(callback_url_error(redirect_uri));
+        anyhow::bail!(CliError::msg(callback_url_error(redirect_uri)));
     }
 
     let params: std::collections::HashMap<String, String> =
@@ -104,21 +105,26 @@ fn parse_callback_url(
     // Check for an error response from the OAuth server
     if let Some(error) = params.get("error") {
         let description = params.get("error_description").cloned().unwrap_or_default();
-        anyhow::bail!("OAuth authorization failed: {} ({})", error, description);
+        anyhow::bail!(CliError::msg(format!(
+            "OAuth authorization failed: {} ({})",
+            error, description
+        )));
     }
 
     // Validate state
     let state = params
         .get("state")
-        .context("Missing 'state' parameter in callback URL")?;
+        .context(CliError::msg("Missing 'state' parameter in callback URL"))?;
 
     if state != expected_state {
-        anyhow::bail!("OAuth state mismatch — possible CSRF attack. Please try again.");
+        anyhow::bail!(CliError::msg(
+            "OAuth state mismatch — possible CSRF attack. Please try again."
+        ));
     }
 
     let code = params
         .get("code")
-        .context("Missing 'code' parameter in callback URL")?
+        .context(CliError::msg("Missing 'code' parameter in callback URL"))?
         .clone();
 
     Ok(code)
@@ -152,27 +158,23 @@ async fn exchange_code(
         ])
         .send()
         .await
-        .context("Failed to exchange authorization code for tokens")?;
+        .context(CliError::NetworkUnreachable)?;
 
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!(
-            "OAuth token exchange failed. {}",
-            summarize_http_error(status, &text)
-        );
+        anyhow::bail!(CliError::OAuthExchange(
+            extract_detail(&text).unwrap_or_else(|| format!("HTTP {}", status))
+        ));
     }
 
-    let token_resp: TokenResponse = resp
-        .json()
-        .await
-        .context("Failed to parse token response")?;
+    let token_resp: TokenResponse = resp.json().await.context(CliError::UnexpectedResponse)?;
 
     if token_resp.token_type.to_lowercase() != "bearer" {
-        anyhow::bail!(
+        anyhow::bail!(CliError::msg(format!(
             "Unexpected token type: {} (expected 'bearer')",
             token_resp.token_type
-        );
+        )));
     }
 
     let expires_at = token_resp
@@ -204,21 +206,17 @@ pub async fn refresh_access_token(
         ])
         .send()
         .await
-        .context("Failed to refresh OAuth token")?;
+        .context(CliError::NetworkUnreachable)?;
 
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!(
-            "OAuth token refresh failed. {} Re-authenticate with `appsignal-cli auth login --oauth`.",
-            summarize_http_error(status, &text)
-        );
+        anyhow::bail!(CliError::OAuthRefresh(
+            extract_detail(&text).unwrap_or_else(|| format!("HTTP {}", status))
+        ));
     }
 
-    let token_resp: TokenResponse = resp
-        .json()
-        .await
-        .context("Failed to parse token refresh response")?;
+    let token_resp: TokenResponse = resp.json().await.context(CliError::UnexpectedResponse)?;
 
     let expires_at = token_resp
         .expires_in
@@ -232,43 +230,37 @@ pub async fn refresh_access_token(
 }
 
 async fn wait_for_loopback_callback(redirect_uri: &str) -> Result<String> {
-    let redirect_url =
-        url::Url::parse(redirect_uri).context("Invalid OAuth redirect URI configured")?;
-    let port = redirect_url
-        .port_or_known_default()
-        .context("Loopback OAuth redirect URI must include a port")?;
+    let redirect_url = url::Url::parse(redirect_uri)
+        .with_context(|| CliError::msg("Invalid OAuth redirect URI configured"))?;
+    let port = redirect_url.port_or_known_default().context(CliError::msg(
+        "Loopback OAuth redirect URI must include a port",
+    ))?;
     let listener = TcpListener::bind(("127.0.0.1", port))
         .await
-        .with_context(|| {
-            format!(
-                "Failed to bind local OAuth callback listener on port {}",
-                port
-            )
-        })?;
+        .context(CliError::OAuthLocal)?;
 
     crate::status!("Waiting for OAuth callback on {} ...", redirect_uri);
 
     let (mut stream, _) = timeout(Duration::from_secs(300), listener.accept())
         .await
-        .context("Timed out waiting for OAuth callback")??;
+        .context(CliError::OAuthLocal)??;
 
     let mut buffer = [0_u8; 8192];
     let bytes_read = stream
         .read(&mut buffer)
         .await
-        .context("Failed to read OAuth callback request")?;
+        .context(CliError::OAuthLocal)?;
 
-    let request = std::str::from_utf8(&buffer[..bytes_read])
-        .context("OAuth callback request was not valid UTF-8")?;
+    let request = std::str::from_utf8(&buffer[..bytes_read]).context(CliError::OAuthLocal)?;
     let request_target = request
         .lines()
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
-        .context("OAuth callback request was malformed")?;
+        .context(CliError::OAuthLocal)?;
 
-    let host = redirect_url
-        .host_str()
-        .context("Loopback OAuth redirect URI must include a host")?;
+    let host = redirect_url.host_str().context(CliError::msg(
+        "Loopback OAuth redirect URI must include a host",
+    ))?;
     let authority = match redirect_url.port() {
         Some(port) => format!("{}:{}", host, port),
         None => host.to_string(),
@@ -289,7 +281,7 @@ async fn wait_for_loopback_callback(redirect_uri: &str) -> Result<String> {
     stream
         .write_all(response.as_bytes())
         .await
-        .context("Failed to write OAuth callback response")?;
+        .context(CliError::OAuthLocal)?;
 
     Ok(callback_url)
 }
