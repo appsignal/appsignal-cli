@@ -9,6 +9,7 @@ pub mod triggers;
 
 use crate::api::AppSignalClient;
 use crate::config::Config;
+use crate::error::CliError;
 use crate::oauth;
 use anyhow::Result;
 
@@ -23,10 +24,11 @@ pub fn resolve_org(explicit: Option<&str>, config: &Config) -> Result<String> {
         .filter(|o| !o.is_empty())
         .map(|o| o.to_string())
         .ok_or_else(|| {
-            anyhow::anyhow!(
+            CliError::msg(
                 "No organization configured. Run `appsignal-cli apps list --org <slug>` first, \
-                 or set it with `appsignal-cli apps set-org --org <slug>`."
+                 or set it with `appsignal-cli apps set-org --org <slug>`.",
             )
+            .into()
         })
 }
 
@@ -51,10 +53,10 @@ pub async fn authenticated_client(config: &mut Config) -> Result<AppSignalClient
             config.oauth = Some(new_creds);
             config.save()?;
         } else {
-            anyhow::bail!(
+            anyhow::bail!(CliError::msg(
                 "OAuth access token has expired and no refresh token is available.\n\
                  Please re-authenticate with `appsignal-cli auth login --oauth`."
-            );
+            ));
         }
     }
 

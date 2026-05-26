@@ -16,6 +16,8 @@ use clap::ValueEnum;
 use serde::{Serialize, Serializer};
 use tabled::{Table, Tabled};
 
+use crate::error::CliError;
+
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum Output {
     #[default]
@@ -105,70 +107,24 @@ fn debug_errors_enabled() -> bool {
     std::env::var_os("APPSIGNAL_CLI_DEBUG").is_some()
 }
 
-fn is_known_user_error(message: &str) -> bool {
-    [
-        "Authentication failed.",
-        "AppSignal could not find the requested resource.",
-        "AppSignal rate limited this request.",
-        "AppSignal is unavailable right now.",
-        "AppSignal request failed with HTTP",
-        "AppSignal rejected the request.",
-        "Could not reach AppSignal.",
-        "AppSignal returned an unexpected response.",
-        "No app found",
-        "Multiple apps match",
-        "No organization configured.",
-        "Not authenticated.",
-        "Invalid ",
-        "Missing ",
-        "OAuth ",
-        "Token cannot be empty",
-        "Multiple users match",
-        "No log view found",
-        "Multiple log views match",
-        "Provide either --app-id or --app",
-        "Please upgrade appsignal-cli to continue.",
-    ]
-    .iter()
-    .any(|prefix| message.starts_with(prefix))
-}
-
+/// Resolve an error to its user-facing message.
+///
+/// If the outermost error is a [`CliError`] — either constructed directly
+/// (`bail!(CliError::...)`) or installed as context (`.context(CliError::...)?`)
+/// — its `Display` is shown verbatim. That's the convention: the outermost
+/// context is the user-relevant story, deeper causes are technical detail.
+///
+/// Otherwise the error is internal: hidden behind a generic message, or
+/// shown raw when `APPSIGNAL_CLI_DEBUG=1` is set.
 fn sanitize_error_message(error: &Error) -> String {
-    let message = error.to_string();
+    if let Some(user) = error.downcast_ref::<CliError>() {
+        return user.to_string();
+    }
 
-    match message.as_str() {
-        msg if is_known_user_error(msg) => msg.to_string(),
-        msg if msg.starts_with("Failed to send request to AppSignal") => {
-            "Could not reach AppSignal. Check your network connection and try again.".to_string()
-        }
-        msg if msg.starts_with("Failed to parse AppSignal response")
-            || msg.starts_with("No data in AppSignal GraphQL response") =>
-        {
-            "AppSignal returned an unexpected response. Please try again.".to_string()
-        }
-        msg if msg.starts_with("Could not determine config directory")
-            || msg.starts_with("Could not determine current directory")
-            || msg.starts_with("Failed to read config at")
-            || msg.starts_with("Failed to parse config at")
-            || msg.starts_with("Failed to create config dir")
-            || msg.starts_with("Failed to serialize config")
-            || msg.starts_with("Failed to write config to") =>
-        {
-            "Could not read or write the appsignal-cli config. Check file permissions and try again.".to_string()
-        }
-        msg if msg.starts_with("Invalid OAuth redirect URI configured")
-            || msg.starts_with("Loopback OAuth redirect URI must include a port")
-            || msg.starts_with("Failed to bind local OAuth callback listener")
-            || msg.starts_with("Timed out waiting for OAuth callback")
-            || msg.starts_with("Failed to read OAuth callback request")
-            || msg.starts_with("OAuth callback request was not valid UTF-8") =>
-        {
-            "OAuth login did not complete successfully. Try `appsignal-cli auth login --oauth` again.".to_string()
-        }
-        _ if debug_errors_enabled() => message,
-        _ => {
-            "Something went wrong inside appsignal-cli. Try again, and rerun with `APPSIGNAL_CLI_DEBUG=1` if you need the internal error details.".to_string()
-        }
+    if debug_errors_enabled() {
+        error.to_string()
+    } else {
+        "Something went wrong inside appsignal-cli. Try again, and rerun with `APPSIGNAL_CLI_DEBUG=1` if you need the internal error details.".to_string()
     }
 }
 
@@ -275,10 +231,9 @@ macro_rules! status {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        debug_errors_enabled, print_error, render_boxed_lines, sanitize_error_message, Output,
-    };
-    use anyhow::anyhow;
+    use super::{print_error, render_boxed_lines, sanitize_error_message, Output};
+    use crate::error::CliError;
+    use anyhow::{anyhow, Context};
 
     #[test]
     fn render_boxed_lines_wraps_content_in_ascii_box() {
@@ -293,47 +248,44 @@ mod tests {
     }
 
     #[test]
-    fn print_error_returns_ok_for_human_output() {
-        let err = anyhow!("Friendly error");
+    fn print_error_writes_without_error() {
+        let err: anyhow::Error = CliError::msg("Friendly error").into();
 
         assert!(print_error(&err, Output::Human).is_ok());
-    }
-
-    #[test]
-    fn print_error_returns_ok_for_json_output() {
-        let err = anyhow!("Friendly error");
-
         assert!(print_error(&err, Output::Json).is_ok());
     }
 
     #[test]
-    fn sanitize_error_message_preserves_known_user_errors() {
-        let err = anyhow!("Authentication failed. Your AppSignal credentials were rejected.");
+    fn sanitize_shows_clierror_verbatim() {
+        let err: anyhow::Error = CliError::AuthRejected { detail: None }.into();
 
         assert_eq!(
             sanitize_error_message(&err),
-            "Authentication failed. Your AppSignal credentials were rejected."
+            "Authentication failed. Your AppSignal credentials were rejected. Run `appsignal-cli auth login` again."
         );
     }
 
     #[test]
-    fn sanitize_error_message_hides_unknown_errors_without_debug() {
-        if debug_errors_enabled() {
-            return;
-        }
+    fn sanitize_finds_clierror_through_chain() {
+        // Mirrors the real usage: `Result::context(CliError::msg(...))?` on a
+        // failing internal call. The CliError context must surface as the
+        // user-facing message, with the inner cause available under DEBUG.
+        let inner: Result<(), std::io::Error> = Err(std::io::Error::other("boom"));
+        let err = inner
+            .context(CliError::msg("Application not found"))
+            .unwrap_err();
+
+        assert_eq!(sanitize_error_message(&err), "Application not found");
+    }
+
+    #[test]
+    fn sanitize_hides_unknown_errors() {
+        // SAFETY: tests run in a single-threaded slice for env access here.
+        // SAFE: env::remove_var is only unsafe in Rust 2024 multi-threaded contexts; ok in cfg(test).
+        std::env::remove_var("APPSIGNAL_CLI_DEBUG");
 
         let err = anyhow!("database pool poisoned: internal sentinel");
 
         assert!(sanitize_error_message(&err).contains("Something went wrong inside appsignal-cli"));
-    }
-
-    #[test]
-    fn sanitize_error_message_maps_transport_failures() {
-        let err = anyhow!("Failed to send request to AppSignal");
-
-        assert_eq!(
-            sanitize_error_message(&err),
-            "Could not reach AppSignal. Check your network connection and try again."
-        );
     }
 }
