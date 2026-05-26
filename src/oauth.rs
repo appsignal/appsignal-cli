@@ -76,7 +76,10 @@ async fn discover_authorization_server_metadata(
     Ok(Some(metadata))
 }
 
-async fn register_dynamic_client(registration_endpoint: &str, redirect_uri: &str) -> Result<String> {
+async fn register_dynamic_client(
+    registration_endpoint: &str,
+    redirect_uri: &str,
+) -> Result<String> {
     let resp = Client::new()
         .post(registration_endpoint)
         .json(&json!({
@@ -92,7 +95,11 @@ async fn register_dynamic_client(registration_endpoint: &str, redirect_uri: &str
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("OAuth client registration failed (HTTP {}): {}", status, text);
+        anyhow::bail!(
+            "OAuth client registration failed (HTTP {}): {}",
+            status,
+            text
+        );
     }
 
     let registration: RegistrationResponse = resp
@@ -102,7 +109,10 @@ async fn register_dynamic_client(registration_endpoint: &str, redirect_uri: &str
     Ok(registration.client_id)
 }
 
-async fn resolve_oauth_config(base_url: Option<&str>, client_id: Option<&str>) -> Result<OAuthConfig> {
+async fn resolve_oauth_config(
+    base_url: Option<&str>,
+    client_id: Option<&str>,
+) -> Result<OAuthConfig> {
     let mut config = OAuthConfig::new(base_url, client_id);
 
     if client_id.is_some() {
@@ -126,7 +136,8 @@ async fn resolve_oauth_config(base_url: Option<&str>, client_id: Option<&str>) -
     }
 
     if let Some(registration_endpoint) = metadata.registration_endpoint {
-        config.client_id = register_dynamic_client(&registration_endpoint, &config.redirect_uri).await?;
+        config.client_id =
+            register_dynamic_client(&registration_endpoint, &config.redirect_uri).await?;
     }
 
     Ok(config)
@@ -555,7 +566,9 @@ mod tests {
         let server = wiremock::MockServer::start().await;
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
-            .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+            .and(wiremock::matchers::path(
+                "/.well-known/oauth-authorization-server",
+            ))
             .respond_with(
                 wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "authorization_endpoint": format!("{}/oauth/authorize", server.uri()),
@@ -576,10 +589,15 @@ mod tests {
             .mount(&server)
             .await;
 
-        let config = resolve_oauth_config(Some(&server.uri()), None).await.unwrap();
+        let config = resolve_oauth_config(Some(&server.uri()), None)
+            .await
+            .unwrap();
 
         assert_eq!(config.client_id, "dynamic-client-id");
-        assert_eq!(config.authorize_url, format!("{}/oauth/authorize", server.uri()));
+        assert_eq!(
+            config.authorize_url,
+            format!("{}/oauth/authorize", server.uri())
+        );
         assert_eq!(config.token_url, format!("{}/oauth/token", server.uri()));
     }
 
@@ -588,15 +606,22 @@ mod tests {
         let server = wiremock::MockServer::start().await;
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
-            .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+            .and(wiremock::matchers::path(
+                "/.well-known/oauth-authorization-server",
+            ))
             .respond_with(wiremock::ResponseTemplate::new(404))
             .mount(&server)
             .await;
 
-        let config = resolve_oauth_config(Some(&server.uri()), None).await.unwrap();
+        let config = resolve_oauth_config(Some(&server.uri()), None)
+            .await
+            .unwrap();
 
         assert_eq!(config.client_id, PRODUCTION_CLIENT_ID);
-        assert_eq!(config.authorize_url, format!("{}/oauth/authorize", server.uri()));
+        assert_eq!(
+            config.authorize_url,
+            format!("{}/oauth/authorize", server.uri())
+        );
         assert_eq!(config.token_url, format!("{}/oauth/token", server.uri()));
     }
 
@@ -605,7 +630,9 @@ mod tests {
         let server = wiremock::MockServer::start().await;
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
-            .and(wiremock::matchers::path("/.well-known/oauth-authorization-server"))
+            .and(wiremock::matchers::path(
+                "/.well-known/oauth-authorization-server",
+            ))
             .respond_with(
                 wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "registration_endpoint": format!("{}/oauth/register", server.uri()),
@@ -627,7 +654,9 @@ mod tests {
 
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/oauth/token"))
-            .and(wiremock::matchers::body_string_contains("client_id=dynamic-client-id"))
+            .and(wiremock::matchers::body_string_contains(
+                "client_id=dynamic-client-id",
+            ))
             .respond_with(
                 wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "access_token": "refreshed-token",
