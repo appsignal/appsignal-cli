@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use reqwest::{Client, Method, RequestBuilder};
+use reqwest::{Client, Method, RequestBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -36,6 +36,69 @@ fn join_api_url(base_url: &str, path: &str) -> String {
         }
         Err(_) => format!("{}{}", base_url.trim_end_matches('/'), path),
     }
+}
+
+fn extract_error_detail(value: &Value) -> Option<String> {
+    match value {
+        Value::String(message) => {
+            Some(message.trim().to_string()).filter(|message| !message.is_empty())
+        }
+        Value::Array(values) => values
+            .iter()
+            .filter_map(extract_error_detail)
+            .find(|message| !message.is_empty()),
+        Value::Object(map) => ["message", "error", "detail", "errors"]
+            .iter()
+            .filter_map(|key| map.get(*key))
+            .filter_map(extract_error_detail)
+            .find(|message| !message.is_empty()),
+        _ => None,
+    }
+}
+
+pub(crate) fn summarize_http_error(status: StatusCode, body: &str) -> String {
+    let detail = body
+        .trim()
+        .strip_prefix("GraphQL errors: ")
+        .map(str::to_string)
+        .or_else(|| {
+            serde_json::from_str::<Value>(body)
+                .ok()
+                .and_then(|value| extract_error_detail(&value))
+        })
+        .or_else(|| {
+            let body = body.trim();
+            if body.is_empty() {
+                None
+            } else {
+                Some(body.lines().next().unwrap_or(body).trim().to_string())
+            }
+        })
+        .filter(|detail| !detail.is_empty());
+
+    let mut message = match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            "Authentication failed. Your AppSignal credentials were rejected. Run `appsignal-cli auth login` again.".to_string()
+        }
+        StatusCode::NOT_FOUND => "AppSignal could not find the requested resource.".to_string(),
+        StatusCode::TOO_MANY_REQUESTS => {
+            "AppSignal rate limited this request. Please try again in a moment.".to_string()
+        }
+        status if status.is_server_error() => {
+            "AppSignal is unavailable right now. Please try again shortly.".to_string()
+        }
+        _ => format!("AppSignal request failed with HTTP {}.", status),
+    };
+
+    if let Some(detail) = detail {
+        let detail = detail.trim();
+        if !detail.is_empty() && !message.contains(detail) {
+            message.push_str(" Details: ");
+            message.push_str(detail);
+        }
+    }
+
+    message
 }
 
 /// Client for the AppSignal API.
@@ -1208,7 +1271,7 @@ impl AppSignalClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("AppSignal API returned HTTP {}: {}", status, text);
+            anyhow::bail!(summarize_http_error(status, &text));
         }
 
         let gql_resp: GraphQLResponse<T> = resp
@@ -1218,7 +1281,7 @@ impl AppSignalClient {
 
         if let Some(errors) = gql_resp.errors {
             let msgs: Vec<String> = errors.into_iter().map(|e| e.message).collect();
-            anyhow::bail!("GraphQL errors: {}", msgs.join("; "));
+            anyhow::bail!("AppSignal rejected the request. {}", msgs.join("; "));
         }
 
         gql_resp
@@ -1238,7 +1301,7 @@ impl AppSignalClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("AppSignal API returned HTTP {}: {}", status, text);
+            anyhow::bail!(summarize_http_error(status, &text));
         }
 
         Ok(())
@@ -2145,7 +2208,7 @@ impl AppSignalClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!("AppSignal API returned HTTP {}: {}", status, text);
+            anyhow::bail!(summarize_http_error(status, &text));
         }
 
         resp.json()
@@ -2731,6 +2794,15 @@ mod tests {
         assert!(err.to_string().contains("Multiple users match"));
     }
 
+    #[test]
+    fn test_summarize_http_error_for_auth_failure() {
+        let message = summarize_http_error(StatusCode::UNAUTHORIZED, "Unauthorized");
+
+        assert!(message.contains("Authentication failed"));
+        assert!(message.contains("auth login"));
+        assert!(!message.contains("HTTP 401"));
+    }
+
     // -- Wiremock integration tests for API client --
 
     fn graphql_response(data: serde_json::Value) -> serde_json::Value {
@@ -2799,7 +2871,7 @@ mod tests {
         let client =
             AppSignalClient::with_endpoint("bad-token", &format!("{}/graphql", server.uri()));
         let err = client.validate_token().await.unwrap_err();
-        assert!(err.to_string().contains("401"));
+        assert!(err.to_string().contains("Authentication failed"));
     }
 
     #[tokio::test]

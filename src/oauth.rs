@@ -9,6 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::time::{timeout, Duration};
 
+use crate::api::summarize_http_error;
 use crate::config::OAuthCredentials;
 
 const DEFAULT_OAUTH_BASE: &str = "https://appsignal.com";
@@ -156,7 +157,10 @@ async fn exchange_code(
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Token exchange failed (HTTP {}): {}", status, text);
+        anyhow::bail!(
+            "OAuth token exchange failed. {}",
+            summarize_http_error(status, &text)
+        );
     }
 
     let token_resp: TokenResponse = resp
@@ -206,9 +210,8 @@ pub async fn refresh_access_token(
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
         anyhow::bail!(
-            "Token refresh failed (HTTP {}): {}. Please re-authenticate with `appsignal-cli auth login --oauth`.",
-            status,
-            text
+            "OAuth token refresh failed. {} Re-authenticate with `appsignal-cli auth login --oauth`.",
+            summarize_http_error(status, &text)
         );
     }
 
@@ -580,7 +583,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Token exchange failed"));
+            .contains("OAuth token exchange failed"));
     }
 
     #[tokio::test]
@@ -622,7 +625,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Token refresh failed"));
+            .contains("OAuth token refresh failed"));
     }
 
     #[tokio::test]

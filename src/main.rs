@@ -868,9 +868,17 @@ enum TriggerAction {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let cli = Cli::parse();
+    let output = cli.output;
 
+    if let Err(err) = run(cli).await {
+        let _ = output::print_error(&err, output);
+        std::process::exit(1);
+    }
+}
+
+async fn run(cli: Cli) -> Result<()> {
     match version_check::check().await {
         version_check::VersionCheck::UpToDate => {}
         version_check::VersionCheck::UpgradeAvailable(latest_version) => {
