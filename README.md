@@ -117,7 +117,7 @@ appsignal-cli triggers create --app "MyApp" --environment "production" \
   --warmup-duration 5 --cooldown-duration 2
 
 # Search logs with JSON output (for LLMs)
-appsignal-cli --output json logs search --app "MyApp" --environment "production" --query "timeout"
+appsignal-cli --format json logs search --app "MyApp" --environment "production" --query "timeout"
 
 # Install the bundled AppSignal LLM skill for OpenCode-style agents
 appsignal-cli skill install
@@ -190,7 +190,7 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 | Command | Description |
 |---|---|
 | `logs tail` | Stream log lines in real time (polls every second) |
-| `logs search` | Search log lines (one-shot query, supports global `--output json` for LLM use) |
+| `logs search` | Search log lines (one-shot query, supports global `--output json` or `--format json` for LLM use) |
 | `logs views` | List saved log views (filter presets) |
 | `logs sources` | List log sources for an app |
 
@@ -292,6 +292,7 @@ Global output flag for any command:
 | Flag | Description |
 |---|---|
 | `--output <human|json>` | Render command results for people or machines |
+| `--format <human|json>` | Synonym for `--output` |
 
 The `--view` flag resolves a log view by name (case-insensitive) or ID. CLI flags always override the view's saved defaults.
 
@@ -335,7 +336,7 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
   --start "2025-03-16T06:00:00Z" --query 'group=notifiers message:"[Email]"' --page-all
 
 # Get JSON output for LLM consumption
-appsignal-cli --output json logs search --app "MyApp" --environment "production" --query "error"
+appsignal-cli --format json logs search --app "MyApp" --environment "production" --query "error"
 
 # List available log views
 appsignal-cli logs views --app "MyApp" --environment "production"
