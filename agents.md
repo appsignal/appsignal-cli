@@ -53,6 +53,8 @@ src/
 - Always include a commit body separated from the subject by a blank line.
   Explain why the change was needed, what was changed, and any important
   constraints or rejected alternatives.
+- Do not put literal escaped newline sequences like `\n` in commit subjects or
+  bodies. Pass multiple `-m` flags or otherwise write real newlines instead.
 - Wrap commit body lines at 72 characters when practical. URLs may stay on one
   line.
 - Put ticket references like `Closes #123` or `Related #123` in the body, not in
