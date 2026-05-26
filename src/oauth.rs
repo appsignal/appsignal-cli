@@ -27,6 +27,11 @@ pub struct OAuthConfig {
     pub scopes: String,
 }
 
+pub struct OAuthFlowResult {
+    pub client_id: String,
+    pub credentials: OAuthCredentials,
+}
+
 #[derive(Debug, Deserialize)]
 struct AuthorizationServerMetadata {
     authorization_endpoint: Option<String>,
@@ -298,7 +303,7 @@ pub async fn refresh_access_token(
     client_id: Option<&str>,
     refresh_token: &str,
 ) -> Result<OAuthCredentials> {
-    let config = resolve_oauth_config(base_url, client_id).await?;
+    let config = OAuthConfig::new(base_url, client_id);
     let client = Client::new();
 
     let resp = client
@@ -400,7 +405,7 @@ async fn wait_for_loopback_callback(redirect_uri: &str) -> Result<String> {
 pub async fn perform_oauth_flow(
     base_url: Option<&str>,
     client_id: Option<&str>,
-) -> Result<OAuthCredentials> {
+) -> Result<OAuthFlowResult> {
     let config = resolve_oauth_config(base_url, client_id).await?;
 
     // Step 1: PKCE parameters
@@ -430,7 +435,10 @@ pub async fn perform_oauth_flow(
     let credentials = exchange_code(&config, &code, &code_verifier).await?;
     crate::status!("OK");
 
-    Ok(credentials)
+    Ok(OAuthFlowResult {
+        client_id: config.client_id,
+        credentials,
+    })
 }
 
 // -- urlencoding helper (minimal, avoids another dependency) --
@@ -626,36 +634,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_refresh_access_token_uses_dynamic_registered_client_id() {
+    async fn test_refresh_access_token_without_client_id_uses_default_client_id() {
         let server = wiremock::MockServer::start().await;
-
-        wiremock::Mock::given(wiremock::matchers::method("GET"))
-            .and(wiremock::matchers::path(
-                "/.well-known/oauth-authorization-server",
-            ))
-            .respond_with(
-                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                    "registration_endpoint": format!("{}/oauth/register", server.uri()),
-                    "token_endpoint": format!("{}/oauth/token", server.uri())
-                })),
-            )
-            .mount(&server)
-            .await;
-
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/oauth/register"))
-            .respond_with(
-                wiremock::ResponseTemplate::new(201).set_body_json(serde_json::json!({
-                    "client_id": "dynamic-client-id"
-                })),
-            )
-            .mount(&server)
-            .await;
 
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/oauth/token"))
             .and(wiremock::matchers::body_string_contains(
-                "client_id=dynamic-client-id",
+                &format!("client_id={}", PRODUCTION_CLIENT_ID),
             ))
             .respond_with(
                 wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({

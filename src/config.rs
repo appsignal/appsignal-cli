@@ -26,7 +26,8 @@ pub struct Config {
     pub token: Option<String>,
     pub org: Option<String>,
     pub endpoint: Option<String>,
-    /// Optional OAuth client ID override. Defaults to the production client when unset.
+    /// OAuth client ID used for login and token refresh. Defaults to the production
+    /// client when unset.
     pub oauth_client_id: Option<String>,
     /// OAuth credentials (stored alongside the personal token; OAuth takes precedence).
     pub oauth: Option<OAuthCredentials>,
@@ -202,7 +203,7 @@ impl Config {
         Ok(AuthMethod::PersonalToken(token.to_string()))
     }
 
-    /// Return the configured OAuth client ID override, if present and non-empty.
+    /// Return the configured OAuth client ID, if present and non-empty.
     pub fn oauth_client_id(&self) -> Option<&str> {
         self.oauth_client_id
             .as_deref()
