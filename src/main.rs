@@ -596,6 +596,19 @@ fn replace_or_clear<T>(values: Vec<T>, clear: bool) -> Option<Vec<T>> {
     }
 }
 
+/// Same tri-state as `replace_or_clear`, but for scalar fields. The `clear`
+/// flag wins if both are set (clap already enforces `conflicts_with`).
+fn replace_or_clear_scalar<T>(value: Option<T>, clear: bool) -> api::Patch<T> {
+    if clear {
+        api::Patch::Clear
+    } else {
+        match value {
+            Some(v) => api::Patch::Set(v),
+            None => api::Patch::Unchanged,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum LogMetricAction {
     /// List log-derived metrics for an app
@@ -621,7 +634,7 @@ enum LogMetricAction {
         source_ids: Vec<String>,
         /// Metric definition in key=value form (required, repeat for multiple metrics). Example: `name=log.error_count,type=counter` or `name=log.request_duration,type=distribution,field=duration_ms,tag.hostname=web-1`
         #[arg(long = "metric")]
-        metrics: Vec<String>,
+        metrics: Vec<api::LogLineMetricInput>,
     },
     /// Update a log-derived metric
     #[command(
@@ -647,7 +660,7 @@ enum LogMetricAction {
         clear_sources: bool,
         /// Replace metric definitions with these values. Repeat for multiple metrics.
         #[arg(long = "metric", conflicts_with = "clear_metrics")]
-        metrics: Vec<String>,
+        metrics: Vec<api::LogLineMetricInput>,
         /// Remove all metric definitions from this metric configuration
         #[arg(long, conflicts_with = "metrics")]
         clear_metrics: bool,
@@ -718,8 +731,11 @@ enum LogTriggerAction {
         #[arg(long, conflicts_with = "source_ids")]
         clear_sources: bool,
         /// Update trigger description
-        #[arg(long)]
+        #[arg(long, conflicts_with = "clear_description")]
         description: Option<String>,
+        /// Clear the trigger description
+        #[arg(long, conflicts_with = "description")]
+        clear_description: bool,
         /// Replace notifier IDs with these values. Repeat to add more.
         #[arg(long = "notifier-id", conflicts_with = "clear_notifiers")]
         notifier_ids: Vec<String>,
@@ -1343,7 +1359,7 @@ async fn main() -> Result<()> {
                         &query,
                         &source_ids,
                         commands::logs::actions::TriggerFields {
-                            description: description.as_deref(),
+                            description: replace_or_clear_scalar(description, false),
                             notifier_ids: (!notifier_ids.is_empty()).then_some(notifier_ids),
                             severities: (!severities.is_empty()).then_some(severities),
                         },
@@ -1359,6 +1375,7 @@ async fn main() -> Result<()> {
                     source_ids,
                     clear_sources,
                     description,
+                    clear_description,
                     notifier_ids,
                     clear_notifiers,
                     severities,
@@ -1371,7 +1388,7 @@ async fn main() -> Result<()> {
                         query.as_deref(),
                         replace_or_clear(source_ids, clear_sources),
                         commands::logs::actions::TriggerFields {
-                            description: description.as_deref(),
+                            description: replace_or_clear_scalar(description, clear_description),
                             notifier_ids: replace_or_clear(notifier_ids, clear_notifiers),
                             severities: replace_or_clear(severities, clear_severities),
                         },

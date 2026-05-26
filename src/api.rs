@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use reqwest::{Client, Method, RequestBuilder};
@@ -818,7 +819,46 @@ impl LogLineAction {
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
+/// Tri-state for fields on update mutations.
+///
+/// `Option<T>` collapses "absent" and "explicit null" into the same value;
+/// `Patch` keeps them apart so the CLI can say "don't touch this" vs "clear
+/// this" without ambiguity. Field-level `#[serde(skip_serializing_if =
+/// "Patch::is_unchanged")]` ensures `Unchanged` is omitted from the request
+/// entirely, `Clear` serializes as JSON `null`, and `Set(v)` serializes as
+/// `v`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Patch<T> {
+    /// Leave the field unchanged on the server (omit from request).
+    #[default]
+    Unchanged,
+    /// Clear the field (send JSON `null`).
+    Clear,
+    /// Set the field to a new value.
+    Set(T),
+}
+
+impl<T> Patch<T> {
+    pub fn is_unchanged(&self) -> bool {
+        matches!(self, Patch::Unchanged)
+    }
+}
+
+impl<T: Serialize> Serialize for Patch<T> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            // `Unchanged` is normally skipped via `skip_serializing_if`; if it
+            // reaches here (e.g. inside a non-skipping container), emit null.
+            Patch::Unchanged | Patch::Clear => serializer.serialize_none(),
+            Patch::Set(value) => value.serialize(serializer),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct LogLineMetricInput {
     pub name: String,
     pub field: Option<String>,
@@ -828,10 +868,102 @@ pub struct LogLineMetricInput {
     pub tags: Option<std::collections::BTreeMap<String, String>>,
 }
 
+impl FromStr for LogLineMetricInput {
+    type Err = String;
+
+    /// Parse a `--metric` spec like
+    /// `name=log.error_count,type=counter` or
+    /// `name=log.request_duration,type=distribution,field=duration_ms,tag.hostname=web-1`.
+    ///
+    /// Returns a `String` error so clap can surface parse failures at
+    /// argument-parse time with its standard formatting.
+    fn from_str(spec: &str) -> std::result::Result<Self, Self::Err> {
+        let mut name: Option<String> = None;
+        let mut field: Option<String> = None;
+        let mut metric_type: Option<String> = None;
+        let mut tags: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+
+        for part in spec.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+
+            let (key, value) = part
+                .split_once('=')
+                .ok_or_else(|| format!("Invalid metric component `{}` in `{}`", part, spec))?;
+            let key = key.trim();
+            let value = value.trim();
+
+            if key.eq_ignore_ascii_case("name") {
+                if value.is_empty() {
+                    return Err(format!("Metric `name=` in `{}` cannot be empty.", spec));
+                }
+                name = Some(value.to_string());
+            } else if key.eq_ignore_ascii_case("field") {
+                if value.is_empty() {
+                    return Err(format!("Metric `field=` in `{}` cannot be empty.", spec));
+                }
+                field = Some(value.to_string());
+            } else if key.eq_ignore_ascii_case("type") || key.eq_ignore_ascii_case("metric_type") {
+                metric_type = Some(normalize_metric_type(value)?);
+            } else if let Some(tag_name) = key.strip_prefix("tag.") {
+                let tag_name = tag_name.trim();
+                if tag_name.is_empty() {
+                    return Err(format!("Metric tag keys cannot be empty in `{}`", spec));
+                }
+                if value.is_empty() {
+                    return Err(format!(
+                        "Metric tag `{}` in `{}` cannot be empty.",
+                        tag_name, spec
+                    ));
+                }
+                tags.insert(tag_name.to_string(), value.to_string());
+            } else {
+                return Err(format!(
+                    "Unsupported metric key `{}` in `{}`. Use name=..., type=..., field=..., and tag.<name>=...",
+                    key, spec
+                ));
+            }
+        }
+
+        let name = name.ok_or_else(|| "Metric definitions require `name=...`".to_string())?;
+        let metric_type =
+            metric_type.ok_or_else(|| "Metric definitions require `type=...`".to_string())?;
+        if matches!(metric_type.as_str(), "GAUGE" | "DISTRIBUTION") && field.is_none() {
+            return Err(format!(
+                "Metric `{}` uses type `{}` and requires `field=...`.",
+                name,
+                metric_type.to_ascii_lowercase()
+            ));
+        }
+
+        Ok(LogLineMetricInput {
+            name,
+            field,
+            metric_type,
+            tags: (!tags.is_empty()).then_some(tags),
+        })
+    }
+}
+
+fn normalize_metric_type(metric_type: &str) -> std::result::Result<String, String> {
+    match metric_type.trim().to_ascii_lowercase().as_str() {
+        "counter" => Ok("COUNTER".to_string()),
+        "gauge" => Ok("GAUGE".to_string()),
+        "distribution" => Ok("DISTRIBUTION".to_string()),
+        other => Err(format!(
+            "Unsupported metric type '{}'. Use counter, gauge, or distribution.",
+            other
+        )),
+    }
+}
+
 #[derive(Debug, Serialize, Clone, Default)]
 pub struct LogLineActionTriggerInput {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Patch::is_unchanged")]
+    pub description: Patch<String>,
     #[serde(rename = "notifierIds", skip_serializing_if = "Option::is_none")]
     pub notifier_ids: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]

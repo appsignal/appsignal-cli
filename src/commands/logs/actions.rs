@@ -6,17 +6,16 @@
 //! means the validators, renderers, and status messages all key off the kind
 //! rather than re-parsing stringly-typed `action_type` values.
 
-use std::collections::BTreeMap;
 use std::io::{self, Write};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 
 use super::super::{authenticated_client, resolve_org};
 use super::truncate;
 use crate::api::{
     AppSignalClient, LogLineAction, LogLineActionKind, LogLineActionTriggerInput,
-    LogLineMetricInput, LogSource,
+    LogLineMetricInput, LogSource, Patch,
 };
 use crate::config::Config;
 use crate::output::{self, Output};
@@ -33,12 +32,13 @@ pub struct AppRef<'a> {
 
 /// Trigger-specific fields, in the shape an `update`/`create` cares about.
 ///
-/// `notifier_ids` / `severities` use `Option<Vec<_>>` so callers can express
-/// the three distinct cases: don't touch (`None`), replace with values
-/// (`Some(non-empty)`), and clear (`Some(empty)`).
+/// `description` uses [`Patch`] and `notifier_ids` / `severities` use
+/// `Option<Vec<_>>`; both encode the same three states the server cares about
+/// — leave alone, clear, or replace — but the scalar field uses `Patch` so
+/// "set to empty string" and "clear" stay distinct.
 #[derive(Default)]
-pub struct TriggerFields<'a> {
-    pub description: Option<&'a str>,
+pub struct TriggerFields {
+    pub description: Patch<String>,
     pub notifier_ids: Option<Vec<String>>,
     pub severities: Option<Vec<String>>,
 }
@@ -75,10 +75,9 @@ pub async fn create_metric(
     name: &str,
     query: &str,
     source_ids: &[String],
-    metric_specs: &[String],
+    metrics: &[LogLineMetricInput],
     format: Output,
 ) -> Result<()> {
-    let metrics = parse_metric_specs(metric_specs)?;
     if metrics.is_empty() {
         anyhow::bail!("`logs metrics create` requires at least one `--metric` definition.");
     }
@@ -88,7 +87,7 @@ pub async fn create_metric(
         name,
         query,
         source_ids,
-        Some(&metrics),
+        Some(metrics),
         None,
     )
     .await?;
@@ -102,13 +101,9 @@ pub async fn update_metric(
     name: Option<&str>,
     query: Option<&str>,
     source_ids: Option<Vec<String>>,
-    metric_specs: Option<Vec<String>>,
+    metrics: Option<Vec<LogLineMetricInput>>,
     format: Output,
 ) -> Result<()> {
-    let metrics = metric_specs
-        .as_deref()
-        .map(parse_metric_specs)
-        .transpose()?;
     let action = update_action(
         app,
         id,
@@ -128,7 +123,7 @@ pub async fn create_trigger(
     name: &str,
     query: &str,
     source_ids: &[String],
-    trigger: TriggerFields<'_>,
+    trigger: TriggerFields,
     format: Output,
 ) -> Result<()> {
     let trigger_input = build_trigger_input(trigger);
@@ -152,7 +147,7 @@ pub async fn update_trigger(
     name: Option<&str>,
     query: Option<&str>,
     source_ids: Option<Vec<String>>,
-    trigger: TriggerFields<'_>,
+    trigger: TriggerFields,
     format: Output,
 ) -> Result<()> {
     let trigger_input = build_trigger_input(trigger);
@@ -244,7 +239,7 @@ fn finish_mutation(
     })
 }
 
-fn build_trigger_input(fields: TriggerFields<'_>) -> Option<LogLineActionTriggerInput> {
+fn build_trigger_input(fields: TriggerFields) -> Option<LogLineActionTriggerInput> {
     let TriggerFields {
         description,
         notifier_ids,
@@ -257,9 +252,8 @@ fn build_trigger_input(fields: TriggerFields<'_>) -> Option<LogLineActionTrigger
             .map(|severity| severity.trim().to_ascii_uppercase())
             .collect::<Vec<_>>()
     });
-    let description = description.map(str::to_string);
 
-    if description.is_none() && notifier_ids.is_none() && severities.is_none() {
+    if description.is_unchanged() && notifier_ids.is_none() && severities.is_none() {
         None
     } else {
         Some(LogLineActionTriggerInput {
@@ -267,81 +261,6 @@ fn build_trigger_input(fields: TriggerFields<'_>) -> Option<LogLineActionTrigger
             notifier_ids,
             severities,
         })
-    }
-}
-
-// -- Metric spec parsing --
-
-fn parse_metric_specs(specs: &[String]) -> Result<Vec<LogLineMetricInput>> {
-    specs.iter().map(|spec| parse_metric_spec(spec)).collect()
-}
-
-fn parse_metric_spec(spec: &str) -> Result<LogLineMetricInput> {
-    let mut name = None;
-    let mut field = None;
-    let mut metric_type = None;
-    let mut tags: BTreeMap<String, String> = BTreeMap::new();
-
-    for part in spec.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-
-        let (key, value) = part
-            .split_once('=')
-            .with_context(|| format!("Invalid metric component `{}` in `{}`", part, spec))?;
-        let key = key.trim();
-        let value = value.trim();
-
-        if key.eq_ignore_ascii_case("name") {
-            name = Some(value.to_string());
-        } else if key.eq_ignore_ascii_case("field") {
-            field = Some(value.to_string());
-        } else if key.eq_ignore_ascii_case("type") || key.eq_ignore_ascii_case("metric_type") {
-            metric_type = Some(normalize_metric_type(value)?);
-        } else if let Some(tag_name) = key.strip_prefix("tag.") {
-            let tag_name = tag_name.trim();
-            if tag_name.is_empty() {
-                anyhow::bail!("Metric tag keys cannot be empty in `{}`", spec);
-            }
-            tags.insert(tag_name.to_string(), value.to_string());
-        } else {
-            anyhow::bail!(
-                "Unsupported metric key `{}` in `{}`. Use name=..., type=..., field=..., and tag.<name>=...",
-                key,
-                spec
-            );
-        }
-    }
-
-    let name = name.context("Metric definitions require `name=...`")?;
-    let metric_type = metric_type.context("Metric definitions require `type=...`")?;
-    if matches!(metric_type.as_str(), "GAUGE" | "DISTRIBUTION") && field.is_none() {
-        anyhow::bail!(
-            "Metric `{}` uses type `{}` and requires `field=...`.",
-            name,
-            metric_type.to_ascii_lowercase()
-        );
-    }
-
-    Ok(LogLineMetricInput {
-        name,
-        field,
-        metric_type,
-        tags: (!tags.is_empty()).then_some(tags),
-    })
-}
-
-fn normalize_metric_type(metric_type: &str) -> Result<String> {
-    match metric_type.trim().to_ascii_lowercase().as_str() {
-        "counter" => Ok("COUNTER".to_string()),
-        "gauge" => Ok("GAUGE".to_string()),
-        "distribution" => Ok("DISTRIBUTION".to_string()),
-        other => anyhow::bail!(
-            "Unsupported metric type '{}'. Use counter, gauge, or distribution.",
-            other
-        ),
     }
 }
 
@@ -543,51 +462,31 @@ mod tests {
     use crate::api::{LogLineActionCommon, LogSource};
 
     #[test]
-    fn parse_metric_spec_counter() {
-        let metric = parse_metric_spec("name=log.error_count,type=counter").unwrap();
-
-        assert_eq!(metric.name, "log.error_count");
-        assert_eq!(metric.metric_type, "COUNTER");
-        assert!(metric.field.is_none());
-    }
-
-    #[test]
-    fn parse_metric_spec_distribution_with_tags() {
-        let metric = parse_metric_spec(
-            "name=log.request_duration,type=distribution,field=duration_ms,tag.hostname=web-1",
-        )
-        .unwrap();
-
-        assert_eq!(metric.metric_type, "DISTRIBUTION");
-        assert_eq!(metric.field.as_deref(), Some("duration_ms"));
-        assert_eq!(
-            metric
-                .tags
-                .as_ref()
-                .and_then(|tags| tags.get("hostname"))
-                .map(String::as_str),
-            Some("web-1")
-        );
-    }
-
-    #[test]
-    fn parse_metric_spec_requires_field_for_distribution() {
-        let err = parse_metric_spec("name=log.request_duration,type=distribution").unwrap_err();
-        assert!(err.to_string().contains("requires `field=...`"));
-    }
-
-    #[test]
     fn build_trigger_input_keeps_explicit_empty_lists_for_clear_operations() {
         let trigger = build_trigger_input(TriggerFields {
-            description: Some("desc"),
+            description: Patch::Set("desc".to_string()),
             notifier_ids: Some(vec![]),
             severities: Some(vec![]),
         })
         .unwrap();
 
-        assert_eq!(trigger.description.as_deref(), Some("desc"));
+        assert_eq!(trigger.description, Patch::Set("desc".to_string()));
         assert_eq!(trigger.notifier_ids, Some(vec![]));
         assert_eq!(trigger.severities, Some(vec![]));
+    }
+
+    #[test]
+    fn build_trigger_input_emits_clear_description() {
+        let trigger = build_trigger_input(TriggerFields {
+            description: Patch::Clear,
+            notifier_ids: None,
+            severities: None,
+        })
+        .unwrap();
+
+        assert_eq!(trigger.description, Patch::Clear);
+        let json = serde_json::to_value(&trigger).unwrap();
+        assert_eq!(json, serde_json::json!({ "description": null }));
     }
 
     #[test]
