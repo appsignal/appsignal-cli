@@ -93,6 +93,21 @@ mod tests {
     use wiremock::matchers::{header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    fn newer_same_major_version() -> String {
+        let mut version = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        version.minor += 1;
+        version.patch = 0;
+        version.to_string()
+    }
+
+    fn newer_major_version() -> String {
+        let mut version = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        version.major += 1;
+        version.minor = 0;
+        version.patch = 0;
+        version.to_string()
+    }
+
     #[test]
     fn classify_versions_ignores_same_version() {
         assert_eq!(classify_versions("0.2.1", "v0.2.1"), VersionCheck::UpToDate);
@@ -122,38 +137,40 @@ mod tests {
     #[tokio::test]
     async fn check_warns_when_github_returns_200_with_newer_same_major_version() {
         let server = MockServer::start().await;
+        let latest_version = newer_same_major_version();
 
         Mock::given(method("GET"))
             .and(path("/tags"))
             .and(query_param("per_page", "1"))
             .and(header("user-agent", USER_AGENT_VALUE))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                { "name": "v0.3.0" }
+                { "name": format!("v{latest_version}") }
             ])))
             .mount(&server)
             .await;
 
         let result = check_at(&format!("{}/tags?per_page=1", server.uri())).await;
 
-        assert_eq!(result, VersionCheck::UpgradeAvailable("0.3.0".to_string()));
+        assert_eq!(result, VersionCheck::UpgradeAvailable(latest_version));
     }
 
     #[tokio::test]
     async fn check_blocks_when_github_returns_200_with_newer_major_version() {
         let server = MockServer::start().await;
+        let latest_version = newer_major_version();
 
         Mock::given(method("GET"))
             .and(path("/tags"))
             .and(query_param("per_page", "1"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                { "name": "v1.0.0" }
+                { "name": format!("v{latest_version}") }
             ])))
             .mount(&server)
             .await;
 
         let result = check_at(&format!("{}/tags?per_page=1", server.uri())).await;
 
-        assert_eq!(result, VersionCheck::UpgradeRequired("1.0.0".to_string()));
+        assert_eq!(result, VersionCheck::UpgradeRequired(latest_version));
     }
 
     #[tokio::test]
