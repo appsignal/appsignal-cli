@@ -79,7 +79,11 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
             }
         }
 
-        store_oauth_credentials(&mut config, oauth_result.client_id, oauth_result.credentials);
+        store_oauth_credentials(
+            &mut config,
+            oauth_result.client_id,
+            oauth_result.credentials,
+        );
         config.save()?;
 
         print_active_config_path(&config);
@@ -130,11 +134,7 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
     )
 }
 
-fn store_oauth_credentials(
-    config: &mut Config,
-    client_id: String,
-    credentials: OAuthCredentials,
-) {
+fn store_oauth_credentials(config: &mut Config, client_id: String, credentials: OAuthCredentials) {
     config.token = None;
     config.oauth_client_id = Some(client_id);
     config.oauth = Some(credentials);

@@ -639,9 +639,10 @@ mod tests {
 
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/oauth/token"))
-            .and(wiremock::matchers::body_string_contains(
-                &format!("client_id={}", PRODUCTION_CLIENT_ID),
-            ))
+            .and(wiremock::matchers::body_string_contains(format!(
+                "client_id={}",
+                PRODUCTION_CLIENT_ID
+            )))
             .respond_with(
                 wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "access_token": "refreshed-token",
