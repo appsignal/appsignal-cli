@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::error::CliError;
+
 const LOCAL_CONFIG_FILE_NAME: &str = ".appsignal.toml";
 
 /// Describes how the CLI authenticates with the AppSignal API.
@@ -44,15 +46,14 @@ impl Config {
     /// Returns the default path to the config file: ~/.config/appsignal/config.toml
     fn default_path() -> Result<PathBuf> {
         let config_dir = dirs::config_dir()
-            .context("Could not determine config directory")?
+            .context(CliError::ConfigIo)?
             .join("appsignal");
         Ok(config_dir.join("config.toml"))
     }
 
     /// Returns the nearest project-local config override, if one exists.
     fn local_override_path() -> Result<Option<PathBuf>> {
-        let current_dir =
-            std::env::current_dir().context("Could not determine current directory")?;
+        let current_dir = std::env::current_dir().context(CliError::ConfigIo)?;
         Ok(Self::local_override_path_from(&current_dir))
     }
 
@@ -87,8 +88,7 @@ impl Config {
     }
 
     fn local_override_target_path() -> Result<PathBuf> {
-        let current_dir =
-            std::env::current_dir().context("Could not determine current directory")?;
+        let current_dir = std::env::current_dir().context(CliError::ConfigIo)?;
         Ok(Self::local_override_target_path_from(&current_dir))
     }
 
@@ -130,10 +130,8 @@ impl Config {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let contents = fs::read_to_string(path)
-            .with_context(|| format!("Failed to read config at {}", path.display()))?;
-        let mut config: Config = toml::from_str(&contents)
-            .with_context(|| format!("Failed to parse config at {}", path.display()))?;
+        let contents = fs::read_to_string(path).context(CliError::ConfigIo)?;
+        let mut config: Config = toml::from_str(&contents).context(CliError::ConfigIo)?;
         config.active_path = None;
         Ok(config)
     }
@@ -172,12 +170,10 @@ impl Config {
     /// Persist the config to a specific path.
     pub fn save_to(&self, path: &PathBuf) -> Result<()> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create config dir {}", parent.display()))?;
+            fs::create_dir_all(parent).context(CliError::ConfigIo)?;
         }
-        let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
-        fs::write(path, contents)
-            .with_context(|| format!("Failed to write config to {}", path.display()))?;
+        let contents = toml::to_string_pretty(self).context(CliError::ConfigIo)?;
+        fs::write(path, contents).context(CliError::ConfigIo)?;
         Ok(())
     }
 
@@ -186,7 +182,9 @@ impl Config {
         self.token
             .as_deref()
             .filter(|t| !t.is_empty())
-            .context("Not authenticated. Run `appsignal-cli auth login` first.")
+            .context(CliError::msg(
+                "Not authenticated. Run `appsignal-cli auth login` first.",
+            ))
     }
 
     /// Determine the authentication method to use.
@@ -246,14 +244,14 @@ impl PartialEq for Config {
 }
 
 fn normalize_base_url(endpoint: &str) -> Result<String> {
-    let mut url =
-        url::Url::parse(endpoint).with_context(|| format!("Invalid endpoint URL: {}", endpoint))?;
+    let mut url = url::Url::parse(endpoint)
+        .with_context(|| CliError::msg(format!("Invalid endpoint URL: {}", endpoint)))?;
 
     if !matches!(url.path(), "" | "/") {
-        anyhow::bail!(
+        anyhow::bail!(CliError::msg(format!(
             "Invalid endpoint URL: {}. `endpoint` must be a base URL without a path, for example `https://staging.lol`.",
             endpoint
-        );
+        )));
     }
 
     url.set_path("");

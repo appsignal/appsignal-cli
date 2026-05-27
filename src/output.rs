@@ -11,10 +11,12 @@
 
 use std::io::{self, Write};
 
-use anyhow::Result;
+use anyhow::{Error, Result};
 use clap::ValueEnum;
 use serde::{Serialize, Serializer};
 use tabled::{Table, Tabled};
+
+use crate::error::CliError;
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum Output {
@@ -94,6 +96,86 @@ pub fn json_line<T: Serialize>(w: &mut dyn Write, value: &T) -> Result<()> {
     Ok(())
 }
 
+#[derive(Serialize)]
+struct ErrorResponse<'a> {
+    error: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<&'a str>,
+}
+
+fn debug_errors_enabled() -> bool {
+    std::env::var_os("APPSIGNAL_CLI_DEBUG").is_some()
+}
+
+/// Resolve an error to its user-facing message.
+///
+/// If the outermost error is a [`CliError`] — either constructed directly
+/// (`bail!(CliError::...)`) or installed as context (`.context(CliError::...)?`)
+/// — its `Display` is shown verbatim. That's the convention: the outermost
+/// context is the user-relevant story, deeper causes are technical detail.
+///
+/// Otherwise the error is internal: hidden behind a generic message, or
+/// shown raw when `APPSIGNAL_CLI_DEBUG=1` is set.
+fn sanitize_error_message(error: &Error) -> String {
+    if let Some(user) = error.downcast_ref::<CliError>() {
+        return user.to_string();
+    }
+
+    if debug_errors_enabled() {
+        error.to_string()
+    } else {
+        "Something went wrong inside appsignal-cli. Try again, and rerun with `APPSIGNAL_CLI_DEBUG=1` if you need the internal error details.".to_string()
+    }
+}
+
+fn error_details(error: &Error) -> Option<String> {
+    if !debug_errors_enabled() {
+        return None;
+    }
+
+    let details: Vec<String> = error
+        .chain()
+        .skip(1)
+        .map(|cause| cause.to_string())
+        .collect();
+    if details.is_empty() {
+        None
+    } else {
+        Some(details.join("\ncaused by: "))
+    }
+}
+
+/// Print a user-facing command error.
+pub fn print_error(error: &Error, format: Output) -> Result<()> {
+    let message = sanitize_error_message(error);
+    let details = error_details(error);
+
+    match format {
+        Output::Human => {
+            let stderr = io::stderr();
+            let mut w = stderr.lock();
+            writeln!(w, "Error: {}", message)?;
+            if let Some(details) = details {
+                writeln!(w, "caused by: {}", details)?;
+            }
+        }
+        Output::Json => {
+            let stderr = io::stderr();
+            let mut w = stderr.lock();
+            serde_json::to_writer_pretty(
+                &mut w,
+                &ErrorResponse {
+                    error: &message,
+                    details: details.as_deref(),
+                },
+            )?;
+            writeln!(w)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn render_boxed_lines<T: AsRef<str>>(lines: &[T]) -> String {
     let width = lines
         .iter()
@@ -149,7 +231,9 @@ macro_rules! status {
 
 #[cfg(test)]
 mod tests {
-    use super::render_boxed_lines;
+    use super::{print_error, render_boxed_lines, sanitize_error_message, Output};
+    use crate::error::CliError;
+    use anyhow::{anyhow, Context};
 
     #[test]
     fn render_boxed_lines_wraps_content_in_ascii_box() {
@@ -161,5 +245,47 @@ mod tests {
         assert!(rendered.contains("Current: 0.2.1"));
         assert!(rendered.contains("Latest:  1.0.0"));
         assert!(rendered.ends_with('+'));
+    }
+
+    #[test]
+    fn print_error_writes_without_error() {
+        let err: anyhow::Error = CliError::msg("Friendly error").into();
+
+        assert!(print_error(&err, Output::Human).is_ok());
+        assert!(print_error(&err, Output::Json).is_ok());
+    }
+
+    #[test]
+    fn sanitize_shows_clierror_verbatim() {
+        let err: anyhow::Error = CliError::AuthRejected { detail: None }.into();
+
+        assert_eq!(
+            sanitize_error_message(&err),
+            "Authentication failed. Your AppSignal credentials were rejected. Run `appsignal-cli auth login` again."
+        );
+    }
+
+    #[test]
+    fn sanitize_finds_clierror_through_chain() {
+        // Mirrors the real usage: `Result::context(CliError::msg(...))?` on a
+        // failing internal call. The CliError context must surface as the
+        // user-facing message, with the inner cause available under DEBUG.
+        let inner: Result<(), std::io::Error> = Err(std::io::Error::other("boom"));
+        let err = inner
+            .context(CliError::msg("Application not found"))
+            .unwrap_err();
+
+        assert_eq!(sanitize_error_message(&err), "Application not found");
+    }
+
+    #[test]
+    fn sanitize_hides_unknown_errors() {
+        // SAFETY: tests run in a single-threaded slice for env access here.
+        // SAFE: env::remove_var is only unsafe in Rust 2024 multi-threaded contexts; ok in cfg(test).
+        std::env::remove_var("APPSIGNAL_CLI_DEBUG");
+
+        let err = anyhow!("database pool poisoned: internal sentinel");
+
+        assert!(sanitize_error_message(&err).contains("Something went wrong inside appsignal-cli"));
     }
 }

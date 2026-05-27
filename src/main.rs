@@ -1,6 +1,7 @@
 mod api;
 mod commands;
 mod config;
+mod error;
 mod oauth;
 mod output;
 mod version_check;
@@ -9,6 +10,7 @@ use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand};
 
 use crate::commands::skill::InstallTarget;
+use crate::error::CliError;
 use crate::output::Output;
 
 #[derive(Parser)]
@@ -868,9 +870,17 @@ enum TriggerAction {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let cli = Cli::parse();
+    let output = cli.output;
 
+    if let Err(err) = run(cli).await {
+        let _ = output::print_error(&err, output);
+        std::process::exit(1);
+    }
+}
+
+async fn run(cli: Cli) -> Result<()> {
     match version_check::check().await {
         version_check::VersionCheck::UpToDate => {}
         version_check::VersionCheck::UpgradeAvailable(latest_version) => {
@@ -888,7 +898,7 @@ async fn main() -> Result<()> {
                 format!("Latest:  {latest_version}"),
                 "Install the latest major version to continue.".to_string(),
             ]);
-            bail!("Please upgrade appsignal-cli to continue.");
+            bail!(CliError::msg("Please upgrade appsignal-cli to continue."));
         }
     }
 
