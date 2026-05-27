@@ -1,5 +1,68 @@
 # AppSignal CLI changelog
 
+## 1.0.0
+
+_Published on 2026-05-27._
+
+### Added
+
+- Added `skill update` to refresh installed AppSignal LLM skills and `skill status` to list OpenCode, Codex, and Claude installs as current, outdated, missing, or unversioned. (minor [a054e9b](https://github.com/appsignal/appsignal-cli/commit/a054e9bc4207e3ed391a5ddfeb7ba6358971ba35))
+
+### Changed
+
+- The CLI now blocks command execution when GitHub reports a newer major
+  `appsignal-cli` release and shows an upgrade-required message with the
+  current and latest versions.
+
+  Patch and minor releases still show a startup warning only, and GitHub
+  outages or other non-`200` responses still pass silently so the CLI is
+  not blocked by GitHub availability.
+
+  (major [a054e9b](https://github.com/appsignal/appsignal-cli/commit/a054e9bc4207e3ed391a5ddfeb7ba6358971ba35))
+- `appsignal-cli` now supports anomaly detection trigger management with `triggers list`, `triggers create`, `triggers update`, and `triggers archive`.
+
+  This adds CLI workflows for inspecting existing triggers, creating new metric alerts, updating trigger definitions as new versions, and archiving triggers when they are no longer needed.
+
+  The trigger output and shared skill docs also now distinguish clearly between the trigger name, metric name, and description so trigger configuration is easier to understand.
+
+  (minor [a054e9b](https://github.com/appsignal/appsignal-cli/commit/a054e9bc4207e3ed391a5ddfeb7ba6358971ba35))
+- Added --format as a synonym for the global --output flag, so you can use either name when selecting human or JSON CLI output. (patch [a054e9b](https://github.com/appsignal/appsignal-cli/commit/a054e9bc4207e3ed391a5ddfeb7ba6358971ba35))
+- CLI command failures now show cleaner user-facing error messages
+  instead of raw internal error output.
+
+  Unexpected internal failures now fall back to a generic safe
+  message by default, while `APPSIGNAL_CLI_DEBUG=1` still exposes the
+  underlying details for debugging.
+
+  (patch [a054e9b](https://github.com/appsignal/appsignal-cli/commit/a054e9bc4207e3ed391a5ddfeb7ba6358971ba35))
+- OAuth login now supports custom AppSignal endpoints that advertise RFC 7591
+  Dynamic Client Registration.
+
+  When a custom endpoint exposes OAuth authorization server metadata with a
+  `registration_endpoint`, the CLI automatically registers a public client for its
+  loopback callback URL and uses the returned `client_id` for login and token
+  refresh. Endpoints without dynamic registration support still fall back to the
+  built-in production client ID unless an explicit `oauth_client_id` override is
+  configured.
+
+  (patch [a054e9b](https://github.com/appsignal/appsignal-cli/commit/a054e9bc4207e3ed391a5ddfeb7ba6358971ba35))
+- The CLI now checks the latest GitHub tag on startup and shows a boxed
+  warning when a newer `appsignal-cli` release is available.
+
+  The warning is only shown when GitHub returns a successful `200`
+  response with a newer version, so GitHub outages and other request
+  failures do not interrupt normal CLI usage.
+
+  (patch [a054e9b](https://github.com/appsignal/appsignal-cli/commit/a054e9bc4207e3ed391a5ddfeb7ba6358971ba35))
+
+### Fixed
+
+- `auth logout` now removes the stored OAuth client ID along with the saved
+  credentials, so a later login no longer reuses a stale client ID from the
+  previous session.
+
+  (patch [a054e9b](https://github.com/appsignal/appsignal-cli/commit/a054e9bc4207e3ed391a5ddfeb7ba6358971ba35))
+
 ## 0.2.1
 
 _Published on 2026-05-21._
