@@ -160,6 +160,7 @@ impl Config {
     /// Clear auth credentials from the active config scope.
     pub fn clear_credentials(&mut self) {
         self.token = None;
+        self.oauth_client_id = None;
         self.oauth = None;
     }
 
@@ -538,6 +539,12 @@ mod tests {
 
         let mut config = Config {
             token: Some("secret".to_string()),
+            oauth_client_id: Some("registered-client-id".to_string()),
+            oauth: Some(OAuthCredentials {
+                access_token: "oauth-access".to_string(),
+                refresh_token: Some("oauth-refresh".to_string()),
+                expires_at: Some(1_700_000_000),
+            }),
             active_path: Some(local_path),
             ..Config::default()
         };
@@ -545,6 +552,7 @@ mod tests {
         config.clear_credentials();
 
         assert_eq!(config.token, None);
+        assert_eq!(config.oauth_client_id, None);
         assert_eq!(config.oauth, None);
     }
 
