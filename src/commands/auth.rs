@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::io::{self, Write};
 
 use crate::api::AppSignalClient;
-use crate::config::{AuthMethod, Config};
+use crate::config::{AuthMethod, Config, OAuthCredentials};
 use crate::error::CliError;
 use crate::oauth;
 use crate::output::Output;
@@ -60,15 +60,15 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
     let endpoint = config.endpoint_base_url()?;
 
     if options.use_oauth {
-        let credentials =
+        let oauth_result =
             oauth::perform_oauth_flow(endpoint.as_deref(), config.oauth_client_id()).await?;
 
         crate::status!("Validating OAuth token...");
 
         let auth = AuthMethod::OAuth {
-            access_token: credentials.access_token.clone(),
-            refresh_token: credentials.refresh_token.clone(),
-            expires_at: credentials.expires_at,
+            access_token: oauth_result.credentials.access_token.clone(),
+            refresh_token: oauth_result.credentials.refresh_token.clone(),
+            expires_at: oauth_result.credentials.expires_at,
         };
         let client = AppSignalClient::with_auth(auth, endpoint.as_deref());
         match client.validate_token().await {
@@ -79,8 +79,11 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
             }
         }
 
-        config.token = None;
-        config.oauth = Some(credentials);
+        store_oauth_credentials(
+            &mut config,
+            oauth_result.client_id,
+            oauth_result.credentials,
+        );
         config.save()?;
 
         print_active_config_path(&config);
@@ -129,6 +132,12 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
         format,
         |w| writeln!(w, "Token saved. You are now authenticated."),
     )
+}
+
+fn store_oauth_credentials(config: &mut Config, client_id: String, credentials: OAuthCredentials) {
+    config.token = None;
+    config.oauth_client_id = Some(client_id);
+    config.oauth = Some(credentials);
 }
 
 fn apply_login_config_overrides(
@@ -266,5 +275,29 @@ mod tests {
             Some("staging-client-id".to_string())
         );
         assert_eq!(config.org, Some("side-project".to_string()));
+    }
+
+    #[test]
+    fn test_store_oauth_credentials_persists_client_id_and_clears_token() {
+        let mut config = Config {
+            token: Some("personal-token".to_string()),
+            ..Config::default()
+        };
+
+        let credentials = OAuthCredentials {
+            access_token: "oauth-access".to_string(),
+            refresh_token: Some("oauth-refresh".to_string()),
+            expires_at: Some(1_700_000_000),
+        };
+
+        store_oauth_credentials(
+            &mut config,
+            "registered-client-id".to_string(),
+            credentials.clone(),
+        );
+
+        assert_eq!(config.token, None);
+        assert_eq!(config.oauth_client_id(), Some("registered-client-id"));
+        assert_eq!(config.oauth, Some(credentials));
     }
 }

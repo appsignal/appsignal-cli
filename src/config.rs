@@ -26,7 +26,8 @@ pub struct Config {
     pub token: Option<String>,
     pub org: Option<String>,
     pub endpoint: Option<String>,
-    /// Optional OAuth client ID override. Defaults to the production client when unset.
+    /// OAuth client ID used for login and token refresh. Defaults to the production
+    /// client when unset.
     pub oauth_client_id: Option<String>,
     /// OAuth credentials (stored alongside the personal token; OAuth takes precedence).
     pub oauth: Option<OAuthCredentials>,
@@ -159,6 +160,7 @@ impl Config {
     /// Clear auth credentials from the active config scope.
     pub fn clear_credentials(&mut self) {
         self.token = None;
+        self.oauth_client_id = None;
         self.oauth = None;
     }
 
@@ -202,7 +204,7 @@ impl Config {
         Ok(AuthMethod::PersonalToken(token.to_string()))
     }
 
-    /// Return the configured OAuth client ID override, if present and non-empty.
+    /// Return the configured OAuth client ID, if present and non-empty.
     pub fn oauth_client_id(&self) -> Option<&str> {
         self.oauth_client_id
             .as_deref()
@@ -537,6 +539,12 @@ mod tests {
 
         let mut config = Config {
             token: Some("secret".to_string()),
+            oauth_client_id: Some("registered-client-id".to_string()),
+            oauth: Some(OAuthCredentials {
+                access_token: "oauth-access".to_string(),
+                refresh_token: Some("oauth-refresh".to_string()),
+                expires_at: Some(1_700_000_000),
+            }),
             active_path: Some(local_path),
             ..Config::default()
         };
@@ -544,6 +552,7 @@ mod tests {
         config.clear_credentials();
 
         assert_eq!(config.token, None);
+        assert_eq!(config.oauth_client_id, None);
         assert_eq!(config.oauth, None);
     }
 
