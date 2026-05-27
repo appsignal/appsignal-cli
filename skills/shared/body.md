@@ -35,6 +35,8 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
 | `appsignal-cli logs views [app options]` | List saved log views |
 | `appsignal-cli logs sources [app options]` | List log sources |
+| `appsignal-cli logs metrics <list|create|update|delete> ...` | Manage log-derived metric configurations |
+| `appsignal-cli logs triggers <list|create|update|delete> ...` | Manage log-based trigger configurations |
 | `appsignal-cli triggers list [app options] [filters]` | List anomaly detection triggers |
 | `appsignal-cli triggers create [app options] [definition flags]` | Create an anomaly detection trigger |
 | `appsignal-cli triggers update --id <id> [app options] [definition flags]` | Update a trigger by creating a new version |
@@ -149,6 +151,47 @@ Extra `logs search` flags:
 | `--order <ASC|DESC>` | Sort order |
 | `--page-all` | Auto-paginate to fetch all results |
 
+## Log Metric Options
+
+Use `logs metrics` when the goal is to extract a metric from matching log lines so it can later be charted, alerted on, or queried elsewhere in AppSignal.
+
+Useful `logs metrics create` and `logs metrics update` flags:
+
+| Flag | Description |
+|---|---|
+| `--name <text>` | Required. Human-readable name for the metric configuration |
+| `--query <text>` | Required. Log query used to match lines |
+| `--source-id <id>` | Restrict matching to specific log sources; repeat the flag for multiple sources |
+| `--metric 'name=...,type=...,field=...,tag.foo=bar'` | Required for `create`. Metric definition; repeat for multiple extracted metrics |
+| `--clear-sources` | On update, remove all source restrictions |
+| `--clear-metrics` | On update, remove all metric definitions |
+| `--id <id>` | Required for `update` and `delete`. Existing metric configuration ID |
+
+Metric definition notes:
+
+- `type=counter` counts matching lines and does not require `field=...`
+- `type=gauge` and `type=distribution` require `field=...`
+- Use `tag.<name>=<value>` inside `--metric` to attach tags to the emitted metric
+
+## Log Trigger Options
+
+Use `logs triggers` when the goal is to get notified about matching log lines.
+
+Useful `logs triggers create` and `logs triggers update` flags:
+
+| Flag | Description |
+|---|---|
+| `--name <text>` | Required. Human-readable trigger name |
+| `--query <text>` | Required. Log query used to match lines |
+| `--source-id <id>` | Restrict matching to specific log sources; repeat for multiple sources |
+| `--description <text>` | Optional longer description or runbook hint |
+| `--notifier-id <id>` | Attach a notifier; repeat for multiple notifiers |
+| `--severity <value>` | Match only specific severities; repeat for multiple values |
+| `--clear-sources` | On update, remove all source restrictions |
+| `--clear-notifiers` | On update, remove all notifiers |
+| `--clear-severities` | On update, remove all severity filters |
+| `--id <id>` | Required for `update` and `delete`. Existing trigger ID |
+
 ## Log Query Syntax
 
 Common query forms:
@@ -258,6 +301,41 @@ Tail logs using a saved view:
 
 ```bash
 appsignal-cli logs tail --app "MyApp" --environment "production" --view "Error logs"
+```
+
+Create a log-derived metric:
+
+```bash
+appsignal-cli logs metrics create --app "MyApp" --environment "production" \
+  --name "Track error count" \
+  --query 'severity:error' \
+  --metric 'name=log.error_count,type=counter'
+```
+
+Update a log-derived metric and clear source restrictions:
+
+```bash
+appsignal-cli logs metrics update --app "MyApp" --environment "production" \
+  --id metric_rule_123 \
+  --clear-sources
+```
+
+Create a log-based trigger:
+
+```bash
+appsignal-cli logs triggers create --app "MyApp" --environment "production" \
+  --name "Root login" \
+  --query 'message:root' \
+  --severity ERROR \
+  --notifier-id notifier_123
+```
+
+Update a log-based trigger and remove all notifiers:
+
+```bash
+appsignal-cli logs triggers update --app "MyApp" --environment "production" \
+  --id trigger_rule_123 \
+  --clear-notifiers
 ```
 
 Install the skill for Codex:

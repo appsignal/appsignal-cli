@@ -1,3 +1,5 @@
+pub mod actions;
+
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
@@ -520,7 +522,7 @@ fn render_log_sources(w: &mut dyn Write, sources: &[crate::api::LogSource]) -> i
     writeln!(w, "{} log source(s) found.", sources.len())
 }
 
-fn truncate(s: &str, max: usize) -> String {
+pub(crate) fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {

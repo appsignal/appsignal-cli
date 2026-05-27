@@ -538,6 +538,225 @@ enum LogsAction {
         #[arg(long)]
         org: Option<String>,
     },
+    /// Create and manage log-derived metrics
+    #[command(
+        after_help = "Examples:\n  appsignal-cli logs metrics list --app \"MyApp\" --environment production\n  appsignal-cli logs metrics create --app \"MyApp\" --environment production --name \"Track error count\" --query 'severity:error' --metric 'name=log.error_count,type=counter'\n  appsignal-cli logs metrics update --app \"MyApp\" --environment production --id metric_rule_123 --clear-sources\n  appsignal-cli logs metrics delete --app \"MyApp\" --environment production --id metric_rule_123"
+    )]
+    Metrics {
+        #[command(subcommand)]
+        action: LogMetricAction,
+    },
+    /// Create and manage log-based triggers
+    #[command(
+        after_help = "Examples:\n  appsignal-cli logs triggers list --app \"MyApp\" --environment production\n  appsignal-cli logs triggers create --app \"MyApp\" --environment production --name \"Root login\" --query 'message:root' --severity ERROR --notifier-id notifier_123\n  appsignal-cli logs triggers update --app \"MyApp\" --environment production --id trigger_rule_123 --clear-notifiers\n  appsignal-cli logs triggers delete --app \"MyApp\" --environment production --id trigger_rule_123"
+    )]
+    Triggers {
+        #[command(subcommand)]
+        action: LogTriggerAction,
+    },
+}
+
+#[derive(Args)]
+struct LogActionAppArgs {
+    /// Application ID (required unless --app is used)
+    #[arg(long)]
+    app_id: Option<String>,
+    /// Application name (required unless --app-id is used)
+    #[arg(long)]
+    app: Option<String>,
+    /// Environment filter (recommended with --app; required when the app name is ambiguous)
+    #[arg(long)]
+    environment: Option<String>,
+    /// Organization slug (uses saved default if omitted)
+    #[arg(long)]
+    org: Option<String>,
+}
+
+impl LogActionAppArgs {
+    fn as_ref(&self) -> commands::logs::actions::AppRef<'_> {
+        commands::logs::actions::AppRef {
+            app_id: self.app_id.as_deref(),
+            app_name: self.app.as_deref(),
+            environment: self.environment.as_deref(),
+            org: self.org.as_deref(),
+        }
+    }
+}
+
+/// Resolve a `Vec<T>` flag into the three states our action mutations care
+/// about: leave the field untouched (`None`), clear it (`Some(empty)`), or
+/// replace it (`Some(non-empty)`).
+fn replace_or_clear<T>(values: Vec<T>, clear: bool) -> Option<Vec<T>> {
+    if clear {
+        Some(Vec::new())
+    } else if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
+/// Same tri-state as `replace_or_clear`, but for scalar fields. The `clear`
+/// flag wins if both are set (clap already enforces `conflicts_with`).
+fn replace_or_clear_scalar<T>(value: Option<T>, clear: bool) -> api::Patch<T> {
+    if clear {
+        api::Patch::Clear
+    } else {
+        match value {
+            Some(v) => api::Patch::Set(v),
+            None => api::Patch::Unchanged,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum LogMetricAction {
+    /// List log-derived metrics for an app
+    List {
+        #[command(flatten)]
+        app: LogActionAppArgs,
+    },
+    /// Create a new log-derived metric
+    #[command(
+        after_help = "Example:\n  appsignal-cli logs metrics create --app \"MyApp\" --environment production --name \"Track error count\" --query 'severity:error' --metric 'name=log.error_count,type=counter'"
+    )]
+    Create {
+        #[command(flatten)]
+        app: LogActionAppArgs,
+        /// Metric configuration name (required)
+        #[arg(long)]
+        name: String,
+        /// Query expression to match against log lines (required)
+        #[arg(long)]
+        query: String,
+        /// Scope the action to a specific source ID. Repeat to add more.
+        #[arg(long = "source-id")]
+        source_ids: Vec<String>,
+        /// Metric definition in key=value form (required, repeat for multiple metrics). Example: `name=log.error_count,type=counter` or `name=log.request_duration,type=distribution,field=duration_ms,tag.hostname=web-1`
+        #[arg(long = "metric")]
+        metrics: Vec<api::LogLineMetricInput>,
+    },
+    /// Update a log-derived metric
+    #[command(
+        after_help = "Examples:\n  appsignal-cli logs metrics update --app \"MyApp\" --environment production --id metric_rule_123 --name \"Track API errors\"\n  appsignal-cli logs metrics update --app \"MyApp\" --environment production --id metric_rule_123 --clear-metrics"
+    )]
+    Update {
+        #[command(flatten)]
+        app: LogActionAppArgs,
+        /// ID of the metric configuration to update (required)
+        #[arg(long)]
+        id: String,
+        /// New metric configuration name
+        #[arg(long)]
+        name: Option<String>,
+        /// New query expression
+        #[arg(long)]
+        query: Option<String>,
+        /// Replace source IDs with these values. Repeat to add more.
+        #[arg(long = "source-id", conflicts_with = "clear_sources")]
+        source_ids: Vec<String>,
+        /// Remove all source IDs from the action
+        #[arg(long, conflicts_with = "source_ids")]
+        clear_sources: bool,
+        /// Replace metric definitions with these values. Repeat for multiple metrics.
+        #[arg(long = "metric", conflicts_with = "clear_metrics")]
+        metrics: Vec<api::LogLineMetricInput>,
+        /// Remove all metric definitions from this metric configuration
+        #[arg(long, conflicts_with = "metrics")]
+        clear_metrics: bool,
+    },
+    /// Delete a log-derived metric
+    Delete {
+        #[command(flatten)]
+        app: LogActionAppArgs,
+        /// ID of the metric configuration to delete (required)
+        #[arg(long)]
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum LogTriggerAction {
+    /// List log-based triggers for an app
+    List {
+        #[command(flatten)]
+        app: LogActionAppArgs,
+    },
+    /// Create a new log-based trigger
+    #[command(
+        after_help = "Example:\n  appsignal-cli logs triggers create --app \"MyApp\" --environment production --name \"Root login\" --query 'message:root' --severity ERROR --notifier-id notifier_123"
+    )]
+    Create {
+        #[command(flatten)]
+        app: LogActionAppArgs,
+        /// Trigger name (required)
+        #[arg(long)]
+        name: String,
+        /// Query expression to match against log lines (required)
+        #[arg(long)]
+        query: String,
+        /// Scope the trigger to a specific source ID. Repeat to add more.
+        #[arg(long = "source-id")]
+        source_ids: Vec<String>,
+        /// Trigger description
+        #[arg(long)]
+        description: Option<String>,
+        /// Attach a notifier to this trigger. Repeat to add more.
+        #[arg(long = "notifier-id")]
+        notifier_ids: Vec<String>,
+        /// Match only these severities. Repeat to add more.
+        #[arg(long = "severity")]
+        severities: Vec<String>,
+    },
+    /// Update an existing log-based trigger
+    #[command(
+        after_help = "Examples:\n  appsignal-cli logs triggers update --app \"MyApp\" --environment production --id trigger_rule_123 --name \"Root login attempts\"\n  appsignal-cli logs triggers update --app \"MyApp\" --environment production --id trigger_rule_123 --clear-severities --clear-notifiers"
+    )]
+    Update {
+        #[command(flatten)]
+        app: LogActionAppArgs,
+        /// ID of the trigger to update (required)
+        #[arg(long)]
+        id: String,
+        /// New trigger name
+        #[arg(long)]
+        name: Option<String>,
+        /// New query expression
+        #[arg(long)]
+        query: Option<String>,
+        /// Replace source IDs with these values. Repeat to add more.
+        #[arg(long = "source-id", conflicts_with = "clear_sources")]
+        source_ids: Vec<String>,
+        /// Remove all source IDs from the trigger
+        #[arg(long, conflicts_with = "source_ids")]
+        clear_sources: bool,
+        /// Update trigger description
+        #[arg(long, conflicts_with = "clear_description")]
+        description: Option<String>,
+        /// Clear the trigger description
+        #[arg(long, conflicts_with = "description")]
+        clear_description: bool,
+        /// Replace notifier IDs with these values. Repeat to add more.
+        #[arg(long = "notifier-id", conflicts_with = "clear_notifiers")]
+        notifier_ids: Vec<String>,
+        /// Remove all trigger notifier IDs
+        #[arg(long, conflicts_with = "notifier_ids")]
+        clear_notifiers: bool,
+        /// Replace trigger severities with these values. Repeat to add more.
+        #[arg(long = "severity", conflicts_with = "clear_severities")]
+        severities: Vec<String>,
+        /// Remove all trigger severities
+        #[arg(long, conflicts_with = "severities")]
+        clear_severities: bool,
+    },
+    /// Delete a log-based trigger
+    Delete {
+        #[command(flatten)]
+        app: LogActionAppArgs,
+        /// ID of the trigger to delete (required)
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Args)]
@@ -1059,6 +1278,134 @@ async fn main() -> Result<()> {
                 )
                 .await?
             }
+            LogsAction::Metrics { action } => match action {
+                LogMetricAction::List { app } => {
+                    commands::logs::actions::list(
+                        api::LogLineActionKind::Metrics,
+                        &app.as_ref(),
+                        cli.output,
+                    )
+                    .await?
+                }
+                LogMetricAction::Create {
+                    app,
+                    name,
+                    query,
+                    source_ids,
+                    metrics,
+                } => {
+                    commands::logs::actions::create_metric(
+                        &app.as_ref(),
+                        &name,
+                        &query,
+                        &source_ids,
+                        &metrics,
+                        cli.output,
+                    )
+                    .await?
+                }
+                LogMetricAction::Update {
+                    app,
+                    id,
+                    name,
+                    query,
+                    source_ids,
+                    clear_sources,
+                    metrics,
+                    clear_metrics,
+                } => {
+                    commands::logs::actions::update_metric(
+                        &app.as_ref(),
+                        &id,
+                        name.as_deref(),
+                        query.as_deref(),
+                        replace_or_clear(source_ids, clear_sources),
+                        replace_or_clear(metrics, clear_metrics),
+                        cli.output,
+                    )
+                    .await?
+                }
+                LogMetricAction::Delete { app, id } => {
+                    commands::logs::actions::delete(
+                        api::LogLineActionKind::Metrics,
+                        &app.as_ref(),
+                        &id,
+                        cli.output,
+                    )
+                    .await?
+                }
+            },
+            LogsAction::Triggers { action } => match action {
+                LogTriggerAction::List { app } => {
+                    commands::logs::actions::list(
+                        api::LogLineActionKind::Trigger,
+                        &app.as_ref(),
+                        cli.output,
+                    )
+                    .await?
+                }
+                LogTriggerAction::Create {
+                    app,
+                    name,
+                    query,
+                    source_ids,
+                    description,
+                    notifier_ids,
+                    severities,
+                } => {
+                    commands::logs::actions::create_trigger(
+                        &app.as_ref(),
+                        &name,
+                        &query,
+                        &source_ids,
+                        commands::logs::actions::TriggerFields {
+                            description: replace_or_clear_scalar(description, false),
+                            notifier_ids: (!notifier_ids.is_empty()).then_some(notifier_ids),
+                            severities: (!severities.is_empty()).then_some(severities),
+                        },
+                        cli.output,
+                    )
+                    .await?
+                }
+                LogTriggerAction::Update {
+                    app,
+                    id,
+                    name,
+                    query,
+                    source_ids,
+                    clear_sources,
+                    description,
+                    clear_description,
+                    notifier_ids,
+                    clear_notifiers,
+                    severities,
+                    clear_severities,
+                } => {
+                    commands::logs::actions::update_trigger(
+                        &app.as_ref(),
+                        &id,
+                        name.as_deref(),
+                        query.as_deref(),
+                        replace_or_clear(source_ids, clear_sources),
+                        commands::logs::actions::TriggerFields {
+                            description: replace_or_clear_scalar(description, clear_description),
+                            notifier_ids: replace_or_clear(notifier_ids, clear_notifiers),
+                            severities: replace_or_clear(severities, clear_severities),
+                        },
+                        cli.output,
+                    )
+                    .await?
+                }
+                LogTriggerAction::Delete { app, id } => {
+                    commands::logs::actions::delete(
+                        api::LogLineActionKind::Trigger,
+                        &app.as_ref(),
+                        &id,
+                        cli.output,
+                    )
+                    .await?
+                }
+            },
         },
         Commands::Triggers { action } => match action {
             TriggerAction::List {
