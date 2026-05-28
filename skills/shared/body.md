@@ -54,6 +54,73 @@ Most app-specific commands accept either:
 
 Use `--app-id` when available. Use `--environment` when the same app name exists in multiple environments.
 
+## AppSignal URL Structure
+
+If you already have an AppSignal URL, you can often reuse parts of it in the CLI.
+
+Useful parts of common URLs:
+
+| URL pattern | Meaning | CLI mapping |
+|---|---|---|
+| `https://appsignal.com/<org-slug>` | Organization/account home | `apps list --org <org-slug>` or `apps set-org --org <org-slug>` |
+| `https://appsignal.com/<account-slug>/sites/<site_id>` | App root | Use `--app-id <site_id>` |
+| `https://appsignal.com/<account-slug>/sites/<site_id>/dashboard` | App dashboard | Use `--app-id <site_id>` |
+| `https://appsignal.com/<account-slug>/sites/<site_id>/performance` | Performance area | Use `--app-id <site_id>` with `incidents list-performance` |
+| `https://appsignal.com/<account-slug>/sites/<site_id>/exceptions` | Exceptions area | Use `--app-id <site_id>` with `incidents list-exceptions` |
+| `https://appsignal.com/<account-slug>/sites/<site_id>/anomalies` | Anomalies area | Use `--app-id <site_id>` with `incidents list-anomalies` |
+| `https://appsignal.com/<account-slug>/sites/<site_id>/logs` | Logs area | Use `--app-id <site_id>` with `logs ...` commands |
+| `https://appsignal.com/<account-slug>/sites/<site_id>/triggers` | Trigger list | Use `--app-id <site_id>` with `triggers ...` commands |
+| `https://appsignal.com/<account-slug>/sites/<site_id>/markers` | Deploy markers | Use `--app-id <site_id>` with `apps resources deploy-markers` |
+
+Notes:
+
+- In app URLs, `<site_id>` is the AppSignal app ID, so it maps directly to `--app-id`.
+- The CLI usually does not need `<account-slug>`.
+
+Incident URLs:
+
+| URL pattern | CLI mapping |
+|---|---|
+| `.../sites/<site_id>/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
+| `.../sites/<site_id>/performance/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
+| `.../sites/<site_id>/exceptions/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
+| `.../sites/<site_id>/anomalies/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
+| `.../sites/<site_id>/logs/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
+
+The same incident number still works if the URL ends with extra page sections such as:
+
+- `/summary`
+- `/attributes`
+- `/logbook`
+- `/graphs`
+- `/samples/...`
+- `/alerts/...`
+- `/lines`
+- `/traces/...`
+
+Logs URLs:
+
+| URL pattern | CLI mapping |
+|---|---|
+| `.../sites/<site_id>/logs/<view_id>` | `logs tail --app-id <site_id> --view <view_id>` or `logs search --app-id <site_id> --view <view_id>` |
+| `.../sites/<site_id>/logs/sources/<id>` | Use `<id>` in `--source-ids <id>` |
+
+Examples:
+
+```bash
+# Organization URL: https://appsignal.com/my-org
+appsignal-cli apps list --org my-org
+
+# App URL: https://appsignal.com/my-account/sites/12345
+appsignal-cli incidents list --app-id 12345
+
+# Incident URL: https://appsignal.com/my-account/sites/12345/exceptions/incidents/42/logbook
+appsignal-cli incidents show --app-id 12345 --number 42
+
+# Log view URL: https://appsignal.com/my-account/sites/12345/logs/error-view
+appsignal-cli logs tail --app-id 12345 --view error-view
+```
+
 ## Incident Options
 
 Common flags for `incidents list`, `list-exceptions`, `list-performance`, and `list-anomalies`:
