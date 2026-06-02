@@ -2780,9 +2780,11 @@ mod tests {
             .and(path("/graphql"))
             .and(query_param("token", "test-token"))
             .and(body_string_contains("__typename"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(graphql_response(json!({
-                "__typename": "Query"
-            }))))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "__typename": "Query"
+                }))),
+            )
             .mount(&server)
             .await;
 
@@ -2797,9 +2799,11 @@ mod tests {
             .and(path("/graphql"))
             .and(header("authorization", "Bearer bad-token"))
             .and(body_string_contains("__typename"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(graphql_response(json!({
-                "__typename": "Query"
-            }))))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "__typename": "Query"
+                }))),
+            )
             .mount(&server)
             .await;
 

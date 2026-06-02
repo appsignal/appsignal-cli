@@ -278,7 +278,10 @@ mod tests {
         );
 
         assert_eq!(config.endpoint, Some("https://staging.lol".to_string()));
-        assert_eq!(config.rest_endpoint, Some("https://public-api.lol".to_string()));
+        assert_eq!(
+            config.rest_endpoint,
+            Some("https://public-api.lol".to_string())
+        );
         assert_eq!(
             config.oauth_client_id,
             Some("staging-client-id".to_string())

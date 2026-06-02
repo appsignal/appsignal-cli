@@ -233,7 +233,10 @@ impl Config {
         self.rest_endpoint
             .as_deref()
             .filter(|endpoint| !endpoint.is_empty())
-            .or(self.endpoint.as_deref().filter(|endpoint| !endpoint.is_empty()))
+            .or(self
+                .endpoint
+                .as_deref()
+                .filter(|endpoint| !endpoint.is_empty()))
             .map(normalize_base_url)
             .transpose()
     }
@@ -425,7 +428,10 @@ mod tests {
         fs::write(&path, "rest_endpoint = \"https://public-api.lol\"\n").unwrap();
 
         let config = Config::load_from_path(&path).unwrap();
-        assert_eq!(config.rest_endpoint, Some("https://public-api.lol".to_string()));
+        assert_eq!(
+            config.rest_endpoint,
+            Some("https://public-api.lol".to_string())
+        );
     }
 
     #[test]
