@@ -39,6 +39,7 @@ pub fn resolve_org(explicit: Option<&str>, config: &Config) -> Result<String> {
 /// credentials before returning the client.
 pub async fn authenticated_client(config: &mut Config) -> Result<AppSignalClient> {
     let endpoint = config.endpoint_base_url()?;
+    let rest_endpoint = config.rest_endpoint_base_url()?;
 
     // Auto-refresh expired OAuth tokens
     if config.oauth.is_some() && config.oauth_token_expired() {
@@ -61,7 +62,11 @@ pub async fn authenticated_client(config: &mut Config) -> Result<AppSignalClient
     }
 
     let auth = config.auth_method()?;
-    Ok(AppSignalClient::with_auth(auth, endpoint.as_deref()))
+    Ok(AppSignalClient::with_auth_endpoints(
+        auth,
+        endpoint.as_deref(),
+        rest_endpoint.as_deref(),
+    ))
 }
 
 #[cfg(test)]

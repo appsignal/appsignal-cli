@@ -123,6 +123,9 @@ enum AuthAction {
         /// Override the AppSignal base URL (for example `https://staging.lol`)
         #[arg(long)]
         endpoint: Option<String>,
+        /// Override the AppSignal REST/public API base URL
+        #[arg(long)]
+        rest_endpoint: Option<String>,
         /// Override the OAuth client ID used during login
         #[arg(long)]
         oauth_client_id: Option<String>,
@@ -218,6 +221,9 @@ enum ProjectAction {
         /// Override the AppSignal base URL (for example `https://staging.lol`)
         #[arg(long)]
         endpoint: Option<String>,
+        /// Override the AppSignal REST/public API base URL
+        #[arg(long)]
+        rest_endpoint: Option<String>,
         /// Override the OAuth client ID for this project
         #[arg(long)]
         oauth_client_id: Option<String>,
@@ -909,6 +915,7 @@ async fn run(cli: Cli) -> Result<()> {
                 token,
                 oauth,
                 endpoint,
+                rest_endpoint,
                 oauth_client_id,
                 org,
             } => {
@@ -917,6 +924,7 @@ async fn run(cli: Cli) -> Result<()> {
                         token,
                         use_oauth: oauth,
                         endpoint,
+                        rest_endpoint,
                         oauth_client_id,
                         org,
                     },
@@ -1013,11 +1021,13 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::Project { action } => match action {
             ProjectAction::Init {
                 endpoint,
+                rest_endpoint,
                 oauth_client_id,
                 org,
             } => commands::project::init(
                 commands::project::InitOptions {
                     endpoint,
+                    rest_endpoint,
                     oauth_client_id,
                     org,
                 },
