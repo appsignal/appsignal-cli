@@ -1222,7 +1222,7 @@ impl AppSignalClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!(CliError::from_http(status, &text));
+            anyhow::bail!(graphql_http_error(status, &text));
         }
 
         let gql_resp: GraphQLResponse<T> =
@@ -2303,6 +2303,16 @@ fn graphql_error(errors: Vec<GraphQLError>) -> CliError {
     CliError::GraphQlRejected(msgs.join("; "))
 }
 
+fn graphql_http_error(status: reqwest::StatusCode, body: &str) -> CliError {
+    if let Ok(response) = serde_json::from_str::<GraphQLResponse<serde_json::Value>>(body) {
+        if let Some(errors) = response.errors {
+            return graphql_error(errors);
+        }
+    }
+
+    CliError::from_http(status, body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2855,6 +2865,30 @@ mod tests {
         let client = AppSignalClient::new("bad-token", Some(&server.uri()));
         let err = client.validate_token().await.unwrap_err();
         assert!(err.to_string().contains("Authentication failed"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_token_handles_http_400_account_restricted_graphql_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(query_param("token", "restricted-token"))
+            .and(body_string_contains("__typename"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "errors": [{
+                    "message": "You exceeded your free plan quota for this month. API access is restricted.",
+                    "extensions": { "code": "ACCOUNT_RESTRICTED" }
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::new("restricted-token", Some(&server.uri()));
+        let err = client.validate_token().await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "You exceeded your free plan quota for this month. API access is restricted."
+        );
     }
 
     #[tokio::test]
