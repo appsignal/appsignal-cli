@@ -26,6 +26,8 @@ pub struct Config {
     pub token: Option<String>,
     pub org: Option<String>,
     pub endpoint: Option<String>,
+    /// Optional REST/public API base URL. Falls back to `endpoint` when unset.
+    pub rest_endpoint: Option<String>,
     /// OAuth client ID used for login and token refresh. Defaults to the production
     /// client when unset.
     pub oauth_client_id: Option<String>,
@@ -223,6 +225,22 @@ impl Config {
             .transpose()
     }
 
+    /// Return the configured AppSignal REST base URL, if present.
+    ///
+    /// When unset, falls back to `endpoint` so existing configurations keep
+    /// using a single base URL for both GraphQL and REST.
+    pub fn rest_endpoint_base_url(&self) -> Result<Option<String>> {
+        self.rest_endpoint
+            .as_deref()
+            .filter(|endpoint| !endpoint.is_empty())
+            .or(self
+                .endpoint
+                .as_deref()
+                .filter(|endpoint| !endpoint.is_empty()))
+            .map(normalize_base_url)
+            .transpose()
+    }
+
     /// Returns true if the stored OAuth access token has expired (or will expire within 60 s).
     pub fn oauth_token_expired(&self) -> bool {
         if let Some(ref oauth) = self.oauth {
@@ -240,6 +258,7 @@ impl PartialEq for Config {
         self.token == other.token
             && self.org == other.org
             && self.endpoint == other.endpoint
+            && self.rest_endpoint == other.rest_endpoint
             && self.oauth_client_id == other.oauth_client_id
             && self.oauth == other.oauth
     }
@@ -403,6 +422,19 @@ mod tests {
     }
 
     #[test]
+    fn test_load_partial_config_with_rest_endpoint() {
+        let dir = TempDir::new().unwrap();
+        let path = config_path(&dir);
+        fs::write(&path, "rest_endpoint = \"https://public-api.lol\"\n").unwrap();
+
+        let config = Config::load_from_path(&path).unwrap();
+        assert_eq!(
+            config.rest_endpoint,
+            Some("https://public-api.lol".to_string())
+        );
+    }
+
+    #[test]
     fn test_local_override_path_from_finds_nearest_project_config() {
         let dir = TempDir::new().unwrap();
         let project_root = dir.path().join("project");
@@ -439,6 +471,10 @@ mod tests {
         assert_eq!(config.org, Some("local-org".to_string()));
         assert_eq!(
             config.endpoint_base_url().unwrap(),
+            Some("https://staging.lol/".to_string())
+        );
+        assert_eq!(
+            config.rest_endpoint_base_url().unwrap(),
             Some("https://staging.lol/".to_string())
         );
         assert_eq!(config.oauth_client_id(), None);
@@ -530,6 +566,7 @@ mod tests {
             local_config.endpoint,
             Some("https://staging.lol".to_string())
         );
+        assert_eq!(local_config.rest_endpoint, None);
     }
 
     #[test]
@@ -740,6 +777,43 @@ mod tests {
             ..Config::default()
         };
         let err = config.endpoint_base_url().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("must be a base URL without a path"));
+    }
+
+    #[test]
+    fn test_rest_endpoint_base_url_uses_rest_endpoint_override() {
+        let config = Config {
+            endpoint: Some("https://staging.lol".to_string()),
+            rest_endpoint: Some("https://public-api.lol".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(
+            config.rest_endpoint_base_url().unwrap(),
+            Some("https://public-api.lol/".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rest_endpoint_base_url_falls_back_to_endpoint() {
+        let config = Config {
+            endpoint: Some("https://staging.lol".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(
+            config.rest_endpoint_base_url().unwrap(),
+            Some("https://staging.lol/".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rest_endpoint_base_url_rejects_non_base_url() {
+        let config = Config {
+            rest_endpoint: Some("https://public-api.lol/api/v2".to_string()),
+            ..Config::default()
+        };
+        let err = config.rest_endpoint_base_url().unwrap_err();
         assert!(err
             .to_string()
             .contains("must be a base URL without a path"));

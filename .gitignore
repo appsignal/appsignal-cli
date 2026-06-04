@@ -1,3 +1,4 @@
 /target
 /release
 .appsignal.toml
+.opencode

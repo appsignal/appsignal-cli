@@ -12,6 +12,7 @@ struct ProjectInitResponse {
 
 pub struct InitOptions {
     pub endpoint: Option<String>,
+    pub rest_endpoint: Option<String>,
     pub oauth_client_id: Option<String>,
     pub org: Option<String>,
 }
@@ -26,6 +27,10 @@ pub fn init(options: InitOptions, format: Output) -> Result<()> {
 
     if let Some(endpoint) = options.endpoint {
         config.endpoint = Some(endpoint);
+    }
+
+    if let Some(rest_endpoint) = options.rest_endpoint {
+        config.rest_endpoint = Some(rest_endpoint);
     }
 
     if let Some(oauth_client_id) = options.oauth_client_id {
@@ -57,11 +62,13 @@ mod tests {
     fn test_init_options_can_be_empty() {
         let options = InitOptions {
             endpoint: None,
+            rest_endpoint: None,
             oauth_client_id: None,
             org: None,
         };
 
         assert!(options.endpoint.is_none());
+        assert!(options.rest_endpoint.is_none());
         assert!(options.oauth_client_id.is_none());
         assert!(options.org.is_none());
     }

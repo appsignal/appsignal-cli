@@ -29,6 +29,7 @@ pub struct LoginOptions {
     pub token: Option<String>,
     pub use_oauth: bool,
     pub endpoint: Option<String>,
+    pub rest_endpoint: Option<String>,
     pub oauth_client_id: Option<String>,
     pub org: Option<String>,
 }
@@ -53,6 +54,7 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
     apply_login_config_overrides(
         &mut config,
         options.endpoint,
+        options.rest_endpoint,
         options.oauth_client_id,
         options.org,
     );
@@ -143,11 +145,16 @@ fn store_oauth_credentials(config: &mut Config, client_id: String, credentials: 
 fn apply_login_config_overrides(
     config: &mut Config,
     endpoint: Option<String>,
+    rest_endpoint: Option<String>,
     oauth_client_id: Option<String>,
     org: Option<String>,
 ) {
     if let Some(endpoint) = endpoint {
         config.endpoint = Some(endpoint);
+    }
+
+    if let Some(rest_endpoint) = rest_endpoint {
+        config.rest_endpoint = Some(rest_endpoint);
     }
 
     if let Some(oauth_client_id) = oauth_client_id {
@@ -265,11 +272,16 @@ mod tests {
         apply_login_config_overrides(
             &mut config,
             Some("https://staging.lol".to_string()),
+            Some("https://public-api.lol".to_string()),
             Some("staging-client-id".to_string()),
             Some("side-project".to_string()),
         );
 
         assert_eq!(config.endpoint, Some("https://staging.lol".to_string()));
+        assert_eq!(
+            config.rest_endpoint,
+            Some("https://public-api.lol".to_string())
+        );
         assert_eq!(
             config.oauth_client_id,
             Some("staging-client-id".to_string())
