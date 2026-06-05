@@ -57,6 +57,9 @@ pub enum CliError {
     #[error("AppSignal rejected the request. {0}")]
     GraphQlRejected(String),
 
+    #[error("{0}")]
+    AccountRestricted(String),
+
     #[error("Could not reach AppSignal. Check your network connection and try again.")]
     NetworkUnreachable,
 

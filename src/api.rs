@@ -10,6 +10,7 @@ use crate::config::AuthMethod;
 use crate::error::CliError;
 
 const DEFAULT_BASE_URL: &str = "https://appsignal.com";
+const ACCOUNT_RESTRICTED_CODE: &str = "ACCOUNT_RESTRICTED";
 
 fn normalize_api_base_url(endpoint: Option<&str>) -> String {
     let endpoint = endpoint.unwrap_or(DEFAULT_BASE_URL);
@@ -58,6 +59,12 @@ struct GraphQLResponse<T> {
 #[derive(Debug, Deserialize)]
 struct GraphQLError {
     message: String,
+    extensions: Option<GraphQLErrorExtensions>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphQLErrorExtensions {
+    code: Option<String>,
 }
 
 // -- App types --
@@ -1215,15 +1222,14 @@ impl AppSignalClient {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            anyhow::bail!(CliError::from_http(status, &text));
+            anyhow::bail!(graphql_http_error(status, &text));
         }
 
         let gql_resp: GraphQLResponse<T> =
             resp.json().await.context(CliError::UnexpectedResponse)?;
 
         if let Some(errors) = gql_resp.errors {
-            let msgs: Vec<String> = errors.into_iter().map(|e| e.message).collect();
-            anyhow::bail!(CliError::GraphQlRejected(msgs.join("; ")));
+            anyhow::bail!(graphql_error(errors));
         }
 
         gql_resp.data.context(CliError::UnexpectedResponse)
@@ -2280,6 +2286,33 @@ impl AppSignalClient {
     }
 }
 
+fn graphql_error(errors: Vec<GraphQLError>) -> CliError {
+    let account_restricted = errors.iter().find(|error| {
+        error
+            .extensions
+            .as_ref()
+            .and_then(|extensions| extensions.code.as_deref())
+            == Some(ACCOUNT_RESTRICTED_CODE)
+    });
+
+    if let Some(error) = account_restricted {
+        return CliError::AccountRestricted(error.message.clone());
+    }
+
+    let msgs: Vec<String> = errors.into_iter().map(|e| e.message).collect();
+    CliError::GraphQlRejected(msgs.join("; "))
+}
+
+fn graphql_http_error(status: reqwest::StatusCode, body: &str) -> CliError {
+    if let Ok(response) = serde_json::from_str::<GraphQLResponse<serde_json::Value>>(body) {
+        if let Some(errors) = response.errors {
+            return graphql_error(errors);
+        }
+    }
+
+    CliError::from_http(status, body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2832,6 +2865,78 @@ mod tests {
         let client = AppSignalClient::new("bad-token", Some(&server.uri()));
         let err = client.validate_token().await.unwrap_err();
         assert!(err.to_string().contains("Authentication failed"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_token_handles_http_400_account_restricted_graphql_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(query_param("token", "restricted-token"))
+            .and(body_string_contains("__typename"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "errors": [{
+                    "message": "You exceeded your free plan quota for this month. API access is restricted.",
+                    "extensions": { "code": "ACCOUNT_RESTRICTED" }
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::new("restricted-token", Some(&server.uri()));
+        let err = client.validate_token().await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "You exceeded your free plan quota for this month. API access is restricted."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_token_handles_free_plan_quota_graphql_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(query_param("token", "restricted-token"))
+            .and(body_string_contains("__typename"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errors": [{
+                    "message": "You exceeded your free plan quota for this month. API access is restricted.",
+                    "extensions": { "code": "ACCOUNT_RESTRICTED" }
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::new("restricted-token", Some(&server.uri()));
+        let err = client.validate_token().await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "You exceeded your free plan quota for this month. API access is restricted."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_token_handles_locked_account_graphql_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(query_param("token", "locked-token"))
+            .and(body_string_contains("__typename"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errors": [{
+                    "message": "This account is locked. API access is restricted.",
+                    "extensions": { "code": "ACCOUNT_RESTRICTED" }
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::new("locked-token", Some(&server.uri()));
+        let err = client.validate_token().await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "This account is locked. API access is restricted."
+        );
     }
 
     #[tokio::test]
