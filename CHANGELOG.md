@@ -1,5 +1,18 @@
 # AppSignal CLI changelog
 
+## 1.0.1
+
+_Published on 2026-06-05._
+
+### Changed
+
+- The bundled AppSignal skill now shows how to turn common AppSignal URLs into CLI arguments, including `--org`, `--app-id`, `--number`, `--view`, and `--source-ids`. (patch [e86d5c8](https://github.com/appsignal/appsignal-cli/commit/e86d5c87ac08c34f39a091b7384a33bbe58ca13c))
+- GraphQL API errors for account restrictions now show AppSignal's descriptive message, such as locked-account or free-plan quota explanations, instead of a generic request rejection. (patch [e86d5c8](https://github.com/appsignal/appsignal-cli/commit/e86d5c87ac08c34f39a091b7384a33bbe58ca13c))
+
+### Fixed
+
+- Fix log search order casing. Log searches now send the requested sort order in the format the AppSignal logs API expects, so commands like `appsignal-cli logs search --order desc` no longer fail with an unprocessable pagination order error. (patch [e86d5c8](https://github.com/appsignal/appsignal-cli/commit/e86d5c87ac08c34f39a091b7384a33bbe58ca13c))
+
 ## 1.0.0
 
 _Published on 2026-05-27._
