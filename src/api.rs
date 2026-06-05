@@ -2138,7 +2138,7 @@ impl AppSignalClient {
             "query": query,
             "pagination": {
                 "per_page": limit,
-                "order": order.to_lowercase(),
+                "order": order.to_uppercase(),
                 "cursor": { "time": cursor_time }
             }
         });
@@ -2964,6 +2964,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/v2/logs/lines"))
             .and(header("authorization", "Bearer tok"))
+            .and(body_string_contains(r#""order":"DESC""#))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([
                 {
                     "id": "log-1",
@@ -2988,7 +2989,7 @@ mod tests {
                 &["src-1".to_string()],
                 "severity=[error]",
                 100,
-                "DESC",
+                "desc",
                 None,
             )
             .await
