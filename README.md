@@ -2,6 +2,10 @@
 
 A command-line interface for [AppSignal](https://appsignal.com), built in Rust. Designed to be used by both humans and LLMs to query AppSignal data from the terminal.
 
+- [AppSignal.com website][appsignal]
+- [Documentation][docs]
+- [Support][contact]
+
 ## Installation
 
 The easiest way to get `appsignal-cli` in your machine is to run our installation one-liner:
@@ -426,6 +430,25 @@ OAuth always uses the built-in local callback at `http://127.0.0.1:9789/callback
 
 The `org` value is saved automatically when you run `apps list --org <slug>` or `apps set-org --org <slug>` into whichever config is active. Use `project init` first if you want those writes to stay local to the project.
 
+## Releases
+
+Follow the process below to release a new version of this project.
+
+1. On GitHub open the Actions tab.
+2. Select the "Publish a release" workflow.
+3. Click the "Run workflow" button, select a different branch if necessary, but
+   `main` is often the branch to release.
+4. Then press run the green "Run workflow" button.
+
+This will trigger a GitHub workflow to compile and release the project
+automatically.
+Keep an eye on the workflow in case it fails.
+
+This process also triggers a changelog Pull Request to be created on the
+appsignal.com repository for the public changelog.
+You will be assigned to this Pull Request.
+Make sure that also gets merged.
+
 ## Development
 
 ```sh
@@ -441,6 +464,49 @@ cargo fmt --check
 
 CI runs all three checks on every push and pull request via GitHub Actions.
 
-## License
+### Versioning
 
-Copyright (c) AppSignal. All rights reserved.
+This gem uses [Semantic Versioning][semver].
+
+The `main` branch corresponds to the current stable release of the gem.
+
+The `develop` branch is used for development of features that will end up in
+the next minor release, if present.
+
+Open a Pull Request on the `main` branch if you're fixing a bug. For new
+features, open a Pull Request on the `develop` branch.
+
+Every stable and unstable release is tagged in git with a version tag.
+
+### Changesets
+
+This project uses changesets, as managed by [mono], to update the changelog and
+trigger new releases. Every meaningful change that needs a release requires a
+changeset. Follow the guide on the [mono] project page on how to create one.
+
+## Contributing
+
+Thinking of contributing to this project? Awesome! 🚀
+
+Please follow our [Contributing guide][contributing-guide] in our
+documentation and follow our [Code of Conduct][coc].
+
+Also, we would be very happy to send you Stroopwafles. Have look at everyone
+we send a package to so far on our [Stroopwafles page][waffles-page].
+
+## Support
+
+[Contact us][contact] and speak directly with the engineers working on
+AppSignal. They will help you get set up, tweak your code and make sure you get
+the most out of using AppSignal.
+
+Also see our [SUPPORT.md file](SUPPORT.md).
+
+[appsignal]: https://www.appsignal.com/
+[appsignal-sign-up]: https://appsignal.com/users/sign_up
+[contact]: mailto:support@appsignal.com
+[coc]: https://docs.appsignal.com/appsignal/code-of-conduct.html
+[contributing-guide]: https://docs.appsignal.com/appsignal/contributing.html
+[waffles-page]: https://www.appsignal.com/waffles
+[docs]: https://docs.appsignal.com
+[mono]: https://github.com/appsignal/mono/
