@@ -576,7 +576,10 @@ mod tests {
                 "/.well-known/oauth-authorization-server",
             ))
             .and(wiremock::matchers::header("user-agent", USER_AGENT_VALUE))
-            .and(wiremock::matchers::header("x-appsignal-client", CLIENT_NAME))
+            .and(wiremock::matchers::header(
+                "x-appsignal-client",
+                CLIENT_NAME,
+            ))
             .and(wiremock::matchers::header(
                 "x-appsignal-client-version",
                 CLIENT_VERSION,
@@ -746,7 +749,10 @@ mod tests {
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/oauth/token"))
             .and(wiremock::matchers::header("user-agent", USER_AGENT_VALUE))
-            .and(wiremock::matchers::header("x-appsignal-client", CLIENT_NAME))
+            .and(wiremock::matchers::header(
+                "x-appsignal-client",
+                CLIENT_NAME,
+            ))
             .and(wiremock::matchers::header(
                 "x-appsignal-client-version",
                 CLIENT_VERSION,

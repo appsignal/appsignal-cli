@@ -1196,9 +1196,9 @@ impl AppSignalClient {
             AuthMethod::PersonalToken(token) => {
                 with_appsignal_headers(self.http.request(method, url)).bearer_auth(token)
             }
-            AuthMethod::OAuth { access_token, .. } => with_appsignal_headers(
-                self.http.request(method, url).bearer_auth(access_token),
-            ),
+            AuthMethod::OAuth { access_token, .. } => {
+                with_appsignal_headers(self.http.request(method, url).bearer_auth(access_token))
+            }
         }
     }
 
@@ -2320,8 +2320,7 @@ fn graphql_http_error(status: reqwest::StatusCode, body: &str) -> CliError {
 mod tests {
     use super::*;
     use crate::client_headers::{
-        CLIENT_NAME, CLIENT_NAME_HEADER, CLIENT_VERSION, CLIENT_VERSION_HEADER,
-        USER_AGENT_VALUE,
+        CLIENT_NAME, CLIENT_NAME_HEADER, CLIENT_VERSION, CLIENT_VERSION_HEADER, USER_AGENT_VALUE,
     };
     use wiremock::matchers::{body_string_contains, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -2974,7 +2973,10 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/v2/logs/lines"))
             .and(header("authorization", "Bearer tok"))
-            .and(header(CLIENT_NAME_HEADER.to_ascii_lowercase().as_str(), CLIENT_NAME))
+            .and(header(
+                CLIENT_NAME_HEADER.to_ascii_lowercase().as_str(),
+                CLIENT_NAME,
+            ))
             .and(header(
                 CLIENT_VERSION_HEADER.to_ascii_lowercase().as_str(),
                 CLIENT_VERSION,

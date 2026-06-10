@@ -184,7 +184,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = Client::builder().timeout(Duration::from_secs(1)).build().unwrap();
+        let client = Client::builder()
+            .timeout(Duration::from_secs(1))
+            .build()
+            .unwrap();
         let _ = with_appsignal_headers(client.post(telemetry_url(&server.uri())))
             .json(&CommandRunEvent {
                 event: "command.run",
