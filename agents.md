@@ -39,6 +39,10 @@ src/
 - In command-layer response/view models, prefer owned `String`/`Vec<T>` data over
   adding fresh lifetimes just to avoid small clones. Keep borrowing where it is
   already entrenched, but new code should default to the simpler owned shape.
+- When adding new user-facing CLI commands or new server endpoints for CLI
+  features, preserve the minimal CLI telemetry flow so command runs still emit
+  the dedicated telemetry event and any new endpoint continues to send the
+  standard CLI headers.
 
 ## Git Workflow
 
