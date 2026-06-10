@@ -10,6 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::time::{timeout, Duration};
 
+use crate::client_headers::with_appsignal_headers;
 use crate::config::OAuthCredentials;
 use crate::error::{extract_detail, CliError};
 
@@ -64,8 +65,7 @@ async fn discover_authorization_server_metadata(
         "{}/.well-known/oauth-authorization-server",
         base_url.trim_end_matches('/')
     );
-    let resp = Client::new()
-        .get(url)
+    let resp = with_appsignal_headers(Client::new().get(url))
         .send()
         .await
         .context("Failed to fetch OAuth authorization server metadata")?;
@@ -85,8 +85,7 @@ async fn register_dynamic_client(
     registration_endpoint: &str,
     redirect_uri: &str,
 ) -> Result<String> {
-    let resp = Client::new()
-        .post(registration_endpoint)
+    let resp = with_appsignal_headers(Client::new().post(registration_endpoint))
         .json(&json!({
             "client_name": "appsignal-cli",
             "redirect_uris": [redirect_uri],
@@ -256,8 +255,7 @@ async fn exchange_code(
     code_verifier: &str,
 ) -> Result<OAuthCredentials> {
     let client = Client::new();
-    let resp = client
-        .post(&config.token_url)
+    let resp = with_appsignal_headers(client.post(&config.token_url))
         .form(&[
             ("grant_type", "authorization_code"),
             ("client_id", &config.client_id),
@@ -306,8 +304,7 @@ pub async fn refresh_access_token(
     let config = OAuthConfig::new(base_url, client_id);
     let client = Client::new();
 
-    let resp = client
-        .post(&config.token_url)
+    let resp = with_appsignal_headers(client.post(&config.token_url))
         .form(&[
             ("grant_type", "refresh_token"),
             ("client_id", &config.client_id),
@@ -471,6 +468,7 @@ mod urlencoding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client_headers::{CLIENT_NAME, CLIENT_VERSION, USER_AGENT_VALUE};
 
     #[test]
     fn test_code_verifier_length() {
@@ -576,6 +574,12 @@ mod tests {
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path(
                 "/.well-known/oauth-authorization-server",
+            ))
+            .and(wiremock::matchers::header("user-agent", USER_AGENT_VALUE))
+            .and(wiremock::matchers::header("x-appsignal-client", CLIENT_NAME))
+            .and(wiremock::matchers::header(
+                "x-appsignal-client-version",
+                CLIENT_VERSION,
             ))
             .respond_with(
                 wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -741,6 +745,12 @@ mod tests {
 
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/oauth/token"))
+            .and(wiremock::matchers::header("user-agent", USER_AGENT_VALUE))
+            .and(wiremock::matchers::header("x-appsignal-client", CLIENT_NAME))
+            .and(wiremock::matchers::header(
+                "x-appsignal-client-version",
+                CLIENT_VERSION,
+            ))
             .respond_with(
                 wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "access_token": "new-access-token",

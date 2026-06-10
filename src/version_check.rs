@@ -4,9 +4,10 @@ use reqwest::header::{ACCEPT, USER_AGENT};
 use semver::Version;
 use serde::Deserialize;
 
+use crate::client_headers::USER_AGENT_VALUE;
+
 const GITHUB_TAGS_URL: &str =
     "https://api.github.com/repos/appsignal/homebrew-appsignal-cli/tags?per_page=1";
-const USER_AGENT_VALUE: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum VersionCheck {

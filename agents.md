@@ -32,6 +32,7 @@ src/
 ## Rust Workflow
 
 - Before committing Rust changes, run `cargo fmt` and `cargo clippy -- -D warnings`.
+- When adding new user-facing CLI commands or new server endpoints for CLI features, preserve the minimal CLI telemetry flow so command runs still emit the dedicated telemetry event and any new endpoint continues to send the standard CLI headers.
 
 ## Git Workflow
 

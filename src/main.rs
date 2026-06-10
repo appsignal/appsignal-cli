@@ -1,9 +1,11 @@
 mod api;
+mod client_headers;
 mod commands;
 mod config;
 mod error;
 mod oauth;
 mod output;
+mod telemetry;
 mod version_check;
 
 use anyhow::{bail, Result};
@@ -877,10 +879,18 @@ enum TriggerAction {
 
 #[tokio::main]
 async fn main() {
+    let telemetry_command = telemetry::command_path_from_env_args();
     let cli = Cli::parse();
     let output = cli.output;
+    let started_at = std::time::Instant::now();
 
-    if let Err(err) = run(cli).await {
+    let result = run(cli).await;
+
+    if let Some(command) = telemetry_command.as_deref() {
+        telemetry::track_command(command, result.is_ok(), started_at.elapsed(), output).await;
+    }
+
+    if let Err(err) = result {
         let _ = output::print_error(&err, output);
         std::process::exit(1);
     }
