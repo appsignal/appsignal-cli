@@ -196,6 +196,15 @@ pub struct Dashboard {
     pub updated_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppResourceSection {
+    Users,
+    Notifiers,
+    Namespaces,
+    Dashboards,
+    DeployMarkers,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DashboardSource {
@@ -1389,26 +1398,26 @@ impl AppSignalClient {
     pub async fn get_app_resources(
         &self,
         app_id: &str,
-        sections: &[String],
+        sections: &[AppResourceSection],
     ) -> Result<AppResources> {
         // Build a dynamic query based on requested sections
         let include_all = sections.is_empty();
-        let want = |s: &str| include_all || sections.iter().any(|x| x == s);
+        let want = |section| include_all || sections.contains(&section);
 
         let mut fields = String::new();
-        if want("users") {
+        if want(AppResourceSection::Users) {
             fields.push_str("users { id name email } ");
         }
-        if want("notifiers") {
+        if want(AppResourceSection::Notifiers) {
             fields.push_str("notifiers { id name icon } ");
         }
-        if want("namespaces") {
+        if want(AppResourceSection::Namespaces) {
             fields.push_str("namespaces { id name } ");
         }
-        if want("dashboards") {
+        if want(AppResourceSection::Dashboards) {
             fields.push_str("dashboards { id title description } ");
         }
-        if want("deploy_markers") {
+        if want(AppResourceSection::DeployMarkers) {
             fields.push_str(
                 "deployMarkers(limit: 20) { id createdAt shortRevision revision gitCompareUrl user liveForInWords liveFor exceptionCount exceptionRate } ",
             );

@@ -9,6 +9,7 @@ mod version_check;
 use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand};
 
+use crate::api::AppResourceSection;
 use crate::commands::skill::InstallTarget;
 use crate::error::CliError;
 use crate::output::Output;
@@ -1024,7 +1025,7 @@ async fn run(cli: Cli) -> Result<()> {
                         args.app.as_deref(),
                         args.environment.as_deref(),
                         args.org.as_deref(),
-                        &["users"],
+                        &[AppResourceSection::Users],
                         cli.output,
                     )
                     .await?
@@ -1035,7 +1036,7 @@ async fn run(cli: Cli) -> Result<()> {
                         args.app.as_deref(),
                         args.environment.as_deref(),
                         args.org.as_deref(),
-                        &["notifiers"],
+                        &[AppResourceSection::Notifiers],
                         cli.output,
                     )
                     .await?
@@ -1046,7 +1047,7 @@ async fn run(cli: Cli) -> Result<()> {
                         args.app.as_deref(),
                         args.environment.as_deref(),
                         args.org.as_deref(),
-                        &["namespaces"],
+                        &[AppResourceSection::Namespaces],
                         cli.output,
                     )
                     .await?
@@ -1057,7 +1058,7 @@ async fn run(cli: Cli) -> Result<()> {
                         args.app.as_deref(),
                         args.environment.as_deref(),
                         args.org.as_deref(),
-                        &["dashboards"],
+                        &[AppResourceSection::Dashboards],
                         cli.output,
                     )
                     .await?
@@ -1068,7 +1069,7 @@ async fn run(cli: Cli) -> Result<()> {
                         args.app.as_deref(),
                         args.environment.as_deref(),
                         args.org.as_deref(),
-                        &["deploy_markers"],
+                        &[AppResourceSection::DeployMarkers],
                         cli.output,
                     )
                     .await?

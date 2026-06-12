@@ -5,7 +5,7 @@ use serde::Serialize;
 use tabled::Tabled;
 
 use super::{authenticated_client, resolve_org};
-use crate::api::{Dashboard, DashboardSource};
+use crate::api::{AppResourceSection, Dashboard, DashboardSource};
 use crate::config::Config;
 use crate::output::{self, Output, Render};
 
@@ -57,7 +57,7 @@ pub async fn list(
         .await?;
 
     let resources = client
-        .get_app_resources(&resolved_app_id, &["dashboards".to_string()])
+        .get_app_resources(&resolved_app_id, &[AppResourceSection::Dashboards])
         .await?;
     let dashboards = resources.dashboards.unwrap_or_default();
 
