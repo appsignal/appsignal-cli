@@ -27,7 +27,7 @@ There are two ways to authenticate:
 ### OAuth (recommended)
 
 ```sh
-appsignal-cli auth login --oauth
+appsignal-cli auth login
 ```
 
 This opens your browser to authorize the CLI with your AppSignal account. After
@@ -39,7 +39,7 @@ For project-specific setup, initialize `.appsignal.toml` first:
 
 ```sh
 appsignal-cli project init
-appsignal-cli auth login --oauth
+appsignal-cli auth login
 ```
 
 You can also set a project-specific endpoint, OAuth client ID, and default org
@@ -149,8 +149,8 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 
 | Command | Description |
 |---|---|
-| `auth login --oauth [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth using the active config for the current project or your global config |
-| `auth login [--token TOKEN] [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate with a personal API token using the active config for the current project or your global config |
+| `auth login [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth using the active config for the current project or your global config |
+| `auth login --token TOKEN [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate with a personal API token using the active config for the current project or your global config |
 | `auth logout` | Remove stored credentials from the active config |
 | `auth status` | Show authentication status and method |
 
@@ -410,7 +410,7 @@ endpoint = "https://staging.lol"
 # Optional: override the default production OAuth client ID
 oauth_client_id = "your-staging-client-id"
 
-# When using OAuth (set automatically by `auth login --oauth`):
+# When using OAuth (set automatically by `auth login`):
 [oauth]
 access_token = "..."
 refresh_token = "..."

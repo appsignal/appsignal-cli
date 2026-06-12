@@ -1,6 +1,5 @@
 use anyhow::Result;
 use serde::Serialize;
-use std::io::{self, Write};
 
 use crate::api::AppSignalClient;
 use crate::config::{AuthMethod, Config, OAuthCredentials};
@@ -34,22 +33,18 @@ pub struct LoginOptions {
     pub org: Option<String>,
 }
 
-/// Prompt the user for a token interactively if not provided via --token.
-fn prompt_token() -> Result<String> {
-    let stderr = io::stderr();
-    let mut stderr = stderr.lock();
-    write!(stderr, "Enter your AppSignal personal API token: ")?;
-    stderr.flush()?;
-    let mut token = String::new();
-    io::stdin().read_line(&mut token)?;
-    Ok(token.trim().to_string())
+impl LoginOptions {
+    fn uses_oauth(&self) -> bool {
+        self.use_oauth || self.token.is_none()
+    }
 }
 
 /// Authenticate with AppSignal.
 ///
-/// When `use_oauth` is true the CLI runs the OAuth PKCE flow (opens a browser).
-/// Otherwise, a personal API token is expected via `--token` or interactive prompt.
+/// OAuth is the default login method. When a token is provided explicitly via
+/// `--token`, the CLI stores that personal API token instead.
 pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
+    let use_oauth = options.uses_oauth();
     let mut config = Config::load()?;
     apply_login_config_overrides(
         &mut config,
@@ -61,7 +56,7 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
 
     let endpoint = config.endpoint_base_url()?;
 
-    if options.use_oauth {
+    if use_oauth {
         let oauth_result =
             oauth::perform_oauth_flow(endpoint.as_deref(), config.oauth_client_id()).await?;
 
@@ -100,10 +95,9 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
         );
     }
 
-    let token = match options.token {
-        Some(t) => t,
-        None => prompt_token()?,
-    };
+    let token = options
+        .token
+        .expect("token login requires an explicit token");
 
     if token.is_empty() {
         anyhow::bail!(CliError::msg("Token cannot be empty"));
@@ -311,5 +305,33 @@ mod tests {
         assert_eq!(config.token, None);
         assert_eq!(config.oauth_client_id(), Some("registered-client-id"));
         assert_eq!(config.oauth, Some(credentials));
+    }
+
+    #[test]
+    fn test_login_defaults_to_oauth_without_token() {
+        let options = LoginOptions {
+            token: None,
+            use_oauth: false,
+            endpoint: None,
+            rest_endpoint: None,
+            oauth_client_id: None,
+            org: None,
+        };
+
+        assert!(options.uses_oauth());
+    }
+
+    #[test]
+    fn test_login_uses_token_flow_when_token_is_provided() {
+        let options = LoginOptions {
+            token: Some("personal-token".to_string()),
+            use_oauth: false,
+            endpoint: None,
+            rest_endpoint: None,
+            oauth_client_id: None,
+            org: None,
+        };
+
+        assert!(!options.uses_oauth());
     }
 }

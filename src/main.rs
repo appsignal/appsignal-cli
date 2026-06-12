@@ -42,7 +42,7 @@ struct Cli {
 enum Commands {
     /// Show a more playful overview of the CLI
     About,
-    /// Configure your AppSignal API token
+    /// Configure AppSignal authentication
     Auth {
         #[command(subcommand)]
         action: AuthAction,
@@ -120,12 +120,12 @@ enum SkillAction {
 
 #[derive(Subcommand)]
 enum AuthAction {
-    /// Authenticate with AppSignal (personal token or OAuth)
+    /// Authenticate with AppSignal (OAuth by default, or personal token)
     Login {
         /// Your AppSignal personal API token
         #[arg(long, conflicts_with = "oauth")]
         token: Option<String>,
-        /// Authenticate via OAuth (opens your browser)
+        /// Authenticate via OAuth (default; opens your browser)
         #[arg(long)]
         oauth: bool,
         /// Override the AppSignal base URL (for example `https://staging.lol`)

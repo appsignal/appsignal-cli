@@ -195,13 +195,13 @@ The global config file at `~/.config/appsignal/config.toml` stores:
 - `org` — default organization slug (auto-saved by `apps list`, or set via `apps set-org`)
 - `endpoint` — (optional) custom AppSignal base URL, defaults to `https://appsignal.com/`
 - `oauth_client_id` — (optional) OAuth client ID override; defaults to the production client ID when unset
-- `[oauth]` — OAuth credentials (set via `auth login --oauth`):
+- `[oauth]` — OAuth credentials (set via `auth login`):
   - `access_token` — OAuth access token
   - `refresh_token` — OAuth refresh token (used for automatic renewal)
   - `expires_at` — UNIX timestamp when the access token expires
 
 When OAuth credentials are present, they take precedence over the personal token.
-Switching auth methods clears the other (i.e., `--oauth` clears `token`, `--token` clears `[oauth]`).
+Switching auth methods clears the other (i.e., `auth login` clears `token`, `--token` clears `[oauth]`).
 
 The org slug is used as a default for all commands that need an organization.
 It can always be overridden with `--org <slug>`.
@@ -256,8 +256,8 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 
 | Command | Description |
 |---|---|
-| `appsignal-cli auth login --oauth [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth PKCE flow using the active config for the current project or the global config |
-| `appsignal-cli auth login [--token TOKEN] [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Store personal API token and optional config overrides in the active config, validates via `{ __typename }` |
+| `appsignal-cli auth login [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth PKCE flow using the active config for the current project or the global config |
+| `appsignal-cli auth login --token TOKEN [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Store personal API token and optional config overrides in the active config, validates via `{ __typename }` |
 | `appsignal-cli auth logout` | Delete stored credentials from the active config |
 | `appsignal-cli auth status` | Show auth status, method (OAuth/token), and expiry |
 | `appsignal-cli project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |

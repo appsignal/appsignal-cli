@@ -48,7 +48,7 @@ pub fn show(format: Output) -> Result<()> {
     let default_org = config.org.clone().filter(|org| !org.is_empty());
     let auth = auth_summary(&config);
     let suggested_commands = vec![
-        "appsignal-cli auth login --oauth",
+        "appsignal-cli auth login",
         "appsignal-cli apps orgs",
         "appsignal-cli incidents list --app \"MyApp\" --environment production",
         "appsignal-cli logs tail --app \"MyApp\" --environment production",
@@ -278,7 +278,7 @@ mod tests {
             &auth_summary(&config),
             SUBTITLES[0],
             &[
-                "appsignal-cli auth login --oauth",
+                "appsignal-cli auth login",
                 "appsignal-cli apps orgs",
                 "appsignal-cli incidents list --app \"MyApp\" --environment production",
                 "appsignal-cli logs tail --app \"MyApp\" --environment production",
@@ -292,7 +292,7 @@ mod tests {
         assert!(output.contains(":: Platform   linux / x86_64"));
         assert!(output.contains(":: Default org my-org"));
         assert!(output.contains(":: Auth       Personal token"));
-        assert!(output.contains("appsignal-cli auth login --oauth"));
+        assert!(output.contains("appsignal-cli auth login"));
         assert!(!output.contains("\x1b["));
     }
 
