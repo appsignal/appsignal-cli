@@ -10,8 +10,6 @@ const LOCAL_CONFIG_FILE_NAME: &str = ".appsignal.toml";
 /// Describes how the CLI authenticates with the AppSignal API.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuthMethod {
-    /// Personal API token passed as a query parameter.
-    PersonalToken(String),
     /// OAuth access token sent as a Bearer header, with optional refresh support.
     OAuth {
         access_token: String,
@@ -23,7 +21,6 @@ pub enum AuthMethod {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
-    pub token: Option<String>,
     pub org: Option<String>,
     pub endpoint: Option<String>,
     /// Optional REST/public API base URL. Falls back to `endpoint` when unset.
@@ -31,7 +28,7 @@ pub struct Config {
     /// OAuth client ID used for login and token refresh. Defaults to the production
     /// client when unset.
     pub oauth_client_id: Option<String>,
-    /// OAuth credentials (stored alongside the personal token; OAuth takes precedence).
+    /// OAuth credentials for the active config.
     pub oauth: Option<OAuthCredentials>,
     #[serde(skip)]
     pub(crate) active_path: Option<PathBuf>,
@@ -161,7 +158,6 @@ impl Config {
 
     /// Clear auth credentials from the active config scope.
     pub fn clear_credentials(&mut self) {
-        self.token = None;
         self.oauth_client_id = None;
         self.oauth = None;
     }
@@ -181,18 +177,7 @@ impl Config {
         Ok(())
     }
 
-    /// Return the stored token, or error with a helpful message.
-    pub fn require_token(&self) -> Result<&str> {
-        self.token
-            .as_deref()
-            .filter(|t| !t.is_empty())
-            .context(CliError::msg(
-                "Not authenticated. Run `appsignal-cli auth login` first.",
-            ))
-    }
-
     /// Determine the authentication method to use.
-    /// OAuth credentials take precedence over a personal token when present.
     pub fn auth_method(&self) -> Result<AuthMethod> {
         if let Some(ref oauth) = self.oauth {
             return Ok(AuthMethod::OAuth {
@@ -202,8 +187,7 @@ impl Config {
             });
         }
 
-        let token = self.require_token()?;
-        Ok(AuthMethod::PersonalToken(token.to_string()))
+        Err(CliError::msg("Not authenticated. Run `appsignal-cli auth login` first.").into())
     }
 
     /// Return the configured OAuth client ID, if present and non-empty.
@@ -255,8 +239,7 @@ impl Config {
 
 impl PartialEq for Config {
     fn eq(&self, other: &Self) -> bool {
-        self.token == other.token
-            && self.org == other.org
+        self.org == other.org
             && self.endpoint == other.endpoint
             && self.rest_endpoint == other.rest_endpoint
             && self.oauth_client_id == other.oauth_client_id
@@ -297,40 +280,12 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.token, None);
         assert_eq!(config.org, None);
-    }
-
-    #[test]
-    fn test_require_token_with_token() {
-        let config = Config {
-            token: Some("abc123".to_string()),
-            ..Config::default()
-        };
-        assert_eq!(config.require_token().unwrap(), "abc123");
-    }
-
-    #[test]
-    fn test_require_token_without_token() {
-        let config = Config::default();
-        let err = config.require_token().unwrap_err();
-        assert!(err.to_string().contains("Not authenticated"));
-    }
-
-    #[test]
-    fn test_require_token_with_empty_token() {
-        let config = Config {
-            token: Some("".to_string()),
-            ..Config::default()
-        };
-        let err = config.require_token().unwrap_err();
-        assert!(err.to_string().contains("Not authenticated"));
     }
 
     #[test]
     fn test_serde_round_trip() {
         let config = Config {
-            token: Some("my-token".to_string()),
             org: Some("my-org".to_string()),
             ..Config::default()
         };
@@ -361,8 +316,12 @@ mod tests {
         let path = config_path(&dir);
 
         let config = Config {
-            token: Some("test-token".to_string()),
             org: Some("test-org".to_string()),
+            oauth: Some(OAuthCredentials {
+                access_token: "test-access-token".to_string(),
+                refresh_token: Some("test-refresh-token".to_string()),
+                expires_at: Some(1_700_000_000),
+            }),
             ..Config::default()
         };
         config.save_to(&path).unwrap();
@@ -377,7 +336,7 @@ mod tests {
         let path = dir.path().join("nested").join("dir").join("config.toml");
 
         let config = Config {
-            token: Some("tok".to_string()),
+            org: Some("test-org".to_string()),
             ..Config::default()
         };
         config.save_to(&path).unwrap();
@@ -390,7 +349,7 @@ mod tests {
         let path = config_path(&dir);
 
         let config = Config {
-            token: Some("tok".to_string()),
+            org: Some("test-org".to_string()),
             ..Config::default()
         };
         config.save_to(&path).unwrap();
@@ -414,11 +373,11 @@ mod tests {
     fn test_load_partial_config() {
         let dir = TempDir::new().unwrap();
         let path = config_path(&dir);
-        fs::write(&path, "token = \"only-token\"\n").unwrap();
+        fs::write(&path, "org = \"only-org\"\n").unwrap();
 
         let config = Config::load_from_path(&path).unwrap();
-        assert_eq!(config.token, Some("only-token".to_string()));
-        assert_eq!(config.org, None);
+        assert_eq!(config.org, Some("only-org".to_string()));
+        assert_eq!(config.oauth, None);
     }
 
     #[test]
@@ -467,7 +426,6 @@ mod tests {
 
         let config = Config::load_local_only_at(&local_path).unwrap();
 
-        assert_eq!(config.token, None);
         assert_eq!(config.org, Some("local-org".to_string()));
         assert_eq!(
             config.endpoint_base_url().unwrap(),
@@ -488,7 +446,6 @@ mod tests {
 
         let config = Config::load_local_only_at(&local_path).unwrap();
 
-        assert_eq!(config.token, None);
         assert_eq!(config.oauth, None);
         assert_eq!(config.active_path(), Some(local_path.as_path()));
     }
@@ -556,12 +513,23 @@ mod tests {
         fs::write(&local_path, "endpoint = \"https://staging.lol\"\n").unwrap();
 
         let mut config = Config::load_local_only_at(&local_path).unwrap();
-        config.token = Some("local-token".to_string());
+        config.oauth = Some(OAuthCredentials {
+            access_token: "local-access-token".to_string(),
+            refresh_token: Some("local-refresh-token".to_string()),
+            expires_at: Some(1_700_000_000),
+        });
         config.save().unwrap();
 
         let local_config = Config::load_from_path(&local_path).unwrap();
 
-        assert_eq!(local_config.token, Some("local-token".to_string()));
+        assert_eq!(
+            local_config.oauth,
+            Some(OAuthCredentials {
+                access_token: "local-access-token".to_string(),
+                refresh_token: Some("local-refresh-token".to_string()),
+                expires_at: Some(1_700_000_000),
+            })
+        );
         assert_eq!(
             local_config.endpoint,
             Some("https://staging.lol".to_string())
@@ -575,7 +543,6 @@ mod tests {
         let local_path = local_config_path(&dir);
 
         let mut config = Config {
-            token: Some("secret".to_string()),
             oauth_client_id: Some("registered-client-id".to_string()),
             oauth: Some(OAuthCredentials {
                 access_token: "oauth-access".to_string(),
@@ -588,7 +555,6 @@ mod tests {
 
         config.clear_credentials();
 
-        assert_eq!(config.token, None);
         assert_eq!(config.oauth_client_id, None);
         assert_eq!(config.oauth, None);
     }
@@ -599,14 +565,18 @@ mod tests {
         let path = config_path(&dir);
 
         let config1 = Config {
-            token: Some("first".to_string()),
+            org: Some("first-org".to_string()),
             ..Config::default()
         };
         config1.save_to(&path).unwrap();
 
         let config2 = Config {
-            token: Some("second".to_string()),
             org: Some("new-org".to_string()),
+            oauth: Some(OAuthCredentials {
+                access_token: "second-access-token".to_string(),
+                refresh_token: None,
+                expires_at: Some(1_700_000_000),
+            }),
             ..Config::default()
         };
         config2.save_to(&path).unwrap();
@@ -616,19 +586,8 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_method_personal_token() {
+    fn test_auth_method_oauth() {
         let config = Config {
-            token: Some("my-token".to_string()),
-            ..Config::default()
-        };
-        let method = config.auth_method().unwrap();
-        assert_eq!(method, AuthMethod::PersonalToken("my-token".to_string()));
-    }
-
-    #[test]
-    fn test_auth_method_oauth_takes_precedence() {
-        let config = Config {
-            token: Some("my-token".to_string()),
             oauth: Some(OAuthCredentials {
                 access_token: "oauth-access".to_string(),
                 refresh_token: Some("oauth-refresh".to_string()),
@@ -657,7 +616,6 @@ mod tests {
     #[test]
     fn test_oauth_credentials_serde_round_trip() {
         let config = Config {
-            token: None,
             org: Some("my-org".to_string()),
             endpoint: None,
             oauth_client_id: None,
@@ -711,7 +669,6 @@ mod tests {
         let path = config_path(&dir);
 
         let config = Config {
-            token: None,
             org: Some("test-org".to_string()),
             endpoint: None,
             oauth_client_id: None,
@@ -726,6 +683,18 @@ mod tests {
 
         let loaded = Config::load_from_path(&path).unwrap();
         assert_eq!(loaded, config);
+    }
+
+    #[test]
+    fn test_load_legacy_token_config_ignores_unsupported_token() {
+        let dir = TempDir::new().unwrap();
+        let path = config_path(&dir);
+        fs::write(&path, "token = \"legacy-token\"\norg = \"legacy-org\"\n").unwrap();
+
+        let config = Config::load_from_path(&path).unwrap();
+
+        assert_eq!(config.org, Some("legacy-org".to_string()));
+        assert_eq!(config.oauth, None);
     }
 
     #[test]
