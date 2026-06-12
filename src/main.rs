@@ -1100,7 +1100,7 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::Auth { action } => match action {
             AuthAction::Login {
                 token,
-                oauth,
+                oauth: _,
                 endpoint,
                 rest_endpoint,
                 oauth_client_id,
@@ -1108,8 +1108,10 @@ async fn run(cli: Cli) -> Result<()> {
             } => {
                 commands::auth::login(
                     commands::auth::LoginOptions {
-                        token,
-                        use_oauth: oauth,
+                        method: match token {
+                            Some(token) => commands::auth::LoginMethod::Token(token),
+                            None => commands::auth::LoginMethod::OAuth,
+                        },
                         endpoint,
                         rest_endpoint,
                         oauth_client_id,
