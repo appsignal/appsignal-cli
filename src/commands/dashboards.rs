@@ -5,28 +5,40 @@ use serde::Serialize;
 use tabled::Tabled;
 
 use super::{authenticated_client, resolve_org};
-use crate::api::Dashboard;
+use crate::api::{Dashboard, DashboardSource};
 use crate::config::Config;
-use crate::output::{self, Output};
+use crate::output::{self, Output, Render};
 
 #[derive(Serialize)]
-struct DashboardListResponse<'a> {
-    dashboards: &'a [Dashboard],
+struct DashboardListResponse {
+    dashboards: Vec<Dashboard>,
 }
 
 #[derive(Serialize)]
-struct DashboardResponse<'a> {
-    dashboard: &'a Dashboard,
+struct DashboardResponse {
+    dashboard: Dashboard,
 }
 
 #[derive(Tabled)]
-struct DashboardRow<'a> {
+struct DashboardRow {
     #[tabled(rename = "ID")]
-    id: &'a str,
+    id: String,
     #[tabled(rename = "TITLE")]
-    title: &'a str,
+    title: String,
     #[tabled(rename = "DESCRIPTION")]
-    description: &'a str,
+    description: String,
+}
+
+impl Render for DashboardListResponse {
+    fn render_human(&self, w: &mut dyn Write) -> io::Result<()> {
+        render_dashboard_table(w, &self.dashboards)
+    }
+}
+
+impl Render for DashboardResponse {
+    fn render_human(&self, w: &mut dyn Write) -> io::Result<()> {
+        render_dashboard_detail(w, &self.dashboard)
+    }
 }
 
 pub async fn list(
@@ -49,13 +61,7 @@ pub async fn list(
         .await?;
     let dashboards = resources.dashboards.unwrap_or_default();
 
-    output::print_with(
-        DashboardListResponse {
-            dashboards: &dashboards,
-        },
-        format,
-        |w| render_dashboard_table(w, &dashboards),
-    )
+    output::print(&DashboardListResponse { dashboards }, format)
 }
 
 pub async fn create(
@@ -80,13 +86,7 @@ pub async fn create(
         .await?;
 
     crate::status!("Dashboard {} created.", dashboard.id);
-    output::print_with(
-        DashboardResponse {
-            dashboard: &dashboard,
-        },
-        format,
-        |w| render_dashboard_detail(w, &dashboard),
-    )
+    output::print(&DashboardResponse { dashboard }, format)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -113,13 +113,7 @@ pub async fn update(
         .await?;
 
     crate::status!("Dashboard {} updated.", dashboard_id);
-    output::print_with(
-        DashboardResponse {
-            dashboard: &dashboard,
-        },
-        format,
-        |w| render_dashboard_detail(w, &dashboard),
-    )
+    output::print(&DashboardResponse { dashboard }, format)
 }
 
 fn render_dashboard_detail(w: &mut dyn Write, dashboard: &Dashboard) -> io::Result<()> {
@@ -133,7 +127,10 @@ fn render_dashboard_detail(w: &mut dyn Write, dashboard: &Dashboard) -> io::Resu
                 dashboard.description.as_deref().unwrap_or("-"),
             ),
             ("Label", dashboard.label.as_deref().unwrap_or("-")),
-            ("Source", dashboard.source.as_deref().unwrap_or("-")),
+            (
+                "Source",
+                dashboard.source.map(DashboardSource::as_str).unwrap_or("-"),
+            ),
             ("Created at", dashboard.created_at.as_deref().unwrap_or("-")),
             ("Updated at", dashboard.updated_at.as_deref().unwrap_or("-")),
         ],
@@ -146,9 +143,12 @@ fn render_dashboard_table(w: &mut dyn Write, dashboards: &[Dashboard]) -> io::Re
     }
 
     let rows = dashboards.iter().map(|dashboard| DashboardRow {
-        id: &dashboard.id,
-        title: dashboard.title.as_deref().unwrap_or("-"),
-        description: dashboard.description.as_deref().unwrap_or("-"),
+        id: dashboard.id.clone(),
+        title: dashboard.title.clone().unwrap_or_else(|| "-".to_string()),
+        description: dashboard
+            .description
+            .clone()
+            .unwrap_or_else(|| "-".to_string()),
     });
 
     output::table(w, rows)?;
@@ -173,7 +173,7 @@ mod tests {
             title: Some("Overview".to_string()),
             description: Some("Main dashboard".to_string()),
             label: Some("beta".to_string()),
-            source: Some("USER_CREATED".to_string()),
+            source: Some(DashboardSource::UserCreated),
             created_at: Some("2026-06-12T10:00:00Z".to_string()),
             updated_at: Some("2026-06-12T11:00:00Z".to_string()),
         }
@@ -220,9 +220,7 @@ mod tests {
     #[test]
     fn dashboard_response_serializes_nested_shape() {
         let dashboard = sample_dashboard();
-        let response = DashboardResponse {
-            dashboard: &dashboard,
-        };
+        let response = DashboardResponse { dashboard };
 
         let json = serde_json::to_value(&response).unwrap();
 
@@ -235,7 +233,9 @@ mod tests {
     fn dashboard_list_response_serializes_nested_shape() {
         let resources = sample_resources();
         let dashboards = resources.dashboards.as_ref().unwrap();
-        let response = DashboardListResponse { dashboards };
+        let response = DashboardListResponse {
+            dashboards: dashboards.clone(),
+        };
 
         let json = serde_json::to_value(&response).unwrap();
 

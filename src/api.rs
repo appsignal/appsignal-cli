@@ -189,11 +189,25 @@ pub struct Dashboard {
     pub title: Option<String>,
     pub description: Option<String>,
     pub label: Option<String>,
-    pub source: Option<String>,
+    pub source: Option<DashboardSource>,
     #[serde(rename = "createdAt")]
     pub created_at: Option<String>,
     #[serde(rename = "updatedAt")]
     pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DashboardSource {
+    UserCreated,
+}
+
+impl DashboardSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UserCreated => "USER_CREATED",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -3855,7 +3869,7 @@ mod tests {
 
         assert_eq!(dashboard.id, "dash-2");
         assert_eq!(dashboard.title.as_deref(), Some("Overview"));
-        assert_eq!(dashboard.source.as_deref(), Some("USER_CREATED"));
+        assert_eq!(dashboard.source, Some(DashboardSource::UserCreated));
     }
 
     #[tokio::test]

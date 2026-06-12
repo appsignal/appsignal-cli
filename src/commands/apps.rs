@@ -349,7 +349,7 @@ pub async fn resources(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{Dashboard, DeployMarker, Namespace, Notifier, User};
+    use crate::api::{Dashboard, DashboardSource, DeployMarker, Namespace, Notifier, User};
 
     #[test]
     fn app_resources_render_human_uses_tables_for_sections() {
@@ -373,7 +373,7 @@ mod tests {
                 title: Some("Overview".to_string()),
                 description: Some("Main dashboard".to_string()),
                 label: None,
-                source: None,
+                source: Some(DashboardSource::UserCreated),
                 created_at: None,
                 updated_at: None,
             }]),
