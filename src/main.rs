@@ -1,9 +1,11 @@
 mod api;
+mod client_headers;
 mod commands;
 mod config;
 mod error;
 mod oauth;
 mod output;
+mod telemetry;
 mod version_check;
 
 use anyhow::{bail, Result};
@@ -933,12 +935,139 @@ enum DashboardAction {
     },
 }
 
+impl Cli {
+    fn telemetry_command(&self) -> telemetry::TelemetryCommand {
+        self.command.telemetry_command()
+    }
+}
+
+trait ToTelemetryCommand {
+    fn telemetry_command(&self) -> telemetry::TelemetryCommand;
+}
+
+macro_rules! impl_telemetry_command {
+    ($ty:ty { $($pattern:pat => $command:expr),+ $(,)? }) => {
+        impl ToTelemetryCommand for $ty {
+            fn telemetry_command(&self) -> telemetry::TelemetryCommand {
+                match self {
+                    $($pattern => $command),+
+                }
+            }
+        }
+    };
+}
+
+impl_telemetry_command!(Commands {
+    Self::About => telemetry::TelemetryCommand::About,
+    Self::Auth { action } => action.telemetry_command(),
+    Self::Apps { action } => action.telemetry_command(),
+    Self::Project { action } => action.telemetry_command(),
+    Self::Incidents { action } => action.telemetry_command(),
+    Self::Logs { action } => action.telemetry_command(),
+    Self::Dashboards { action } => action.telemetry_command(),
+    Self::Triggers { action } => action.telemetry_command(),
+    Self::Skill { action } => action.telemetry_command()
+});
+
+impl_telemetry_command!(SkillAction {
+    Self::Install { .. } => telemetry::TelemetryCommand::SkillInstall,
+    Self::Update { .. } => telemetry::TelemetryCommand::SkillUpdate,
+    Self::Status { .. } => telemetry::TelemetryCommand::SkillStatus
+});
+
+impl_telemetry_command!(AuthAction {
+    Self::Login { .. } => telemetry::TelemetryCommand::AuthLogin,
+    Self::Logout => telemetry::TelemetryCommand::AuthLogout,
+    Self::Status => telemetry::TelemetryCommand::AuthStatus
+});
+
+impl_telemetry_command!(AppsAction {
+    Self::List { .. } => telemetry::TelemetryCommand::AppsList,
+    Self::Info { .. } => telemetry::TelemetryCommand::AppsInfo,
+    Self::Find { .. } => telemetry::TelemetryCommand::AppsFind,
+    Self::SetOrg { .. } => telemetry::TelemetryCommand::AppsSetOrg,
+    Self::ShowOrg => telemetry::TelemetryCommand::AppsShowOrg,
+    Self::Orgs => telemetry::TelemetryCommand::AppsOrgs,
+    Self::Resources { action } => action.telemetry_command()
+});
+
+impl_telemetry_command!(AppResourceAction {
+    Self::All(_) => telemetry::TelemetryCommand::AppsResourcesAll,
+    Self::Users(_) => telemetry::TelemetryCommand::AppsResourcesUsers,
+    Self::Notifiers(_) => telemetry::TelemetryCommand::AppsResourcesNotifiers,
+    Self::Namespaces(_) => telemetry::TelemetryCommand::AppsResourcesNamespaces,
+    Self::Dashboards(_) => telemetry::TelemetryCommand::AppsResourcesDashboards,
+    Self::DeployMarkers(_) => telemetry::TelemetryCommand::AppsResourcesDeployMarkers
+});
+
+impl_telemetry_command!(ProjectAction {
+    Self::Init { .. } => telemetry::TelemetryCommand::ProjectInit
+});
+
+impl_telemetry_command!(IncidentsAction {
+    Self::List { .. } => telemetry::TelemetryCommand::IncidentsList,
+    Self::ListExceptions { .. } => telemetry::TelemetryCommand::IncidentsListExceptions,
+    Self::ListPerformance { .. } => telemetry::TelemetryCommand::IncidentsListPerformance,
+    Self::ListAnomalies { .. } => telemetry::TelemetryCommand::IncidentsListAnomalies,
+    Self::Show { .. } => telemetry::TelemetryCommand::IncidentsShow,
+    Self::Update { .. } => telemetry::TelemetryCommand::IncidentsUpdate,
+    Self::AddNote { .. } => telemetry::TelemetryCommand::IncidentsAddNote
+});
+
+impl_telemetry_command!(LogsAction {
+    Self::Tail { .. } => telemetry::TelemetryCommand::LogsTail,
+    Self::Search { .. } => telemetry::TelemetryCommand::LogsSearch,
+    Self::Views { .. } => telemetry::TelemetryCommand::LogsViews,
+    Self::Sources { .. } => telemetry::TelemetryCommand::LogsSources,
+    Self::Metrics { action } => action.telemetry_command(),
+    Self::Triggers { action } => action.telemetry_command()
+});
+
+impl_telemetry_command!(LogMetricAction {
+    Self::List { .. } => telemetry::TelemetryCommand::LogsMetricsList,
+    Self::Create { .. } => telemetry::TelemetryCommand::LogsMetricsCreate,
+    Self::Update { .. } => telemetry::TelemetryCommand::LogsMetricsUpdate,
+    Self::Delete { .. } => telemetry::TelemetryCommand::LogsMetricsDelete
+});
+
+impl_telemetry_command!(LogTriggerAction {
+    Self::List { .. } => telemetry::TelemetryCommand::LogsTriggersList,
+    Self::Create { .. } => telemetry::TelemetryCommand::LogsTriggersCreate,
+    Self::Update { .. } => telemetry::TelemetryCommand::LogsTriggersUpdate,
+    Self::Delete { .. } => telemetry::TelemetryCommand::LogsTriggersDelete
+});
+
+impl_telemetry_command!(TriggerAction {
+    Self::List { .. } => telemetry::TelemetryCommand::TriggersList,
+    Self::Create { .. } => telemetry::TelemetryCommand::TriggersCreate,
+    Self::Update { .. } => telemetry::TelemetryCommand::TriggersUpdate,
+    Self::Archive { .. } => telemetry::TelemetryCommand::TriggersArchive
+});
+
+impl_telemetry_command!(DashboardAction {
+    Self::List { .. } => telemetry::TelemetryCommand::DashboardsList,
+    Self::Create { .. } => telemetry::TelemetryCommand::DashboardsCreate,
+    Self::Update { .. } => telemetry::TelemetryCommand::DashboardsUpdate
+});
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    let telemetry_command = cli.telemetry_command();
     let output = cli.output;
+    let started_at = std::time::Instant::now();
 
-    if let Err(err) = run(cli).await {
+    let result = run(cli).await;
+
+    telemetry::track_command(
+        telemetry_command,
+        result.is_ok(),
+        started_at.elapsed(),
+        output,
+    )
+    .await;
+
+    if let Err(err) = result {
         let _ = output::print_error(&err, output);
         std::process::exit(1);
     }
@@ -1626,4 +1755,66 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_command_maps_nested_app_resource_commands() {
+        let cli = Cli {
+            output: Output::Human,
+            command: Commands::Apps {
+                action: AppsAction::Resources {
+                    action: AppResourceAction::DeployMarkers(AppResourceArgs {
+                        app_id: None,
+                        app: None,
+                        environment: None,
+                        org: None,
+                    }),
+                },
+            },
+        };
+
+        assert_eq!(
+            cli.telemetry_command(),
+            telemetry::TelemetryCommand::AppsResourcesDeployMarkers
+        );
+    }
+
+    #[test]
+    fn telemetry_command_maps_deeply_nested_log_trigger_commands() {
+        let cli = Cli {
+            output: Output::Json,
+            command: Commands::Logs {
+                action: LogsAction::Triggers {
+                    action: LogTriggerAction::Update {
+                        app: LogActionAppArgs {
+                            app_id: None,
+                            app: None,
+                            environment: None,
+                            org: None,
+                        },
+                        id: "trigger_rule_123".to_string(),
+                        name: None,
+                        query: None,
+                        source_ids: Vec::new(),
+                        clear_sources: false,
+                        description: None,
+                        clear_description: false,
+                        notifier_ids: Vec::new(),
+                        clear_notifiers: false,
+                        severities: Vec::new(),
+                        clear_severities: false,
+                    },
+                },
+            },
+        };
+
+        assert_eq!(
+            cli.telemetry_command(),
+            telemetry::TelemetryCommand::LogsTriggersUpdate
+        );
+    }
 }

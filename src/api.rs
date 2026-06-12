@@ -6,6 +6,7 @@ use reqwest::{Client, Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::client_headers::with_appsignal_headers;
 use crate::config::AuthMethod;
 use crate::error::CliError;
 
@@ -1233,19 +1234,21 @@ impl AppSignalClient {
     fn graphql_request(&self, method: Method, url: &str) -> RequestBuilder {
         match &self.auth {
             AuthMethod::PersonalToken(token) => {
-                self.http.request(method, url).query(&[("token", token)])
+                with_appsignal_headers(self.http.request(method, url)).query(&[("token", token)])
             }
             AuthMethod::OAuth { access_token, .. } => {
-                self.http.request(method, url).bearer_auth(access_token)
+                with_appsignal_headers(self.http.request(method, url)).bearer_auth(access_token)
             }
         }
     }
 
     fn rest_request(&self, method: Method, url: &str) -> RequestBuilder {
         match &self.auth {
-            AuthMethod::PersonalToken(token) => self.http.request(method, url).bearer_auth(token),
+            AuthMethod::PersonalToken(token) => {
+                with_appsignal_headers(self.http.request(method, url)).bearer_auth(token)
+            }
             AuthMethod::OAuth { access_token, .. } => {
-                self.http.request(method, url).bearer_auth(access_token)
+                with_appsignal_headers(self.http.request(method, url).bearer_auth(access_token))
             }
         }
     }
@@ -2433,6 +2436,9 @@ fn graphql_http_error(status: reqwest::StatusCode, body: &str) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client_headers::{
+        CLIENT_NAME, CLIENT_NAME_HEADER, CLIENT_VERSION, CLIENT_VERSION_HEADER, USER_AGENT_VALUE,
+    };
     use wiremock::matchers::{body_string_contains, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -2929,6 +2935,9 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/graphql"))
             .and(query_param("token", "test-token"))
+            .and(header("user-agent", USER_AGENT_VALUE))
+            .and(header("x-appsignal-client", CLIENT_NAME))
+            .and(header("x-appsignal-client-version", CLIENT_VERSION))
             .and(body_string_contains("__typename"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(graphql_response(json!({
@@ -3081,6 +3090,14 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/v2/logs/lines"))
             .and(header("authorization", "Bearer tok"))
+            .and(header(
+                CLIENT_NAME_HEADER.to_ascii_lowercase().as_str(),
+                CLIENT_NAME,
+            ))
+            .and(header(
+                CLIENT_VERSION_HEADER.to_ascii_lowercase().as_str(),
+                CLIENT_VERSION,
+            ))
             .and(body_string_contains(r#""order":"DESC""#))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([
                 {
