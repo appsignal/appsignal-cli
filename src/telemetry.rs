@@ -11,48 +11,142 @@ const DEFAULT_BASE_URL: &str = "https://appsignal.com";
 const TELEMETRY_PATH: &str = "/api/cli_telemetry";
 const TELEMETRY_ENV_VAR: &str = "APPSIGNAL_CLI_TELEMETRY";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+enum Event {
+    #[serde(rename = "command.run")]
+    CommandRun,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum TelemetryCommand {
+    #[serde(rename = "about")]
+    About,
+    #[serde(rename = "auth.login")]
+    AuthLogin,
+    #[serde(rename = "auth.logout")]
+    AuthLogout,
+    #[serde(rename = "auth.status")]
+    AuthStatus,
+    #[serde(rename = "apps.list")]
+    AppsList,
+    #[serde(rename = "apps.info")]
+    AppsInfo,
+    #[serde(rename = "apps.find")]
+    AppsFind,
+    #[serde(rename = "apps.set-org")]
+    AppsSetOrg,
+    #[serde(rename = "apps.show-org")]
+    AppsShowOrg,
+    #[serde(rename = "apps.orgs")]
+    AppsOrgs,
+    #[serde(rename = "apps.resources.all")]
+    AppsResourcesAll,
+    #[serde(rename = "apps.resources.users")]
+    AppsResourcesUsers,
+    #[serde(rename = "apps.resources.notifiers")]
+    AppsResourcesNotifiers,
+    #[serde(rename = "apps.resources.namespaces")]
+    AppsResourcesNamespaces,
+    #[serde(rename = "apps.resources.dashboards")]
+    AppsResourcesDashboards,
+    #[serde(rename = "apps.resources.deploy-markers")]
+    AppsResourcesDeployMarkers,
+    #[serde(rename = "project.init")]
+    ProjectInit,
+    #[serde(rename = "dashboards.list")]
+    DashboardsList,
+    #[serde(rename = "dashboards.create")]
+    DashboardsCreate,
+    #[serde(rename = "dashboards.update")]
+    DashboardsUpdate,
+    #[serde(rename = "incidents.list")]
+    IncidentsList,
+    #[serde(rename = "incidents.list-exceptions")]
+    IncidentsListExceptions,
+    #[serde(rename = "incidents.list-performance")]
+    IncidentsListPerformance,
+    #[serde(rename = "incidents.list-anomalies")]
+    IncidentsListAnomalies,
+    #[serde(rename = "incidents.show")]
+    IncidentsShow,
+    #[serde(rename = "incidents.update")]
+    IncidentsUpdate,
+    #[serde(rename = "incidents.add-note")]
+    IncidentsAddNote,
+    #[serde(rename = "logs.tail")]
+    LogsTail,
+    #[serde(rename = "logs.search")]
+    LogsSearch,
+    #[serde(rename = "logs.views")]
+    LogsViews,
+    #[serde(rename = "logs.sources")]
+    LogsSources,
+    #[serde(rename = "logs.metrics.list")]
+    LogsMetricsList,
+    #[serde(rename = "logs.metrics.create")]
+    LogsMetricsCreate,
+    #[serde(rename = "logs.metrics.update")]
+    LogsMetricsUpdate,
+    #[serde(rename = "logs.metrics.delete")]
+    LogsMetricsDelete,
+    #[serde(rename = "logs.triggers.list")]
+    LogsTriggersList,
+    #[serde(rename = "logs.triggers.create")]
+    LogsTriggersCreate,
+    #[serde(rename = "logs.triggers.update")]
+    LogsTriggersUpdate,
+    #[serde(rename = "logs.triggers.delete")]
+    LogsTriggersDelete,
+    #[serde(rename = "triggers.list")]
+    TriggersList,
+    #[serde(rename = "triggers.create")]
+    TriggersCreate,
+    #[serde(rename = "triggers.update")]
+    TriggersUpdate,
+    #[serde(rename = "triggers.archive")]
+    TriggersArchive,
+    #[serde(rename = "skill.install")]
+    SkillInstall,
+    #[serde(rename = "skill.update")]
+    SkillUpdate,
+    #[serde(rename = "skill.status")]
+    SkillStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+enum OutputFormat {
+    #[serde(rename = "human")]
+    Human,
+    #[serde(rename = "json")]
+    Json,
+}
+
+impl From<Output> for OutputFormat {
+    fn from(output: Output) -> Self {
+        match output {
+            Output::Human => Self::Human,
+            Output::Json => Self::Json,
+        }
+    }
+}
+
 #[derive(Serialize)]
-struct CommandRunEvent<'a> {
-    event: &'a str,
-    command: &'a str,
+struct CommandRunEvent {
+    event: Event,
+    command: TelemetryCommand,
     success: bool,
     duration_ms: u64,
-    cli_version: &'a str,
-    output_format: &'a str,
+    cli_version: &'static str,
+    output_format: OutputFormat,
 }
 
-pub fn command_path_from_env_args() -> Option<String> {
-    let mut command_parts = Vec::new();
-    let mut skip_next = false;
-
-    for arg in std::env::args().skip(1) {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-
-        match arg.as_str() {
-            "-o" | "--output" | "--format" => {
-                skip_next = true;
-            }
-            _ if arg.starts_with('-') => {
-                if !command_parts.is_empty() {
-                    break;
-                }
-            }
-            _ => command_parts.push(arg),
-        }
-    }
-
-    if command_parts.is_empty() {
-        None
-    } else {
-        Some(command_parts.join("."))
-    }
-}
-
-pub async fn track_command(command: &str, success: bool, duration: Duration, output: Output) {
-    if !telemetry_enabled() || command.is_empty() {
+pub async fn track_command(
+    command: TelemetryCommand,
+    success: bool,
+    duration: Duration,
+    output: Output,
+) {
+    if !telemetry_enabled() {
         return;
     }
 
@@ -64,12 +158,12 @@ pub async fn track_command(command: &str, success: bool, duration: Duration, out
 
     let _ = with_appsignal_headers(client.post(telemetry_url(&base_url)))
         .json(&CommandRunEvent {
-            event: "command.run",
+            event: Event::CommandRun,
             command,
             success,
             duration_ms: duration.as_millis().min(u64::MAX as u128) as u64,
             cli_version: CLIENT_VERSION,
-            output_format: output_label(output),
+            output_format: output.into(),
         })
         .send()
         .await;
@@ -84,13 +178,6 @@ fn telemetry_base_url() -> String {
 
 fn telemetry_url(base_url: &str) -> String {
     format!("{}{}", base_url.trim_end_matches('/'), TELEMETRY_PATH)
-}
-
-fn output_label(output: Output) -> &'static str {
-    match output {
-        Output::Human => "human",
-        Output::Json => "json",
-    }
 }
 
 fn telemetry_enabled() -> bool {
@@ -111,39 +198,19 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
-    fn command_path_skips_global_output_flags() {
-        let command = [
-            "appsignal-cli",
-            "--output",
-            "json",
-            "apps",
-            "resources",
-            "deploy-markers",
-            "--org",
-            "my-org",
-        ];
+    fn telemetry_command_serializes_to_command_path() {
+        assert_eq!(
+            serde_json::to_value(TelemetryCommand::AppsResourcesDeployMarkers).unwrap(),
+            serde_json::json!("apps.resources.deploy-markers")
+        );
+    }
 
-        let mut command_parts = Vec::new();
-        let mut skip_next = false;
-
-        for arg in command.into_iter().skip(1) {
-            if skip_next {
-                skip_next = false;
-                continue;
-            }
-
-            match arg {
-                "-o" | "--output" | "--format" => skip_next = true,
-                _ if arg.starts_with('-') => {
-                    if !command_parts.is_empty() {
-                        break;
-                    }
-                }
-                _ => command_parts.push(arg),
-            }
-        }
-
-        assert_eq!(command_parts.join("."), "apps.resources.deploy-markers");
+    #[test]
+    fn output_format_serializes_to_expected_value() {
+        assert_eq!(
+            serde_json::to_value(OutputFormat::Json).unwrap(),
+            serde_json::json!("json")
+        );
     }
 
     #[test]
@@ -190,12 +257,12 @@ mod tests {
             .unwrap();
         let _ = with_appsignal_headers(client.post(telemetry_url(&server.uri())))
             .json(&CommandRunEvent {
-                event: "command.run",
-                command: "apps.list",
+                event: Event::CommandRun,
+                command: TelemetryCommand::AppsList,
                 success: true,
                 duration_ms: 250,
                 cli_version: CLIENT_VERSION,
-                output_format: "json",
+                output_format: OutputFormat::Json,
             })
             .send()
             .await
