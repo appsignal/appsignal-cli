@@ -64,6 +64,11 @@ enum Commands {
         #[command(subcommand)]
         action: LogsAction,
     },
+    /// Create and update dashboards
+    Dashboards {
+        #[command(subcommand)]
+        action: DashboardAction,
+    },
     /// List and manage anomaly detection triggers
     Triggers {
         #[command(subcommand)]
@@ -784,6 +789,32 @@ struct TriggerAppArgs {
 }
 
 #[derive(Args)]
+struct DashboardAppArgs {
+    /// Application ID (alternative to --app + --environment)
+    #[arg(long)]
+    app_id: Option<String>,
+    /// Application name — used with optional --environment to find the app
+    #[arg(long)]
+    app: Option<String>,
+    /// Environment filter (e.g. "production") — used with --app
+    #[arg(long)]
+    environment: Option<String>,
+    /// Organization slug (uses saved default if omitted)
+    #[arg(long)]
+    org: Option<String>,
+}
+
+#[derive(Args)]
+struct DashboardDefinitionArgs {
+    /// Dashboard title
+    #[arg(long)]
+    title: String,
+    /// Optional dashboard description
+    #[arg(long)]
+    description: Option<String>,
+}
+
+#[derive(Args)]
 struct TriggerDefinitionArgs {
     /// Display name for the trigger. Defaults to the metric name if omitted.
     #[arg(long)]
@@ -872,6 +903,32 @@ enum TriggerAction {
         /// ID of the trigger to archive
         #[arg(long)]
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum DashboardAction {
+    /// List dashboards for an application
+    List {
+        #[command(flatten)]
+        app: DashboardAppArgs,
+    },
+    /// Create a new dashboard
+    Create {
+        #[command(flatten)]
+        app: DashboardAppArgs,
+        #[command(flatten)]
+        definition: DashboardDefinitionArgs,
+    },
+    /// Update an existing dashboard
+    Update {
+        #[command(flatten)]
+        app: DashboardAppArgs,
+        /// ID of the dashboard to update
+        #[arg(long)]
+        id: String,
+        #[command(flatten)]
+        definition: DashboardDefinitionArgs,
     },
 }
 
@@ -1033,6 +1090,47 @@ async fn run(cli: Cli) -> Result<()> {
                 },
                 cli.output,
             )?,
+        },
+        Commands::Dashboards { action } => match action {
+            DashboardAction::List { app } => {
+                commands::dashboards::list(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+            DashboardAction::Create { app, definition } => {
+                commands::dashboards::create(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &definition.title,
+                    definition.description.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+            DashboardAction::Update {
+                app,
+                id,
+                definition,
+            } => {
+                commands::dashboards::update(
+                    &id,
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &definition.title,
+                    definition.description.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
         },
         Commands::Incidents { action } => match action {
             IncidentsAction::List {

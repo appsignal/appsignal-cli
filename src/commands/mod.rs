@@ -1,6 +1,7 @@
 pub mod about;
 pub mod apps;
 pub mod auth;
+pub mod dashboards;
 pub mod incidents;
 pub mod logs;
 pub mod project;

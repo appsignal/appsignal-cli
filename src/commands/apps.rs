@@ -372,6 +372,10 @@ mod tests {
                 id: "dashboard-1".to_string(),
                 title: Some("Overview".to_string()),
                 description: Some("Main dashboard".to_string()),
+                label: None,
+                source: None,
+                created_at: None,
+                updated_at: None,
             }]),
             deploy_markers: Some(vec![DeployMarker {
                 id: "marker-1".to_string(),
