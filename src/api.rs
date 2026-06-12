@@ -188,6 +188,35 @@ pub struct Dashboard {
     pub id: String,
     pub title: Option<String>,
     pub description: Option<String>,
+    pub label: Option<String>,
+    pub source: Option<DashboardSource>,
+    #[serde(rename = "createdAt")]
+    pub created_at: Option<String>,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppResourceSection {
+    Users,
+    Notifiers,
+    Namespaces,
+    Dashboards,
+    DeployMarkers,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DashboardSource {
+    UserCreated,
+}
+
+impl DashboardSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UserCreated => "USER_CREATED",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -528,6 +557,18 @@ struct ArchiveTriggerData {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreateDashboardData {
+    #[serde(rename = "createDashboard")]
+    create_dashboard: Option<Dashboard>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateDashboardData {
+    #[serde(rename = "updateDashboard")]
+    update_dashboard: Option<Dashboard>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AppLogLineActionsData {
     app: Option<AppLogLineActions>,
 }
@@ -579,6 +620,16 @@ const TRIGGER_SELECTION: &str = r#"
     notifiers { id name icon }
     tags { key value }
     user { id name }
+"#;
+
+const DASHBOARD_SELECTION: &str = r#"
+    id
+    title
+    description
+    label
+    source
+    createdAt
+    updatedAt
 "#;
 
 const LOG_LINE_ACTION_SELECTION: &str = r#"
@@ -1347,26 +1398,26 @@ impl AppSignalClient {
     pub async fn get_app_resources(
         &self,
         app_id: &str,
-        sections: &[String],
+        sections: &[AppResourceSection],
     ) -> Result<AppResources> {
         // Build a dynamic query based on requested sections
         let include_all = sections.is_empty();
-        let want = |s: &str| include_all || sections.iter().any(|x| x == s);
+        let want = |section| include_all || sections.contains(&section);
 
         let mut fields = String::new();
-        if want("users") {
+        if want(AppResourceSection::Users) {
             fields.push_str("users { id name email } ");
         }
-        if want("notifiers") {
+        if want(AppResourceSection::Notifiers) {
             fields.push_str("notifiers { id name icon } ");
         }
-        if want("namespaces") {
+        if want(AppResourceSection::Namespaces) {
             fields.push_str("namespaces { id name } ");
         }
-        if want("dashboards") {
+        if want(AppResourceSection::Dashboards) {
             fields.push_str("dashboards { id title description } ");
         }
-        if want("deploy_markers") {
+        if want(AppResourceSection::DeployMarkers) {
             fields.push_str(
                 "deployMarkers(limit: 20) { id createdAt shortRevision revision gitCompareUrl user liveForInWords liveFor exceptionCount exceptionRate } ",
             );
@@ -1940,6 +1991,72 @@ impl AppSignalClient {
 
         data.archive_trigger
             .with_context(|| CliError::msg(format!("Failed to archive trigger {}", trigger_id)))
+    }
+
+    /// Create a dashboard for an app.
+    pub async fn create_dashboard(
+        &self,
+        app_id: &str,
+        title: &str,
+        description: Option<&str>,
+    ) -> Result<Dashboard> {
+        let query = format!(
+            r#"
+            mutation CreateDashboard($appId: String!, $title: String!, $description: String) {{
+                createDashboard(appId: $appId, title: $title, description: $description) {{
+                    {}
+                }}
+            }}
+        "#,
+            DASHBOARD_SELECTION
+        );
+
+        let mut vars = json!({
+            "appId": app_id,
+            "title": title,
+        });
+
+        if let Some(description) = description {
+            vars["description"] = json!(description);
+        }
+
+        let data: CreateDashboardData = self.graphql(&query, vars).await?;
+        data.create_dashboard
+            .context(CliError::msg("Failed to create dashboard"))
+    }
+
+    /// Update a dashboard for an app.
+    pub async fn update_dashboard(
+        &self,
+        app_id: &str,
+        dashboard_id: &str,
+        title: &str,
+        description: Option<&str>,
+    ) -> Result<Dashboard> {
+        let query = format!(
+            r#"
+            mutation UpdateDashboard($id: String!, $appId: String!, $title: String!, $description: String) {{
+                updateDashboard(id: $id, appId: $appId, title: $title, description: $description) {{
+                    {}
+                }}
+            }}
+        "#,
+            DASHBOARD_SELECTION
+        );
+
+        let mut vars = json!({
+            "id": dashboard_id,
+            "appId": app_id,
+            "title": title,
+        });
+
+        if let Some(description) = description {
+            vars["description"] = json!(description);
+        }
+
+        let data: UpdateDashboardData = self.graphql(&query, vars).await?;
+        data.update_dashboard
+            .with_context(|| CliError::msg(format!("Failed to update dashboard {}", dashboard_id)))
     }
 
     /// List log line actions for an app.
@@ -3730,6 +3847,70 @@ mod tests {
 
         assert_eq!(trigger.id, "trig-9");
         assert_eq!(trigger.kind, "Advanced");
+    }
+
+    #[tokio::test]
+    async fn test_create_dashboard() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "createDashboard": {
+                        "id": "dash-2",
+                        "title": "Overview",
+                        "description": "Main dashboard",
+                        "label": null,
+                        "source": "USER_CREATED",
+                        "createdAt": "2026-06-12T10:00:00Z",
+                        "updatedAt": "2026-06-12T10:00:00Z"
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let dashboard = client
+            .create_dashboard("app1", "Overview", Some("Main dashboard"))
+            .await
+            .unwrap();
+
+        assert_eq!(dashboard.id, "dash-2");
+        assert_eq!(dashboard.title.as_deref(), Some("Overview"));
+        assert_eq!(dashboard.source, Some(DashboardSource::UserCreated));
+    }
+
+    #[tokio::test]
+    async fn test_update_dashboard() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "updateDashboard": {
+                        "id": "dash-2",
+                        "title": "Overview v2",
+                        "description": "Updated dashboard",
+                        "label": "beta",
+                        "source": "USER_CREATED",
+                        "createdAt": "2026-06-12T10:00:00Z",
+                        "updatedAt": "2026-06-12T11:00:00Z"
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let dashboard = client
+            .update_dashboard("app1", "dash-2", "Overview v2", Some("Updated dashboard"))
+            .await
+            .unwrap();
+
+        assert_eq!(dashboard.id, "dash-2");
+        assert_eq!(dashboard.title.as_deref(), Some("Overview v2"));
+        assert_eq!(dashboard.label.as_deref(), Some("beta"));
     }
 
     #[tokio::test]

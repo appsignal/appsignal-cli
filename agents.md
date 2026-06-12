@@ -32,6 +32,13 @@ src/
 ## Rust Workflow
 
 - Before committing Rust changes, run `cargo fmt` and `cargo clippy -- -D warnings`.
+- Prefer enums over free-form `String` values when the API exposes a small known
+  domain, especially for GraphQL/JSON fields like `state`, `kind`, or `source`.
+  Use serde renames like `#[serde(rename_all = "SCREAMING_SNAKE_CASE")]` when
+  the wire format is enum-shaped.
+- In command-layer response/view models, prefer owned `String`/`Vec<T>` data over
+  adding fresh lifetimes just to avoid small clones. Keep borrowing where it is
+  already entrenched, but new code should default to the simpler owned shape.
 
 ## Git Workflow
 

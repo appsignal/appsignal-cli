@@ -5,7 +5,7 @@ use serde::Serialize;
 use tabled::Tabled;
 
 use super::{authenticated_client, resolve_org};
-use crate::api::{App, AppResources, ViewerOrganization};
+use crate::api::{App, AppResourceSection, AppResources, ViewerOrganization};
 use crate::config::Config;
 use crate::output::{self, Output, Render};
 
@@ -321,7 +321,7 @@ pub async fn resources(
     app_name: Option<&str>,
     environment: Option<&str>,
     org: Option<&str>,
-    sections: &[&str],
+    sections: &[AppResourceSection],
     format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
@@ -332,11 +332,7 @@ pub async fn resources(
         .resolve_app_id(&org_slug, app_id, app_name, environment)
         .await?;
 
-    let section_list: Vec<String> = sections.iter().map(|section| section.to_string()).collect();
-
-    let resources = client
-        .get_app_resources(&resolved_app_id, &section_list)
-        .await?;
+    let resources = client.get_app_resources(&resolved_app_id, sections).await?;
 
     output::print(
         &AppResourcesResponse {
@@ -349,7 +345,7 @@ pub async fn resources(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{Dashboard, DeployMarker, Namespace, Notifier, User};
+    use crate::api::{Dashboard, DashboardSource, DeployMarker, Namespace, Notifier, User};
 
     #[test]
     fn app_resources_render_human_uses_tables_for_sections() {
@@ -372,6 +368,10 @@ mod tests {
                 id: "dashboard-1".to_string(),
                 title: Some("Overview".to_string()),
                 description: Some("Main dashboard".to_string()),
+                label: None,
+                source: Some(DashboardSource::UserCreated),
+                created_at: None,
+                updated_at: None,
             }]),
             deploy_markers: Some(vec![DeployMarker {
                 id: "marker-1".to_string(),
