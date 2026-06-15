@@ -1187,6 +1187,7 @@ pub fn filter_apps(
 
 impl AppSignalClient {
     /// Create a client using an OAuth access token.
+    #[cfg(test)]
     pub fn new(access_token: &str, endpoint: Option<&str>) -> Self {
         Self::with_auth(
             AuthMethod::OAuth {
