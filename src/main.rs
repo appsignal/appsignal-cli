@@ -175,8 +175,6 @@ enum AppsAction {
     },
     /// Show the current default organization
     ShowOrg,
-    /// List all organizations you have access to
-    Orgs,
     /// Show resources for an app
     Resources {
         #[command(subcommand)]
@@ -981,7 +979,6 @@ impl_telemetry_command!(AppsAction {
     Self::Find { .. } => telemetry::TelemetryCommand::AppsFind,
     Self::SetOrg { .. } => telemetry::TelemetryCommand::AppsSetOrg,
     Self::ShowOrg => telemetry::TelemetryCommand::AppsShowOrg,
-    Self::Orgs => telemetry::TelemetryCommand::AppsOrgs,
     Self::Resources { action } => action.telemetry_command()
 });
 
@@ -1125,7 +1122,6 @@ async fn run(cli: Cli) -> Result<()> {
             }
             AppsAction::SetOrg { org } => commands::apps::set_org(&org, cli.output).await?,
             AppsAction::ShowOrg => commands::apps::show_org(cli.output)?,
-            AppsAction::Orgs => commands::apps::orgs(cli.output).await?,
             AppsAction::Resources { action } => match action {
                 AppResourceAction::All(args) => {
                     commands::apps::resources(

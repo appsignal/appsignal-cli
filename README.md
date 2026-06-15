@@ -60,9 +60,6 @@ the local file. Authenticate afterward if you want project-specific credentials.
 ## Quick start
 
 ```sh
-# List your organizations
-appsignal-cli apps orgs
-
 # List apps in an organization (saves the org as default)
 appsignal-cli apps list --org <org-slug>
 
@@ -153,7 +150,6 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 
 | Command | Description |
 |---|---|
-| `apps orgs` | List all organizations you have access to |
 | `apps list --org <slug>` | List apps in an organization and save the default org to the active config |
 | `apps info --app-id <id>` | Show details for a specific app |
 | `apps find --name <name> [--environment <env>]` | Find an app by name |

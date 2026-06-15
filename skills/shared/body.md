@@ -15,7 +15,6 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli auth login` | Authenticate via OAuth |
 | `appsignal-cli auth logout` | Remove stored credentials |
 | `appsignal-cli auth status` | Show the current authentication status |
-| `appsignal-cli apps orgs` | List organizations you have access to |
 | `appsignal-cli apps list --org <slug>` | List apps in an organization and save the org as default |
 | `appsignal-cli apps info --app-id <id>` | Show details for an app by ID |
 | `appsignal-cli apps find --name <name> [--environment <env>] [--org <slug>]` | Find an app by name |

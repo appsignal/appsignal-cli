@@ -38,7 +38,6 @@ Still missing or incomplete:
 ## Applications
 
 ### `get_applications`
-- [x] `apps orgs`
 - [x] `apps list --org <slug>`
 - [x] `apps find --name <name> [--environment <env>]`
 - [x] `apps info --app-id <id>`

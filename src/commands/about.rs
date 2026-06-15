@@ -49,7 +49,7 @@ pub fn show(format: Output) -> Result<()> {
     let auth = auth_summary(&config);
     let suggested_commands = vec![
         "appsignal-cli auth login",
-        "appsignal-cli apps orgs",
+        "appsignal-cli apps list --org <org-slug>",
         "appsignal-cli incidents list --app \"MyApp\" --environment production",
         "appsignal-cli logs tail --app \"MyApp\" --environment production",
     ];
@@ -282,7 +282,7 @@ mod tests {
             SUBTITLES[0],
             &[
                 "appsignal-cli auth login",
-                "appsignal-cli apps orgs",
+                "appsignal-cli apps list --org <org-slug>",
                 "appsignal-cli incidents list --app \"MyApp\" --environment production",
                 "appsignal-cli logs tail --app \"MyApp\" --environment production",
             ],

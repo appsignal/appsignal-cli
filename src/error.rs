@@ -57,6 +57,11 @@ pub enum CliError {
     #[error("AppSignal rejected the request. {0}")]
     GraphQlRejected(String),
 
+    #[error(
+        "AppSignal rejected the request because your OAuth token is missing the required scope for this operation. Re-authenticate with `appsignal-cli auth login` to get an updated token."
+    )]
+    OAuthScopeRejected,
+
     #[error("{0}")]
     AccountRestricted(String),
 

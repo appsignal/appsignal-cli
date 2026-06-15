@@ -5,7 +5,7 @@ use serde::Serialize;
 use tabled::Tabled;
 
 use super::{authenticated_client, resolve_org};
-use crate::api::{App, AppResourceSection, AppResources, ViewerOrganization};
+use crate::api::{App, AppResourceSection, AppResources};
 use crate::config::Config;
 use crate::output::{self, Output, Render};
 
@@ -24,11 +24,6 @@ struct AppResponse<'a> {
 struct OrganizationStatus<'a> {
     org: Option<&'a str>,
     message: String,
-}
-
-#[derive(Serialize)]
-struct OrganizationListing<'a> {
-    organizations: &'a [ViewerOrganization],
 }
 
 #[derive(Serialize)]
@@ -96,14 +91,6 @@ struct AppRow<'a> {
     name: &'a str,
     #[tabled(rename = "ENVIRONMENT")]
     environment: &'a str,
-}
-
-#[derive(Tabled)]
-struct OrganizationRow<'a> {
-    #[tabled(rename = "SLUG")]
-    slug: &'a str,
-    #[tabled(rename = "NAME")]
-    name: &'a str,
 }
 
 impl Render for AppListing {
@@ -287,32 +274,6 @@ pub fn show_org(format: Output) -> Result<()> {
     output::print_with(OrganizationStatus { org, message }, format, move |w| {
         writeln!(w, "{}", human_message)
     })
-}
-
-/// List all organizations the authenticated user has access to.
-pub async fn orgs(format: Output) -> Result<()> {
-    let mut config = Config::load()?;
-    let client = authenticated_client(&mut config).await?;
-
-    let orgs = client.list_organizations().await?;
-
-    output::print_with(
-        OrganizationListing {
-            organizations: &orgs,
-        },
-        format,
-        |w| {
-            if orgs.is_empty() {
-                return writeln!(w, "No organizations found.");
-            }
-            let rows = orgs.iter().map(|org| OrganizationRow {
-                slug: &org.slug,
-                name: &org.name,
-            });
-            output::table(w, rows)?;
-            writeln!(w, "{} organization(s) found.", orgs.len())
-        },
-    )
 }
 
 /// Show resources for an application (users, notifiers, namespaces, dashboards, deploy markers).

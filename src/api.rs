@@ -12,6 +12,8 @@ use crate::error::CliError;
 
 const DEFAULT_BASE_URL: &str = "https://appsignal.com";
 const ACCOUNT_RESTRICTED_CODE: &str = "ACCOUNT_RESTRICTED";
+const OAUTH_SCOPE_MESSAGE: &str =
+    "Your OAuth token does not have the required scope for this operation.";
 
 fn normalize_api_base_url(endpoint: Option<&str>) -> String {
     let endpoint = endpoint.unwrap_or(DEFAULT_BASE_URL);
@@ -92,24 +94,6 @@ struct Organization {
 #[derive(Debug, Deserialize)]
 struct AppData {
     app: Option<App>,
-}
-
-// -- Viewer types --
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ViewerOrganization {
-    pub slug: String,
-    pub name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct Viewer {
-    organizations: Option<Vec<ViewerOrganization>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ViewerData {
-    viewer: Option<Viewer>,
 }
 
 // -- Shared types --
@@ -1300,25 +1284,6 @@ impl AppSignalClient {
         Ok(())
     }
 
-    /// Get all organizations the authenticated user has access to.
-    pub async fn list_organizations(&self) -> Result<Vec<ViewerOrganization>> {
-        let query = r#"
-            {
-                viewer {
-                    organizations {
-                        slug
-                        name
-                    }
-                }
-            }
-        "#;
-        let data: ViewerData = self.graphql(query, json!({})).await?;
-        let viewer = data
-            .viewer
-            .context(CliError::msg("Could not fetch viewer data"))?;
-        Ok(viewer.organizations.unwrap_or_default())
-    }
-
     /// List all applications for an organization.
     pub async fn list_apps(&self, org_slug: &str) -> Result<Vec<App>> {
         let query = r#"
@@ -2423,6 +2388,14 @@ fn graphql_error(errors: Vec<GraphQLError>) -> CliError {
         return CliError::AccountRestricted(error.message.clone());
     }
 
+    let oauth_scope_rejected = errors
+        .iter()
+        .any(|error| error.message.trim() == OAUTH_SCOPE_MESSAGE);
+
+    if oauth_scope_rejected {
+        return CliError::OAuthScopeRejected;
+    }
+
     let msgs: Vec<String> = errors.into_iter().map(|e| e.message).collect();
     CliError::GraphQlRejected(msgs.join("; "))
 }
@@ -3044,6 +3017,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_validate_token_handles_oauth_scope_graphql_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(header("authorization", "Bearer scope-token"))
+            .and(body_string_contains("__typename"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "errors": [{
+                    "message": "Your OAuth token does not have the required scope for this operation."
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::new("scope-token", Some(&server.uri()));
+        let err = client.validate_token().await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "AppSignal rejected the request because your OAuth token is missing the required scope for this operation. Re-authenticate with `appsignal-cli auth login` to get an updated token."
+        );
+    }
+
+    #[tokio::test]
     async fn test_validate_token_accepts_graphql_response_body() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -3150,31 +3146,6 @@ mod tests {
             lines[0].attributes.as_ref().unwrap()[0].value.as_deref(),
             Some("42")
         );
-    }
-
-    #[tokio::test]
-    async fn test_list_organizations() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/graphql"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
-                    "viewer": {
-                        "organizations": [
-                            { "slug": "org-one", "name": "Org One" },
-                            { "slug": "org-two", "name": "Org Two" }
-                        ]
-                    }
-                }))),
-            )
-            .mount(&server)
-            .await;
-
-        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
-        let orgs = client.list_organizations().await.unwrap();
-        assert_eq!(orgs.len(), 2);
-        assert_eq!(orgs[0].slug, "org-one");
-        assert_eq!(orgs[1].name, "Org Two");
     }
 
     #[tokio::test]

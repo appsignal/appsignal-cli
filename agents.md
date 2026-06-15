@@ -14,7 +14,7 @@ src/
   commands/
     mod.rs             Shared helpers (resolve_org, authenticated_client) + re-exports
     auth.rs            auth login / logout / status (OAuth only)
-    apps.rs            apps list / info / find / set-org / show-org / orgs
+    apps.rs            apps list / info / find / set-org / show-org
     incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show
     logs.rs            logs tail / search / views / sources
     skill.rs           skill install (writes bundled AppSignal skills for OpenCode, Codex, or Claude)
@@ -103,9 +103,6 @@ each request is authenticated:
 
 - There is **no** `apps` root query. The root query type only has `app(id: ...)`
   for a single app and `organization(slug: ...)` for org-level access.
-- There **is** a `viewer` root query that returns the authenticated user's
-  `organizations` list (each with `slug` and `name`). This is used by
-  `list_organizations()` to auto-discover available orgs.
 - Listing apps requires going through `organization(slug) { apps { ... } }`,
   which means the user must provide their **organization slug** (from the
   AppSignal URL: `appsignal.com/<org-slug>`).
@@ -220,7 +217,7 @@ authentication. Implementation is in `src/oauth.rs`.
 |---|---|
 | Default client ID | `FpXP78S_vXNrjSRYQIMWQ9sREl2AXS0qD0VSWwfHST0` |
 | Default redirect URI | `http://127.0.0.1:9789/callback` |
-| Scopes | `app:read app:write` |
+| Scopes | `user:read app:read app:write` |
 | PKCE method | S256 |
 | Grant types | `authorization_code`, `refresh_token` |
 
@@ -249,7 +246,6 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli auth logout` | Delete stored credentials from the active config |
 | `appsignal-cli auth status` | Show auth status and expiry |
 | `appsignal-cli project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |
-| `appsignal-cli apps orgs` | List all organizations you have access to |
 | `appsignal-cli apps list --org <slug>` | List apps in an organization and save the default org to the active config |
 | `appsignal-cli apps info --app-id <id>` | Show details for a single app by ID |
 | `appsignal-cli apps find --name <name> [--environment <env>] [--org <slug>]` | Find app by name (case-insensitive) |
