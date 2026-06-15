@@ -42,7 +42,7 @@ struct Cli {
 enum Commands {
     /// Show a more playful overview of the CLI
     About,
-    /// Configure your AppSignal API token
+    /// Configure AppSignal authentication
     Auth {
         #[command(subcommand)]
         action: AuthAction,
@@ -120,14 +120,8 @@ enum SkillAction {
 
 #[derive(Subcommand)]
 enum AuthAction {
-    /// Authenticate with AppSignal (personal token or OAuth)
+    /// Authenticate with AppSignal via OAuth
     Login {
-        /// Your AppSignal personal API token
-        #[arg(long, conflicts_with = "oauth")]
-        token: Option<String>,
-        /// Authenticate via OAuth (opens your browser)
-        #[arg(long)]
-        oauth: bool,
         /// Override the AppSignal base URL (for example `https://staging.lol`)
         #[arg(long)]
         endpoint: Option<String>,
@@ -1099,8 +1093,6 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::About => commands::about::show(cli.output)?,
         Commands::Auth { action } => match action {
             AuthAction::Login {
-                token,
-                oauth,
                 endpoint,
                 rest_endpoint,
                 oauth_client_id,
@@ -1108,8 +1100,6 @@ async fn run(cli: Cli) -> Result<()> {
             } => {
                 commands::auth::login(
                     commands::auth::LoginOptions {
-                        token,
-                        use_oauth: oauth,
                         endpoint,
                         rest_endpoint,
                         oauth_client_id,

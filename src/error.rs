@@ -71,17 +71,13 @@ pub enum CliError {
     )]
     ConfigIo,
 
-    #[error(
-        "OAuth login did not complete successfully. Try `appsignal-cli auth login --oauth` again."
-    )]
+    #[error("OAuth login did not complete successfully. Try `appsignal-cli auth login` again.")]
     OAuthLocal,
 
     #[error("OAuth token exchange failed. {0}")]
     OAuthExchange(String),
 
-    #[error(
-        "OAuth token refresh failed. {0} Re-authenticate with `appsignal-cli auth login --oauth`."
-    )]
+    #[error("OAuth token refresh failed. {0} Re-authenticate with `appsignal-cli auth login`.")]
     OAuthRefresh(String),
 
     /// Verbatim user-facing message. Use for domain-specific errors that

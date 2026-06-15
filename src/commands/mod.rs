@@ -57,7 +57,7 @@ pub async fn authenticated_client(config: &mut Config) -> Result<AppSignalClient
         } else {
             anyhow::bail!(CliError::msg(
                 "OAuth access token has expired and no refresh token is available.\n\
-                 Please re-authenticate with `appsignal-cli auth login --oauth`."
+                 Please re-authenticate with `appsignal-cli auth login`."
             ));
         }
     }

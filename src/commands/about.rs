@@ -48,7 +48,7 @@ pub fn show(format: Output) -> Result<()> {
     let default_org = config.org.clone().filter(|org| !org.is_empty());
     let auth = auth_summary(&config);
     let suggested_commands = vec![
-        "appsignal-cli auth login --oauth",
+        "appsignal-cli auth login",
         "appsignal-cli apps orgs",
         "appsignal-cli incidents list --app \"MyApp\" --environment production",
         "appsignal-cli logs tail --app \"MyApp\" --environment production",
@@ -148,7 +148,6 @@ fn auth_summary(config: &Config) -> String {
                 "OAuth".to_string()
             }
         }
-        Ok(AuthMethod::PersonalToken(_)) => "Personal token".to_string(),
         Err(_) => "Not authenticated".to_string(),
     }
 }
@@ -266,7 +265,11 @@ mod tests {
     fn render_about_without_color_contains_core_sections() {
         let config = Config {
             org: Some("my-org".to_string()),
-            token: Some("secret-token".to_string()),
+            oauth: Some(OAuthCredentials {
+                access_token: "access-token".to_string(),
+                refresh_token: Some("refresh-token".to_string()),
+                expires_at: Some(1_900_000_000),
+            }),
             ..Config::default()
         };
 
@@ -278,7 +281,7 @@ mod tests {
             &auth_summary(&config),
             SUBTITLES[0],
             &[
-                "appsignal-cli auth login --oauth",
+                "appsignal-cli auth login",
                 "appsignal-cli apps orgs",
                 "appsignal-cli incidents list --app \"MyApp\" --environment production",
                 "appsignal-cli logs tail --app \"MyApp\" --environment production",
@@ -291,8 +294,8 @@ mod tests {
         assert!(output.contains(":: Version    1.2.3"));
         assert!(output.contains(":: Platform   linux / x86_64"));
         assert!(output.contains(":: Default org my-org"));
-        assert!(output.contains(":: Auth       Personal token"));
-        assert!(output.contains("appsignal-cli auth login --oauth"));
+        assert!(output.contains(":: Auth       OAuth"));
+        assert!(output.contains("appsignal-cli auth login"));
         assert!(!output.contains("\x1b["));
     }
 

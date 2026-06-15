@@ -12,8 +12,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 
 | Command | Description |
 |---|---|
-| `appsignal-cli auth login --oauth` | Authenticate via OAuth |
-| `appsignal-cli auth login [--token TOKEN]` | Store a personal API token |
+| `appsignal-cli auth login` | Authenticate via OAuth |
 | `appsignal-cli auth logout` | Remove stored credentials |
 | `appsignal-cli auth status` | Show the current authentication status |
 | `appsignal-cli apps orgs` | List organizations you have access to |
@@ -292,7 +291,7 @@ Notes:
 Authenticate:
 
 ```bash
-appsignal-cli auth login --oauth
+appsignal-cli auth login
 ```
 
 Save the default org and list apps:
