@@ -60,8 +60,8 @@ the local file. Authenticate afterward if you want project-specific credentials.
 ## Quick start
 
 ```sh
-# List apps in an organization (saves the org as default)
-appsignal-cli apps list --org <org-slug>
+# List apps for the current OAuth account (saves the org as default)
+appsignal-cli apps list
 
 # Initialize a project-local config
 appsignal-cli project init --org <org-slug>
@@ -150,7 +150,7 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 
 | Command | Description |
 |---|---|
-| `apps list --org <slug>` | List apps in an organization and save the default org to the active config |
+| `apps list` | List apps for the current OAuth account and save the default org to the active config |
 | `apps info --app-id <id>` | Show details for a specific app |
 | `apps find --name <name> [--environment <env>]` | Find an app by name |
 | `apps resources all` | Show all supported app resources in one go |
@@ -413,7 +413,7 @@ When `endpoint` is set to a base URL like `https://staging.lol`, the CLI uses
 `https://staging.lol/graphql` are not supported.
 OAuth always uses the built-in local callback at `http://127.0.0.1:9789/callback`.
 
-The `org` value is saved automatically when you run `apps list --org <slug>` or `apps set-org --org <slug>` into whichever config is active. Use `project init` first if you want those writes to stay local to the project.
+The `org` value is saved automatically when you run `apps list` or `apps set-org --org <slug>` into whichever config is active. Use `project init` first if you want those writes to stay local to the project.
 
 ## Releases
 

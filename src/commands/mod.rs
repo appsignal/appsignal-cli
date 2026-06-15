@@ -26,7 +26,7 @@ pub fn resolve_org(explicit: Option<&str>, config: &Config) -> Result<String> {
         .map(|o| o.to_string())
         .ok_or_else(|| {
             CliError::msg(
-                "No organization configured. Run `appsignal-cli apps list --org <slug>` first, \
+                "No organization configured. Run `appsignal-cli apps list` first, \
                  or set it with `appsignal-cli apps set-org --org <slug>`.",
             )
             .into()
@@ -109,6 +109,7 @@ mod tests {
         };
         let err = resolve_org(None, &config).unwrap_err();
         assert!(err.to_string().contains("No organization configured"));
+        assert!(err.to_string().contains("appsignal-cli apps list"));
     }
 
     #[test]
@@ -116,5 +117,6 @@ mod tests {
         let config = Config::default();
         let err = resolve_org(None, &config).unwrap_err();
         assert!(err.to_string().contains("No organization configured"));
+        assert!(err.to_string().contains("appsignal-cli apps list"));
     }
 }

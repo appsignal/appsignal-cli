@@ -246,7 +246,7 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli auth logout` | Delete stored credentials from the active config |
 | `appsignal-cli auth status` | Show auth status and expiry |
 | `appsignal-cli project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |
-| `appsignal-cli apps list --org <slug>` | List apps in an organization and save the default org to the active config |
+| `appsignal-cli apps list` | List apps for the current OAuth account and save the default org to the active config |
 | `appsignal-cli apps info --app-id <id>` | Show details for a single app by ID |
 | `appsignal-cli apps find --name <name> [--environment <env>] [--org <slug>]` | Find app by name (case-insensitive) |
 | `appsignal-cli apps set-org --org <slug>` | Set the default organization slug in the active config |
@@ -307,8 +307,8 @@ Additional option for `list-exceptions` and `list-performance`:
 
 **Finding the latest incident:**
 ```bash
-# One-time setup: save the org slug
-appsignal-cli apps list --org my-org
+# One-time setup: save the org slug from the current OAuth account
+appsignal-cli apps list
 
 # Get the latest incident
 appsignal-cli incidents list --app "MyApp" --environment "production" --limit 1 --order LAST

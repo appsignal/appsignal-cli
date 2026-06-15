@@ -96,6 +96,16 @@ struct AppData {
     app: Option<App>,
 }
 
+#[derive(Debug, Deserialize)]
+struct TokenInfoData {
+    account: Option<TokenInfoAccount>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenInfoAccount {
+    slug: Option<String>,
+}
+
 // -- Shared types --
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -1282,6 +1292,31 @@ impl AppSignalClient {
         self.graphql::<serde_json::Value>("{ __typename }", json!({}))
             .await?;
         Ok(())
+    }
+
+    /// Get the organization slug associated with the current OAuth token.
+    pub async fn current_org_slug(&self) -> Result<String> {
+        let url = join_api_url(&self.base_url, "/oauth/token/info");
+        let resp = self
+            .graphql_request(Method::GET, &url)
+            .send()
+            .await
+            .context(CliError::NetworkUnreachable)?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!(CliError::from_http(status, &text));
+        }
+
+        let token_info: TokenInfoData = resp.json().await.context(CliError::UnexpectedResponse)?;
+        token_info
+            .account
+            .and_then(|account| account.slug)
+            .filter(|slug| !slug.is_empty())
+            .context(CliError::msg(
+                "Could not determine organization from your OAuth token. Re-authenticate with `appsignal-cli auth login` or set it with `appsignal-cli apps set-org --org <slug>`.",
+            ))
     }
 
     /// List all applications for an organization.
@@ -3037,6 +3072,25 @@ mod tests {
             err.to_string(),
             "AppSignal rejected the request because your OAuth token is missing the required scope for this operation. Re-authenticate with `appsignal-cli auth login` to get an updated token."
         );
+    }
+
+    #[tokio::test]
+    async fn test_current_org_slug_uses_token_info_account_slug() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/oauth/token/info"))
+            .and(header("authorization", "Bearer tok"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "account": {
+                    "slug": "my-org"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &server.uri());
+        let slug = client.current_org_slug().await.unwrap();
+        assert_eq!(slug, "my-org");
     }
 
     #[tokio::test]

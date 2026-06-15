@@ -4,7 +4,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 
 1. Prefer `appsignal-cli <command> --help` when you need exact flag syntax.
 2. Use the global `--output json` flag when the result needs to be parsed by an LLM or script.
-3. Use `apps list --org <slug>` once to save a default organization before name-based app lookups.
+3. Use `apps list` once to save a default organization before name-based app lookups.
 4. Prefer `--app-id` when known; otherwise use `--app` and `--environment` together for unambiguous app resolution.
 5. Quote names, environments, queries, and note content when they contain spaces or special characters.
 
@@ -15,7 +15,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli auth login` | Authenticate via OAuth |
 | `appsignal-cli auth logout` | Remove stored credentials |
 | `appsignal-cli auth status` | Show the current authentication status |
-| `appsignal-cli apps list --org <slug>` | List apps in an organization and save the org as default |
+| `appsignal-cli apps list` | List apps for the current OAuth account and save the org as default |
 | `appsignal-cli apps info --app-id <id>` | Show details for an app by ID |
 | `appsignal-cli apps find --name <name> [--environment <env>] [--org <slug>]` | Find an app by name |
 | `appsignal-cli apps resources all [app options]` | Show all supported app resources |
@@ -60,7 +60,7 @@ Useful parts of common URLs:
 
 | URL pattern | Meaning | CLI mapping |
 |---|---|---|
-| `https://appsignal.com/<org-slug>` | Organization/account home | `apps list --org <org-slug>` or `apps set-org --org <org-slug>` |
+| `https://appsignal.com/<org-slug>` | Organization/account home | `apps list` or `apps set-org --org <org-slug>` |
 | `https://appsignal.com/<account-slug>/sites/<site_id>` | App root | Use `--app-id <site_id>` |
 | `https://appsignal.com/<account-slug>/sites/<site_id>/dashboard` | App dashboard | Use `--app-id <site_id>` |
 | `https://appsignal.com/<account-slug>/sites/<site_id>/performance` | Performance area | Use `--app-id <site_id>` with `incidents list-performance` |
@@ -106,8 +106,8 @@ Logs URLs:
 Examples:
 
 ```bash
-# Organization URL: https://appsignal.com/my-org
-appsignal-cli apps list --org my-org
+# Save the organization from the current OAuth account
+appsignal-cli apps list
 
 # App URL: https://appsignal.com/my-account/sites/12345
 appsignal-cli incidents list --app-id 12345
@@ -296,7 +296,7 @@ appsignal-cli auth login
 Save the default org and list apps:
 
 ```bash
-appsignal-cli apps list --org my-org
+appsignal-cli apps list
 ```
 
 Find an app by name:
