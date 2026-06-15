@@ -13,7 +13,7 @@ src/
   oauth.rs             OAuth PKCE flow (code verifier, challenge, token exchange, refresh)
   commands/
     mod.rs             Shared helpers (resolve_org, authenticated_client) + re-exports
-    auth.rs            auth login / logout / status (supports both token and OAuth)
+    auth.rs            auth login / logout / status (OAuth only)
     apps.rs            apps list / info / find / set-org / show-org / orgs
     incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show
     logs.rs            logs tail / search / views / sources
@@ -90,20 +90,14 @@ It defaults to `https://appsignal.com/`, and the client derives `/graphql` or
 
 ### Authentication
 
-The CLI supports two authentication methods:
-
-1. **Personal API token** — passed as a `?token=` query parameter.
-   Tokens can be found at https://appsignal.com/users/edit.
-2. **OAuth (PKCE)** — access token sent via `Authorization: Bearer` header.
-   Obtained through the OAuth authorization code flow with PKCE.
-
-OAuth credentials take precedence when both are present in the config.
+The CLI authenticates with **OAuth (PKCE)**. Access tokens are sent via an
+`Authorization: Bearer` header and obtained through the OAuth authorization
+code flow with PKCE.
 
 The `AppSignalClient` struct stores an `AuthMethod` enum that determines how
 each request is authenticated:
-- GraphQL with `AuthMethod::PersonalToken(token)` → appends `?token=<token>` to the URL
 - GraphQL with `AuthMethod::OAuth { access_token, .. }` → sets `Authorization: Bearer <token>`
-- REST v2 with either auth method → sets `Authorization: Bearer <token>`
+- REST v2 with `AuthMethod::OAuth { access_token, .. }` → sets `Authorization: Bearer <token>`
 
 ### Key schema facts (learned the hard way)
 
@@ -191,7 +185,6 @@ tokens) or `Authorization: Bearer` header (OAuth tokens).
 
 The global config file at `~/.config/appsignal/config.toml` stores:
 
-- `token` — personal API token (set via `auth login --token`)
 - `org` — default organization slug (auto-saved by `apps list`, or set via `apps set-org`)
 - `endpoint` — (optional) custom AppSignal base URL, defaults to `https://appsignal.com/`
 - `oauth_client_id` — (optional) OAuth client ID override; defaults to the production client ID when unset
@@ -199,10 +192,6 @@ The global config file at `~/.config/appsignal/config.toml` stores:
   - `access_token` — OAuth access token
   - `refresh_token` — OAuth refresh token (used for automatic renewal)
   - `expires_at` — UNIX timestamp when the access token expires
-
-When OAuth credentials are present, they take precedence over the personal token.
-Switching auth methods clears the other (i.e., `auth login` clears `token`, `--token` clears `[oauth]`).
-
 The org slug is used as a default for all commands that need an organization.
 It can always be overridden with `--org <slug>`.
 
@@ -256,10 +245,9 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 
 | Command | Description |
 |---|---|
-| `appsignal-cli auth login [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth PKCE flow using the active config for the current project or the global config |
-| `appsignal-cli auth login --token TOKEN [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Store personal API token and optional config overrides in the active config, validates via `{ __typename }` |
+| `appsignal-cli auth login [--endpoint URL] [--rest-endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth PKCE flow using the active config for the current project or the global config |
 | `appsignal-cli auth logout` | Delete stored credentials from the active config |
-| `appsignal-cli auth status` | Show auth status, method (OAuth/token), and expiry |
+| `appsignal-cli auth status` | Show auth status and expiry |
 | `appsignal-cli project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |
 | `appsignal-cli apps orgs` | List all organizations you have access to |
 | `appsignal-cli apps list --org <slug>` | List apps in an organization and save the default org to the active config |

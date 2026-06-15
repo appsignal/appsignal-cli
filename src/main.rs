@@ -120,14 +120,8 @@ enum SkillAction {
 
 #[derive(Subcommand)]
 enum AuthAction {
-    /// Authenticate with AppSignal (OAuth by default, or personal token)
+    /// Authenticate with AppSignal via OAuth
     Login {
-        /// Your AppSignal personal API token
-        #[arg(long, conflicts_with = "oauth")]
-        token: Option<String>,
-        /// Authenticate via OAuth (default; opens your browser)
-        #[arg(long)]
-        oauth: bool,
         /// Override the AppSignal base URL (for example `https://staging.lol`)
         #[arg(long)]
         endpoint: Option<String>,
@@ -1099,8 +1093,6 @@ async fn run(cli: Cli) -> Result<()> {
         Commands::About => commands::about::show(cli.output)?,
         Commands::Auth { action } => match action {
             AuthAction::Login {
-                token,
-                oauth: _,
                 endpoint,
                 rest_endpoint,
                 oauth_client_id,
@@ -1108,10 +1100,6 @@ async fn run(cli: Cli) -> Result<()> {
             } => {
                 commands::auth::login(
                     commands::auth::LoginOptions {
-                        method: match token {
-                            Some(token) => commands::auth::LoginMethod::Token(token),
-                            None => commands::auth::LoginMethod::OAuth,
-                        },
                         endpoint,
                         rest_endpoint,
                         oauth_client_id,

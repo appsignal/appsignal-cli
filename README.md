@@ -22,9 +22,7 @@ Not a fan of `curl | sh` one-liners? Download the binary for your operating syst
 
 ## Authentication
 
-There are two ways to authenticate:
-
-### OAuth (recommended)
+Authenticate with OAuth:
 
 ```sh
 appsignal-cli auth login
@@ -52,19 +50,11 @@ appsignal-cli project init \
   --org my-sideproject
 ```
 
-### Personal API token
-
-Get your personal API token from https://appsignal.com/users/edit, then:
-
-```sh
-appsignal-cli auth login --token <your-token>
-```
-
 Credentials are stored in `~/.config/appsignal/config.toml` by default. Once a
 project-local `.appsignal.toml` exists, commands run in that project use it
 automatically.
 
-`project init` does not copy your stored global token or OAuth credentials into
+`project init` does not copy your stored global OAuth credentials into
 the local file. Authenticate afterward if you want project-specific credentials.
 
 ## Quick start
@@ -149,10 +139,9 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 
 | Command | Description |
 |---|---|
-| `auth login [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth using the active config for the current project or your global config |
-| `auth login --token TOKEN [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate with a personal API token using the active config for the current project or your global config |
+| `auth login [--endpoint URL] [--rest-endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth using the active config for the current project or your global config |
 | `auth logout` | Remove stored credentials from the active config |
-| `auth status` | Show authentication status and method |
+| `auth status` | Show authentication status and expiry |
 
 ### `project`
 
@@ -399,25 +388,25 @@ When a local project config is active, commands read and write only that
 Global config example:
 
 ```toml
-# When using a personal API token:
-token = "your-api-token"
 org = "your-org-slug"
 
 # Optional: point the CLI at a non-production AppSignal server.
 # This must be the base URL, without `/graphql`.
 endpoint = "https://staging.lol"
 
+# Optional: override the REST/public API base URL separately.
+rest_endpoint = "https://public-api.staging.lol"
+
 # Optional: override the default production OAuth client ID
 oauth_client_id = "your-staging-client-id"
 
-# When using OAuth (set automatically by `auth login`):
+# Set automatically by `auth login`:
 [oauth]
 access_token = "..."
 refresh_token = "..."
 expires_at = 1742324400
 ```
 
-OAuth credentials take precedence over personal tokens when both are present.
 Expired OAuth tokens are automatically refreshed before API calls.
 When `oauth_client_id` is unset, the CLI uses the production OAuth client ID.
 For custom endpoints that advertise an OAuth `registration_endpoint`, the CLI

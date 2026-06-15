@@ -3,7 +3,6 @@ use serde::Serialize;
 
 use crate::api::AppSignalClient;
 use crate::config::{AuthMethod, Config, OAuthCredentials};
-use crate::error::CliError;
 use crate::oauth;
 use crate::output::Output;
 
@@ -25,22 +24,13 @@ struct AuthStatusResponse {
 }
 
 pub struct LoginOptions {
-    pub method: LoginMethod,
     pub endpoint: Option<String>,
     pub rest_endpoint: Option<String>,
     pub oauth_client_id: Option<String>,
     pub org: Option<String>,
 }
 
-pub enum LoginMethod {
-    OAuth,
-    Token(String),
-}
-
 /// Authenticate with AppSignal.
-///
-/// OAuth is the default login method. When a token is provided explicitly via
-/// `--token`, the CLI stores that personal API token instead.
 pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
     let mut config = Config::load()?;
     apply_login_config_overrides(
@@ -53,81 +43,45 @@ pub async fn login(options: LoginOptions, format: Output) -> Result<()> {
 
     let endpoint = config.endpoint_base_url()?;
 
-    match options.method {
-        LoginMethod::OAuth => {
-            let oauth_result =
-                oauth::perform_oauth_flow(endpoint.as_deref(), config.oauth_client_id()).await?;
+    let oauth_result =
+        oauth::perform_oauth_flow(endpoint.as_deref(), config.oauth_client_id()).await?;
 
-            crate::status!("Validating OAuth token...");
+    crate::status!("Validating OAuth token...");
 
-            let auth = AuthMethod::OAuth {
-                access_token: oauth_result.credentials.access_token.clone(),
-                refresh_token: oauth_result.credentials.refresh_token.clone(),
-                expires_at: oauth_result.credentials.expires_at,
-            };
-            let client = AppSignalClient::with_auth(auth, endpoint.as_deref());
-            match client.validate_token().await {
-                Ok(_) => crate::status!("OK"),
-                Err(e) => {
-                    crate::status!("FAILED");
-                    return Err(e);
-                }
-            }
-
-            store_oauth_credentials(
-                &mut config,
-                oauth_result.client_id,
-                oauth_result.credentials,
-            );
-            config.save()?;
-
-            print_active_config_path(&config);
-            crate::output::print_with(
-                AuthActionResult {
-                    authenticated: true,
-                    method: Some("oauth"),
-                    message: "OAuth credentials saved. You are now authenticated.".to_string(),
-                },
-                format,
-                |w| writeln!(w, "OAuth credentials saved. You are now authenticated."),
-            )
-        }
-        LoginMethod::Token(token) => {
-            if token.is_empty() {
-                anyhow::bail!(CliError::msg("Token cannot be empty"));
-            }
-
-            crate::status!("Validating token...");
-
-            let client = AppSignalClient::new(&token, endpoint.as_deref());
-            match client.validate_token().await {
-                Ok(_) => crate::status!("OK"),
-                Err(e) => {
-                    crate::status!("FAILED");
-                    return Err(e);
-                }
-            }
-
-            config.oauth = None;
-            config.token = Some(token);
-            config.save()?;
-
-            print_active_config_path(&config);
-            crate::output::print_with(
-                AuthActionResult {
-                    authenticated: true,
-                    method: Some("token"),
-                    message: "Token saved. You are now authenticated.".to_string(),
-                },
-                format,
-                |w| writeln!(w, "Token saved. You are now authenticated."),
-            )
+    let auth = AuthMethod::OAuth {
+        access_token: oauth_result.credentials.access_token.clone(),
+        refresh_token: oauth_result.credentials.refresh_token.clone(),
+        expires_at: oauth_result.credentials.expires_at,
+    };
+    let client = AppSignalClient::with_auth(auth, endpoint.as_deref());
+    match client.validate_token().await {
+        Ok(_) => crate::status!("OK"),
+        Err(e) => {
+            crate::status!("FAILED");
+            return Err(e);
         }
     }
+
+    store_oauth_credentials(
+        &mut config,
+        oauth_result.client_id,
+        oauth_result.credentials,
+    );
+    config.save()?;
+
+    print_active_config_path(&config);
+    crate::output::print_with(
+        AuthActionResult {
+            authenticated: true,
+            method: Some("oauth"),
+            message: "OAuth credentials saved. You are now authenticated.".to_string(),
+        },
+        format,
+        |w| writeln!(w, "OAuth credentials saved. You are now authenticated."),
+    )
 }
 
 fn store_oauth_credentials(config: &mut Config, client_id: String, credentials: OAuthCredentials) {
-    config.token = None;
     config.oauth_client_id = Some(client_id);
     config.oauth = Some(credentials);
 }
@@ -215,26 +169,13 @@ pub fn status(format: Output) -> Result<()> {
             message,
         }
     } else {
-        match config.token {
-            Some(ref t) if !t.is_empty() => {
-                let masked = mask_token(t);
-                AuthStatusResponse {
-                    authenticated: true,
-                    method: Some("token"),
-                    token: Some(masked.clone()),
-                    expires_at: None,
-                    expired: false,
-                    message: format!("Authenticated via personal token (token: {})", masked),
-                }
-            }
-            _ => AuthStatusResponse {
-                authenticated: false,
-                method: None,
-                token: None,
-                expires_at: None,
-                expired: false,
-                message: "Not authenticated. Run `appsignal-cli auth login` to set up.".to_string(),
-            },
+        AuthStatusResponse {
+            authenticated: false,
+            method: None,
+            token: None,
+            expires_at: None,
+            expired: false,
+            message: "Not authenticated. Run `appsignal-cli auth login` to set up.".to_string(),
         }
     };
 
@@ -280,11 +221,8 @@ mod tests {
     }
 
     #[test]
-    fn test_store_oauth_credentials_persists_client_id_and_clears_token() {
-        let mut config = Config {
-            token: Some("personal-token".to_string()),
-            ..Config::default()
-        };
+    fn test_store_oauth_credentials_persists_client_id() {
+        let mut config = Config::default();
 
         let credentials = OAuthCredentials {
             access_token: "oauth-access".to_string(),
@@ -298,34 +236,7 @@ mod tests {
             credentials.clone(),
         );
 
-        assert_eq!(config.token, None);
         assert_eq!(config.oauth_client_id(), Some("registered-client-id"));
         assert_eq!(config.oauth, Some(credentials));
-    }
-
-    #[test]
-    fn test_login_defaults_to_oauth_without_token() {
-        let options = LoginOptions {
-            method: LoginMethod::OAuth,
-            endpoint: None,
-            rest_endpoint: None,
-            oauth_client_id: None,
-            org: None,
-        };
-
-        assert!(matches!(options.method, LoginMethod::OAuth));
-    }
-
-    #[test]
-    fn test_login_uses_token_flow_when_token_is_provided() {
-        let options = LoginOptions {
-            method: LoginMethod::Token("personal-token".to_string()),
-            endpoint: None,
-            rest_endpoint: None,
-            oauth_client_id: None,
-            org: None,
-        };
-
-        assert!(matches!(options.method, LoginMethod::Token(_)));
     }
 }
