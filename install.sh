@@ -2,15 +2,45 @@
 
 set -eu
 
-if ! command -v curl >/dev/null; then
-  echo "Error: \`curl\` is required to download the \`appsignal-cli\` binary"
+fail() {
+  echo "Error: $*" >&2
   exit 1
-fi
+}
 
-if ! command -v tar >/dev/null; then
-  echo "Error: \`tar\` is required to extract the \`appsignal-cli\` binary"
-  exit 1
-fi
+need_cmd() {
+  if ! command -v "$1" >/dev/null; then
+    fail "\`$1\` is required to install \`appsignal-cli\`"
+  fi
+}
+
+sha256_file() {
+  file_path="$1"
+
+  if command -v sha256sum >/dev/null; then
+    sha256sum "$file_path" | cut -d' ' -f1
+    return
+  fi
+
+  if command -v shasum >/dev/null; then
+    shasum -a 256 "$file_path" | cut -d' ' -f1
+    return
+  fi
+
+  if command -v openssl >/dev/null; then
+    openssl dgst -sha256 "$file_path" | sed 's/^.*= //'
+    return
+  fi
+
+  fail "\`sha256sum\`, \`shasum\`, or \`openssl\` is required to verify the download"
+}
+
+need_cmd curl
+need_cmd cut
+need_cmd grep
+need_cmd mktemp
+need_cmd sed
+need_cmd tar
+need_cmd tr
 
 # This value is automatically updated during the release process;
 # see `script/write_version`.
@@ -85,20 +115,50 @@ fi
 
 if [ "$VERSION" = "latest" ]; then
   URL="https://github.com/appsignal/appsignal-cli/releases/latest/download/$TRIPLE.tar.gz"
+  URL_FALLBACK="https://github.com/appsignal/homebrew-appsignal-cli/releases/latest/download/$TRIPLE.tar.gz"
+  CHECKSUMS_URL="https://github.com/appsignal/appsignal-cli/releases/latest/download/SHA256SUMS"
+  CHECKSUMS_FALLBACK_URL="https://raw.githubusercontent.com/appsignal/homebrew-appsignal-cli/main/checksums/v$LAST_RELEASE.txt"
   VERSION_FRIENDLY="latest version"
 else
   URL="https://github.com/appsignal/appsignal-cli/releases/download/v$VERSION/$TRIPLE.tar.gz"
+  URL_FALLBACK="https://github.com/appsignal/homebrew-appsignal-cli/releases/download/v$VERSION/$TRIPLE.tar.gz"
+  CHECKSUMS_URL="https://github.com/appsignal/appsignal-cli/releases/download/v$VERSION/SHA256SUMS"
+  CHECKSUMS_FALLBACK_URL="https://raw.githubusercontent.com/appsignal/homebrew-appsignal-cli/main/checksums/v$VERSION.txt"
   VERSION_FRIENDLY="version $VERSION"
 fi
 
 echo "Downloading $VERSION_FRIENDLY of the \`appsignal-cli\` binary for $TRIPLE_FRIENDLY..."
 
-curl --progress-bar -SL "$URL" | tar -C "$INSTALL_FOLDER" -xz
+ARCHIVE_NAME="$TRIPLE.tar.gz"
+TMP_DIR="$(mktemp -d)"
 
-# Remove the old `appsignal-run` binary or symlink if it exists.
-rm -f "$INSTALL_FOLDER/appsignal-run" || true
-# Create a new `appsignal-run` symlink to the `appsignal-cli` binary.
-# This is done to maintain backwards compatibility with the previous name.
-ln -s "$INSTALL_FOLDER/appsignal-cli" "$INSTALL_FOLDER/appsignal-run"
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+
+trap cleanup EXIT INT TERM
+
+if ! curl -fsSL "$CHECKSUMS_URL" -o "$TMP_DIR/SHA256SUMS" 2>/dev/null; then
+  echo "Checksum manifest was not found on the appsignal-cli release; trying the legacy Homebrew tap manifest..."
+  curl -fsSL "$CHECKSUMS_FALLBACK_URL" -o "$TMP_DIR/SHA256SUMS"
+  URL="$URL_FALLBACK"
+fi
+
+EXPECTED_SHA="$(grep "  $ARCHIVE_NAME$" "$TMP_DIR/SHA256SUMS" | cut -d' ' -f1)"
+
+if [ -z "$EXPECTED_SHA" ]; then
+  fail "Could not find checksum for $ARCHIVE_NAME in the downloaded manifest"
+fi
+
+curl --progress-bar -fSL "$URL" -o "$TMP_DIR/$ARCHIVE_NAME"
+ACTUAL_SHA="$(sha256_file "$TMP_DIR/$ARCHIVE_NAME")"
+
+if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+  fail "Checksum verification failed for $ARCHIVE_NAME"
+fi
+
+echo "Verified SHA256 checksum for $ARCHIVE_NAME."
+
+tar -C "$INSTALL_FOLDER" -xzf "$TMP_DIR/$ARCHIVE_NAME"
 
 echo "Done! Installed \`appsignal-cli\` binary at \`$INSTALL_FOLDER/appsignal-cli\`."
