@@ -237,7 +237,7 @@ pub async fn show(
 /// Assign/unassign accept user names (resolved case-insensitively) or raw IDs.
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
-    incident_number: i64,
+    incident_numbers: &[i64],
     app_id: Option<&str>,
     app_name: Option<&str>,
     environment: Option<&str>,
@@ -245,6 +245,7 @@ pub async fn update(
     state: Option<&str>,
     severity: Option<&str>,
     assign: Option<&[String]>,
+    assign_me: bool,
     unassign: Option<&[String]>,
     description: Option<&str>,
     format: Output,
@@ -257,8 +258,48 @@ pub async fn update(
         .resolve_app_id(&org_slug, app_id, app_name, environment)
         .await?;
 
+    if incident_numbers.len() > 1 {
+        if state.is_none() {
+            anyhow::bail!("Bulk incident updates currently require `--state`.");
+        }
+
+        if severity.is_some()
+            || assign.is_some()
+            || assign_me
+            || unassign.is_some()
+            || description.is_some()
+        {
+            anyhow::bail!(
+                "Bulk incident updates currently support only `--state`. Use a single `--number` for severity, assignee, or description changes."
+            );
+        }
+
+        let mut incident_ids = Vec::with_capacity(incident_numbers.len());
+        for incident_number in incident_numbers {
+            let incident = client
+                .get_incident(&resolved_app_id, *incident_number)
+                .await?;
+            incident_ids.push(incident.id().to_string());
+        }
+
+        let incidents = client
+            .bulk_update_incidents(&resolved_app_id, &incident_ids, state.unwrap())
+            .await?;
+
+        crate::status!("{} incidents updated.", incidents.len());
+        return output::print_with(
+            IncidentListResponse {
+                incidents: &incidents,
+            },
+            format,
+            |w| render_incident_table(w, &incidents),
+        );
+    }
+
+    let incident_number = incident_numbers[0];
+
     // If we need to assign/unassign, resolve names to IDs and merge with current assignees
-    let final_assignee_ids = if assign.is_some() || unassign.is_some() {
+    let final_assignee_ids = if assign.is_some() || assign_me || unassign.is_some() {
         // Fetch app users for name resolution
         let users = client.list_app_users(&resolved_app_id).await?;
 
@@ -275,6 +316,13 @@ pub async fn update(
                 if !current_ids.contains(&id) {
                     current_ids.push(id);
                 }
+            }
+        }
+
+        if assign_me {
+            let current_user = client.current_user().await?;
+            if !current_ids.contains(&current_user.id) {
+                current_ids.push(current_user.id);
             }
         }
 

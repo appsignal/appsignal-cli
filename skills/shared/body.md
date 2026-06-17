@@ -27,7 +27,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents list-performance [options]` | List performance incidents |
 | `appsignal-cli incidents list-anomalies [options]` | List anomaly incidents |
 | `appsignal-cli incidents show --number <N> [app options]` | Show details for a single incident |
-| `appsignal-cli incidents update --number <N> [flags]` | Update state, severity, assignees, or description |
+| `appsignal-cli incidents update --number <N[,N...]> [flags]` | Update state, severity, assignees, or description; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time |
 | `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
@@ -149,6 +149,7 @@ Useful `incidents update` flags:
 | `--state <OPEN|CLOSED|WIP>` | Change state |
 | `--severity <...>` | Change severity |
 | `--assign <id,id>` | Assign users |
+| `--assign-me` | Assign the incident to the current CLI user |
 | `--description "..."` | Update description |
 
 ## Output
