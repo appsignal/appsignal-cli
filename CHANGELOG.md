@@ -1,5 +1,22 @@
 # AppSignal CLI changelog
 
+## 2.0.0
+
+_Published on 2026-06-17._
+
+### Changed
+
+- `apps list` now uses the current OAuth account to determine the organization automatically and saves that org to the active config. You no longer need to pass `--org` when listing apps for the signed-in account. (minor [da7b53e](https://github.com/appsignal/appsignal-cli/commit/da7b53e9ee386c3463dda26079219569bd22883b))
+- `incidents update` now accepts multiple incident numbers for bulk state changes, so you can close or reopen an explicit set of incidents in one command. It also adds `--assign-me` to assign the incident to the authenticated CLI user without needing to look up your user ID first. (minor [da7b53e](https://github.com/appsignal/appsignal-cli/commit/da7b53e9ee386c3463dda26079219569bd22883b))
+- OAuth login now requests the `user:read` scope needed for browser-based AppSignal account access, and older tokens now produce a clearer re-authentication message when that scope is missing. The unsupported `apps orgs` command has been removed. (minor [da7b53e](https://github.com/appsignal/appsignal-cli/commit/da7b53e9ee386c3463dda26079219569bd22883b))
+- Added dashboard management commands to list, create, and update AppSignal dashboards from the CLI. (patch [da7b53e](https://github.com/appsignal/appsignal-cli/commit/da7b53e9ee386c3463dda26079219569bd22883b))
+- appsignal-cli now sends a minimal best-effort telemetry event for each command run to help measure CLI usage and reliability. The event includes only the command path, success or failure, duration, CLI version, and output format, and you can disable it entirely with `APPSIGNAL_CLI_TELEMETRY=0`. (patch [da7b53e](https://github.com/appsignal/appsignal-cli/commit/da7b53e9ee386c3463dda26079219569bd22883b))
+- OAuth is now the default auth login flow, so running appsignal-cli auth login opens the browser-based sign-in flow without requiring --oauth. Personal token login remains available by passing --token explicitly. (patch [da7b53e](https://github.com/appsignal/appsignal-cli/commit/da7b53e9ee386c3463dda26079219569bd22883b))
+
+### Removed
+
+- Authentication is now OAuth-only. `appsignal-cli auth login` opens the browser flow directly, and personal API token login is no longer supported. (major [da7b53e](https://github.com/appsignal/appsignal-cli/commit/da7b53e9ee386c3463dda26079219569bd22883b))
+
 ## 1.0.1
 
 _Published on 2026-06-05._
