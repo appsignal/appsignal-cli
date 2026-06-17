@@ -113,11 +113,13 @@ Covered today:
 - `--state`
 - `--severity`
 - `--assign`
+- `--assign-me`
 - `--unassign`
 - `--description`
+- bulk state updates by explicit incident number
 
 Still missing:
-- [ ] bulk update of multiple incidents in one command
+- [ ] bulk severity, assignee, or description updates
 
 Notes:
 - The CLI resolves assignee names case-insensitively and merges them with the current incident assignee list.

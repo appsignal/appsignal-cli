@@ -106,6 +106,11 @@ struct TokenInfoAccount {
     slug: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CurrentUserData {
+    viewer: Option<User>,
+}
+
 // -- Shared types --
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -341,6 +346,15 @@ pub enum Incident {
 }
 
 impl Incident {
+    pub fn id(&self) -> &str {
+        match self {
+            Incident::ExceptionIncident { id, .. }
+            | Incident::PerformanceIncident { id, .. }
+            | Incident::AnomalyIncident { id, .. }
+            | Incident::LogIncident { id, .. } => id,
+        }
+    }
+
     pub fn number(&self) -> i64 {
         match self {
             Incident::ExceptionIncident { number, .. }
@@ -531,6 +545,12 @@ struct AppResourcesInner {
 struct UpdateIncidentData {
     #[serde(rename = "updateIncident")]
     update_incident: Option<Incident>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BulkUpdateIncidentsData {
+    #[serde(rename = "bulkUpdateIncidents")]
+    bulk_update_incidents: Option<Vec<Incident>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1319,6 +1339,22 @@ impl AppSignalClient {
             ))
     }
 
+    /// Get the authenticated user associated with the current OAuth token.
+    pub async fn current_user(&self) -> Result<User> {
+        let query = r#"
+            {
+                viewer {
+                    id
+                    name
+                    email
+                }
+            }
+        "#;
+        let data: CurrentUserData = self.graphql(query, json!({})).await?;
+        data.viewer
+            .context(CliError::msg("Could not fetch the authenticated user"))
+    }
+
     /// List all applications for an organization.
     pub async fn list_apps(&self, org_slug: &str) -> Result<Vec<App>> {
         let query = r#"
@@ -1810,6 +1846,60 @@ impl AppSignalClient {
         data.update_incident.with_context(|| {
             CliError::msg(format!("Failed to update incident #{}", incident_number))
         })
+    }
+
+    /// Update multiple incidents at once. Currently used for state changes.
+    pub async fn bulk_update_incidents(
+        &self,
+        app_id: &str,
+        incident_ids: &[String],
+        state: &str,
+    ) -> Result<Vec<Incident>> {
+        let query = r#"
+            mutation BulkUpdateIncidents($appId: String!, $ids: [String!]!, $state: IncidentStateEnum!) {
+                bulkUpdateIncidents(appId: $appId, ids: $ids, state: $state) {
+                    __typename
+                    ... on ExceptionIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                        assignees { id name }
+                    }
+                    ... on PerformanceIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        actionNames namespace mean totalDuration
+                        assignees { id name }
+                    }
+                    ... on AnomalyIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        alertState
+                        trigger { id name metricName kind }
+                        tags { key value }
+                    }
+                    ... on LogIncident {
+                        id number state severity description count
+                        createdAt lastOccurredAt updatedAt
+                        assignees { id name }
+                    }
+                }
+            }
+        "#;
+
+        let data: BulkUpdateIncidentsData = self
+            .graphql(
+                query,
+                json!({
+                    "appId": app_id,
+                    "ids": incident_ids,
+                    "state": state,
+                }),
+            )
+            .await?;
+
+        data.bulk_update_incidents
+            .context(CliError::msg("Failed to bulk update incidents"))
     }
 
     /// Create a note on an incident.
@@ -3203,6 +3293,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_current_user() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "viewer": {
+                        "id": "user-1",
+                        "name": "Ada",
+                        "email": "ada@example.com"
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let user = client.current_user().await.unwrap();
+        assert_eq!(user.id, "user-1");
+        assert_eq!(user.name.as_deref(), Some("Ada"));
+        assert_eq!(user.email.as_deref(), Some("ada@example.com"));
+    }
+
+    #[tokio::test]
     async fn test_list_apps() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -3224,6 +3338,67 @@ mod tests {
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].id, "a1");
         assert_eq!(apps[0].name.as_deref(), Some("MyApp"));
+    }
+
+    #[tokio::test]
+    async fn test_bulk_update_incidents() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("bulkUpdateIncidents"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "bulkUpdateIncidents": [
+                        {
+                            "__typename": "ExceptionIncident",
+                            "id": "i1",
+                            "number": 41,
+                            "state": "CLOSED",
+                            "severity": "HIGH",
+                            "description": null,
+                            "count": 1,
+                            "createdAt": null,
+                            "lastOccurredAt": null,
+                            "updatedAt": null,
+                            "exceptionName": null,
+                            "exceptionMessage": null,
+                            "actionNames": null,
+                            "namespace": null,
+                            "firstBacktraceLine": null,
+                            "assignees": []
+                        },
+                        {
+                            "__typename": "ExceptionIncident",
+                            "id": "i2",
+                            "number": 42,
+                            "state": "CLOSED",
+                            "severity": "HIGH",
+                            "description": null,
+                            "count": 1,
+                            "createdAt": null,
+                            "lastOccurredAt": null,
+                            "updatedAt": null,
+                            "exceptionName": null,
+                            "exceptionMessage": null,
+                            "actionNames": null,
+                            "namespace": null,
+                            "firstBacktraceLine": null,
+                            "assignees": []
+                        }
+                    ]
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let incidents = client
+            .bulk_update_incidents("app-1", &["i1".to_string(), "i2".to_string()], "CLOSED")
+            .await
+            .unwrap();
+        assert_eq!(incidents.len(), 2);
+        assert_eq!(incidents[0].number(), 41);
+        assert_eq!(incidents[1].state(), "CLOSED");
     }
 
     #[tokio::test]

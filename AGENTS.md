@@ -256,7 +256,7 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli incidents list-performance [options]` | List performance incidents (supports `--query` text search) |
 | `appsignal-cli incidents list-anomalies [options]` | List anomaly detection incidents (shows trigger/alert info) |
 | `appsignal-cli incidents show --number <N> [app options]` | Show full details for a specific incident |
-| `appsignal-cli incidents update --number <N> [--state S] [--severity S] [--assign IDs] [--description D]` | Update incident state, severity, or assignees |
+| `appsignal-cli incidents update --number <N[,N...]> [--state S] [--severity S] [--assign IDs] [--assign-me] [--description D]` | Update incident state, severity, or assignees; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident (markdown supported) |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time (1-second polling) |
 | `appsignal-cli logs search [filters] [--page-all]` | One-shot log search (supports auto-pagination and global `--output json`) |

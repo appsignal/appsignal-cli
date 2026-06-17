@@ -383,9 +383,9 @@ enum IncidentsAction {
     },
     /// Update an incident (state, severity, assignees)
     Update {
-        /// Incident number
-        #[arg(long)]
-        number: i64,
+        /// Incident number. Repeat or pass a comma-separated list for bulk state changes.
+        #[arg(long, value_delimiter = ',', num_args = 1.., required = true)]
+        number: Vec<i64>,
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
         app_id: Option<String>,
@@ -407,6 +407,9 @@ enum IncidentsAction {
         /// Comma-separated user names or IDs to add as assignees
         #[arg(long)]
         assign: Option<String>,
+        /// Assign the incident to the authenticated CLI user
+        #[arg(long)]
+        assign_me: bool,
         /// Comma-separated user names or IDs to remove from assignees
         #[arg(long)]
         unassign: Option<String>,
@@ -1379,6 +1382,7 @@ async fn run(cli: Cli) -> Result<()> {
                 state,
                 severity,
                 assign,
+                assign_me,
                 unassign,
                 description,
             } => {
@@ -1387,7 +1391,7 @@ async fn run(cli: Cli) -> Result<()> {
                 let unassign_list: Option<Vec<String>> =
                     unassign.map(|s| s.split(',').map(|x| x.trim().to_string()).collect());
                 commands::incidents::update(
-                    number,
+                    &number,
                     app_id.as_deref(),
                     app.as_deref(),
                     environment.as_deref(),
@@ -1395,6 +1399,7 @@ async fn run(cli: Cli) -> Result<()> {
                     state.as_deref(),
                     severity.as_deref(),
                     assign_list.as_deref(),
+                    assign_me,
                     unassign_list.as_deref(),
                     description.as_deref(),
                     cli.output,

@@ -141,6 +141,12 @@ appsignal-cli incidents list-anomalies --app "MyApp" --environment "production"
 # Close an incident
 appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --state CLOSED
 
+# Close multiple incidents at once
+appsignal-cli incidents update --number 41,42,43 --app "MyApp" --environment "production" --state CLOSED
+
+# Assign yourself to an incident
+appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --assign-me
+
 # Add a note to an incident
 appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Root cause identified."
 ```
@@ -233,7 +239,7 @@ appsignal-cli skill install --target claude
 | `incidents list-performance` | List performance incidents (supports text search) |
 | `incidents list-anomalies` | List anomaly detection incidents |
 | `incidents show --number <N>` | Show details for a specific incident |
-| `incidents update --number <N>` | Update incident state, severity, or assignees |
+| `incidents update --number <N[,N...]>` | Update incident state, severity, or assignees; multiple numbers currently support `--state` only |
 | `incidents add-note --number <N> --content "..."` | Add a note to an incident |
 
 ### `logs`
@@ -331,6 +337,7 @@ All log and incident commands accept either `--app-id <id>` or `--app <name> [--
 | `--state <STATE>` | New state: `OPEN`, `CLOSED`, or `WIP` |
 | `--severity <SEV>` | New severity: `UNTRIAGED`, `CRITICAL`, `HIGH`, `LOW`, `NONE`, or `INFORMATIONAL` |
 | `--assign <IDs>` | Comma-separated user IDs to assign |
+| `--assign-me` | Assign the incident to the authenticated CLI user |
 | `--description <text>` | New description |
 
 #### Log filtering options
