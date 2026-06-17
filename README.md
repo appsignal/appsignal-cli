@@ -1,24 +1,61 @@
 # appsignal-cli
 
-A command-line interface for [AppSignal](https://appsignal.com), built in Rust. Designed to be used by both humans and LLMs to query AppSignal data from the terminal.
+A command-line interface for [AppSignal](https://appsignal.com), built in Rust.
+It helps humans, scripts, and LLM agents inspect AppSignal data from the
+terminal.
 
 - [AppSignal.com website][appsignal]
 - [Documentation][docs]
 - [Support][contact]
 
+## What can it do?
+
+Use `appsignal-cli` to:
+
+- Authenticate with AppSignal through OAuth
+- List, find, and inspect AppSignal apps
+- Search and tail application logs
+- List, inspect, update, and annotate incidents
+- Manage dashboards, anomaly detection triggers, log-derived metrics, and
+  log-based triggers
+- Render command output as JSON for scripts and LLM agents
+
 ## Installation
 
-The easiest way to get `appsignal-cli` in your machine is to run our installation one-liner:
+### Homebrew
+
+On macOS and Linux, install `appsignal-cli` with Homebrew:
 
 ```sh
-curl -sSL https://github.com/appsignal/appsignal-cli/releases/latest/download/install.sh | sh
+brew install appsignal/appsignal-cli/appsignal-cli
 ```
 
-You'll need to run it with super-user privileges -- if you're not running this as root, prefix it with `sudo`.
+Homebrew automatically taps `appsignal/appsignal-cli` when using the full
+formula name above. You can also tap it explicitly:
 
-`appsignal-cli` is only supported for Linux and macOS, in the x86_64 (Intel) and arm64 (Apple Silicon) architectures. Linux distributions based on musl, such as Alpine, are also supported.
+```sh
+brew tap appsignal/appsignal-cli
+brew install appsignal-cli
+```
 
-Not a fan of `curl | sh` one-liners? Download the binary for your operating system and architecture [from our latest release](https://github.com/appsignal/appsignal-cli/releases/latest/).
+### Install script
+
+You can also install `appsignal-cli` with our installation one-liner:
+
+```sh
+curl -sSL https://github.com/appsignal/appsignal-cli/releases/latest/download/install.sh | sudo sh
+```
+
+The installer needs super-user privileges because it installs the binary on your
+system path. It verifies the downloaded archive against the `SHA256SUMS`
+manifest published with each release before extracting it.
+
+`appsignal-cli` is supported for Linux and macOS, in the x86_64 (Intel) and arm64
+(Apple Silicon) architectures. Linux distributions based on musl, such as
+Alpine, are also supported.
+
+Not a fan of `curl | sh` one-liners? Download the binary for your operating
+system and architecture [from our latest release](https://github.com/appsignal/appsignal-cli/releases/latest/).
 
 ## Authentication
 
@@ -40,14 +77,10 @@ appsignal-cli project init
 appsignal-cli auth login
 ```
 
-You can also set a project-specific endpoint, OAuth client ID, and default org
-during initialization:
+You can also set a project-specific default org during initialization:
 
 ```sh
-appsignal-cli project init \
-  --endpoint https://staging.lol \
-  --oauth-client-id your-staging-client-id \
-  --org my-sideproject
+appsignal-cli project init --org your-org-slug
 ```
 
 Credentials are stored in `~/.config/appsignal/config.toml` by default. Once a
@@ -60,7 +93,10 @@ the local file. Authenticate afterward if you want project-specific credentials.
 ## Quick start
 
 ```sh
-# List apps for the current OAuth account (saves the org as default)
+# Authenticate with AppSignal
+appsignal-cli auth login
+
+# List apps for the current account (saves the org as default)
 appsignal-cli apps list
 
 # Initialize a project-local config
@@ -72,6 +108,24 @@ appsignal-cli apps find --name "MyApp" --environment "production"
 # List recent incidents (all types)
 appsignal-cli incidents list --app "MyApp" --environment "production" --limit 5
 
+# Show details for a specific incident
+appsignal-cli incidents show --number 42 --app "MyApp" --environment "production"
+
+# Tail logs in real time
+appsignal-cli logs tail --app "MyApp" --environment "production"
+
+# Search logs with JSON output (for LLMs)
+appsignal-cli --output json logs search --app "MyApp" --environment "production" --query "timeout"
+
+# Install the bundled AppSignal LLM skill
+appsignal-cli skill install
+```
+
+## Common workflows
+
+### Incidents
+
+```sh
 # List only exception incidents
 appsignal-cli incidents list-exceptions --app "MyApp" --environment "production" --state OPEN
 
@@ -84,18 +138,29 @@ appsignal-cli incidents list-performance --app "MyApp" --environment "production
 # List anomaly detection alerts
 appsignal-cli incidents list-anomalies --app "MyApp" --environment "production"
 
-# Show details for a specific incident
-appsignal-cli incidents show --number 42 --app "MyApp" --environment "production"
-
 # Close an incident
 appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --state CLOSED
 
 # Add a note to an incident
 appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Root cause identified."
+```
 
-# Tail logs in real time
-appsignal-cli logs tail --app "MyApp" --environment "production"
+### Logs
 
+```sh
+# Search logs with a time range
+appsignal-cli logs search --app "MyApp" --environment "production" \
+  --start "2025-03-16T06:00:00Z" --end "2025-03-16T07:00:00Z" \
+  --query 'group=notifiers message:"[Email]"'
+
+# Fetch all logs in a time range (auto-paginate)
+appsignal-cli --output json logs search --app "MyApp" --environment "production" \
+  --start "2025-03-16T06:00:00Z" --query "group:notifiers" --page-all
+```
+
+### Triggers
+
+```sh
 # List anomaly detection triggers
 appsignal-cli triggers list --app "MyApp" --environment "production"
 
@@ -106,10 +171,11 @@ appsignal-cli triggers create --app "MyApp" --environment "production" \
   --comparison-operator ">" --condition-value 500 \
   --description "Alert when mean response time stays above 500ms" \
   --warmup-duration 5 --cooldown-duration 2
+```
 
-# Search logs with JSON output (for LLMs)
-appsignal-cli --format json logs search --app "MyApp" --environment "production" --query "timeout"
+### LLM skills
 
+```sh
 # Install the bundled AppSignal LLM skill for OpenCode-style agents
 appsignal-cli skill install
 
@@ -118,10 +184,6 @@ appsignal-cli skill install --target codex
 
 # Install for Claude user skills
 appsignal-cli skill install --target claude
-
-# Fetch all logs in a time range (auto-paginate)
-appsignal-cli --output json logs search --app "MyApp" --environment "production" \
-  --start "2025-03-16T06:00:00Z" --query "group:notifiers" --page-all
 ```
 
 ## Commands
@@ -136,7 +198,7 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 
 | Command | Description |
 |---|---|
-| `auth login [--endpoint URL] [--rest-endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth using the active config for the current project or your global config |
+| `auth login [--org SLUG]` | Authenticate via OAuth using the active config for the current project or your global config |
 | `auth logout` | Remove stored credentials from the active config |
 | `auth status` | Show authentication status and expiry |
 
@@ -144,7 +206,7 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 
 | Command | Description |
 |---|---|
-| `project init [--endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |
+| `project init [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |
 
 ### `apps`
 
@@ -182,6 +244,22 @@ appsignal-cli --output json logs search --app "MyApp" --environment "production"
 | `logs search` | Search log lines (one-shot query, supports global `--output json` or `--format json` for LLM use) |
 | `logs views` | List saved log views (filter presets) |
 | `logs sources` | List log sources for an app |
+| `logs metrics list` | List log-derived metrics |
+| `logs metrics create` | Create a log-derived metric |
+| `logs metrics update --id <id>` | Update a log-derived metric |
+| `logs metrics delete --id <id>` | Delete a log-derived metric |
+| `logs triggers list` | List log-based triggers |
+| `logs triggers create` | Create a log-based trigger |
+| `logs triggers update --id <id>` | Update a log-based trigger |
+| `logs triggers delete --id <id>` | Delete a log-based trigger |
+
+### `dashboards`
+
+| Command | Description |
+|---|---|
+| `dashboards list` | List dashboards for an app |
+| `dashboards create` | Create a dashboard |
+| `dashboards update --id <id>` | Update a dashboard |
 
 ### `triggers`
 
@@ -365,12 +443,15 @@ If you run that command inside a git checkout, the CLI creates or updates
 `.appsignal.toml` at the repository root. Outside git, it uses the current
 directory.
 
+Do not commit `.appsignal.toml` or any config file that contains OAuth tokens.
+This repository ignores `.appsignal.toml`; add the same rule to your own project
+if you use project-local credentials.
+
 Example:
 
 ```toml
 # .appsignal.toml
-endpoint = "https://staging.lol"
-oauth_client_id = "your-staging-client-id"
+org = "your-org-slug"
 
 [oauth]
 access_token = "..."
@@ -386,16 +467,6 @@ Global config example:
 ```toml
 org = "your-org-slug"
 
-# Optional: point the CLI at a non-production AppSignal server.
-# This must be the base URL, without `/graphql`.
-endpoint = "https://staging.lol"
-
-# Optional: override the REST/public API base URL separately.
-rest_endpoint = "https://public-api.staging.lol"
-
-# Optional: override the default production OAuth client ID
-oauth_client_id = "your-staging-client-id"
-
 # Set automatically by `auth login`:
 [oauth]
 access_token = "..."
@@ -404,37 +475,21 @@ expires_at = 1742324400
 ```
 
 Expired OAuth tokens are automatically refreshed before API calls.
-When `oauth_client_id` is unset, the CLI uses the production OAuth client ID.
-For custom endpoints that advertise an OAuth `registration_endpoint`, the CLI
-automatically registers a public client and uses the returned `client_id`
-instead.
-When `endpoint` is set to a base URL like `https://staging.lol`, the CLI uses
-`/graphql` for API calls and the base URL itself for OAuth. Values like
-`https://staging.lol/graphql` are not supported.
 OAuth always uses the built-in local callback at `http://127.0.0.1:9789/callback`.
 
-The `org` value is saved automatically when you run `apps list` or `apps set-org --org <slug>` into whichever config is active. Use `project init` first if you want those writes to stay local to the project.
+The `org` value is saved automatically when you run `apps list` or
+`apps set-org --org <slug>` into whichever config is active. Use `project init`
+first if you want those writes to stay local to the project.
 
 ## Releases
 
-Follow the process below to release a new version of this project.
-
-1. On GitHub open the Actions tab.
-2. Select the "Publish a release" workflow.
-3. Click the "Run workflow" button, select a different branch if necessary, but
-   `main` is often the branch to release.
-4. Then press run the green "Run workflow" button.
-
-This will trigger a GitHub workflow to compile and release the project
-automatically.
-Keep an eye on the workflow in case it fails.
-
-This process also triggers a changelog Pull Request to be created on the
-appsignal.com repository for the public changelog.
-You will be assigned to this Pull Request.
-Make sure that also gets merged.
+Releases are published by AppSignal maintainers through GitHub Actions. Release
+artifacts are available on the
+[GitHub releases page](https://github.com/appsignal/appsignal-cli/releases).
 
 ## Development
+
+You need a stable Rust toolchain and Cargo to work on this project.
 
 ```sh
 # Run tests
@@ -449,17 +504,36 @@ cargo fmt --check
 
 CI runs all three checks on every push and pull request via GitHub Actions.
 
+### Custom endpoints
+
+The CLI supports custom AppSignal endpoints for AppSignal development and
+testing. Most users should not need these options.
+
+```sh
+appsignal-cli project init \
+  --endpoint https://appsignal.example.com \
+  --rest-endpoint https://public-api.appsignal.example.com \
+  --oauth-client-id your-oauth-client-id \
+  --org your-org-slug
+```
+
+`endpoint` must be the base URL, without `/graphql`. When set to a base URL like
+`https://appsignal.example.com`, the CLI uses `/graphql` for API calls and the
+base URL itself for OAuth. Values like `https://appsignal.example.com/graphql`
+are not supported.
+
+`rest_endpoint` can override the REST/public API base URL separately. When
+`oauth_client_id` is unset, the CLI uses the production OAuth client ID. For
+custom endpoints that advertise an OAuth `registration_endpoint`, the CLI
+automatically registers a public client and uses the returned `client_id`
+instead.
+
 ### Versioning
 
-This gem uses [Semantic Versioning][semver].
+This project uses [Semantic Versioning][semver].
 
-The `main` branch corresponds to the current stable release of the gem.
-
-The `develop` branch is used for development of features that will end up in
-the next minor release, if present.
-
-Open a Pull Request on the `main` branch if you're fixing a bug. For new
-features, open a Pull Request on the `develop` branch.
+The `main` branch is the primary development branch. Open pull requests against
+`main` unless a maintainer asks you to target another branch.
 
 Every stable and unstable release is tagged in git with a version tag.
 
@@ -471,13 +545,21 @@ changeset. Follow the guide on the [mono] project page on how to create one.
 
 ## Contributing
 
-Thinking of contributing to this project? Awesome! 🚀
+Thinking of contributing to this project? Thank you.
+
+Before opening a pull request:
+
+- Keep changes focused and include tests when changing behavior
+- Run `cargo test`, `cargo clippy -- -D warnings`, and `cargo fmt --check`
+- Add a changeset for user-facing changes
+- Avoid including private AppSignal app data, logs, tokens, or customer details
+  in issues, pull requests, tests, or fixtures
 
 Please follow our [Contributing guide][contributing-guide] in our
 documentation and follow our [Code of Conduct][coc].
 
-Also, we would be very happy to send you Stroopwafles. Have look at everyone
-we send a package to so far on our [Stroopwafles page][waffles-page].
+Also, we would be very happy to send you Stroopwafles. Have a look at everyone
+we have sent a package to so far on our [Stroopwafles page][waffles-page].
 
 ## Support
 
@@ -487,11 +569,15 @@ the most out of using AppSignal.
 
 Also see our [SUPPORT.md file](SUPPORT.md).
 
+## License
+
+This project is released under the MIT license. See [LICENSE](LICENSE).
+
 [appsignal]: https://www.appsignal.com/
-[appsignal-sign-up]: https://appsignal.com/users/sign_up
 [contact]: mailto:support@appsignal.com
 [coc]: https://docs.appsignal.com/appsignal/code-of-conduct.html
 [contributing-guide]: https://docs.appsignal.com/appsignal/contributing.html
 [waffles-page]: https://www.appsignal.com/waffles
 [docs]: https://docs.appsignal.com
 [mono]: https://github.com/appsignal/mono/
+[semver]: https://semver.org/

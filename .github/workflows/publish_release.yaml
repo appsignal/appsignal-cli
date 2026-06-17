@@ -74,6 +74,13 @@ jobs:
           echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
           echo "TAG_NAME=v$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: "Generate checksum manifest"
+        working-directory: "./main"
+        run: |
+          sha256sum release/*/*.tar.gz | while read -r checksum file; do
+            printf '%s  %s\n' "$checksum" "$(basename "$file")"
+          done > SHA256SUMS
+
       - name: "Create a release on the repository"
         working-directory: "./main"
         run: |
@@ -87,6 +94,7 @@ jobs:
             'release/aarch64-unknown-linux-musl/aarch64-unknown-linux-musl.tar.gz#Linux (arm64, musl)' \
             'release/x86_64-apple-darwin/x86_64-apple-darwin.tar.gz#macOS (x86_64)' \
             'release/aarch64-apple-darwin/aarch64-apple-darwin.tar.gz#macOS (arm64)' \
+            'SHA256SUMS#SHA256 checksums' \
             'install.sh#Installer script'
         env:
           GH_TOKEN: ${{github.token}}
