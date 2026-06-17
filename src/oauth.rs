@@ -17,7 +17,7 @@ use crate::error::{extract_detail, CliError};
 const DEFAULT_OAUTH_BASE: &str = "https://appsignal.com";
 const PRODUCTION_CLIENT_ID: &str = "FpXP78S_vXNrjSRYQIMWQ9sREl2AXS0qD0VSWwfHST0";
 const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:9789/callback";
-const SCOPES: &str = "app:read app:write";
+const SCOPES: &str = "user:read app:read app:write";
 
 /// OAuth configuration for the AppSignal CLI application.
 pub struct OAuthConfig {
@@ -535,7 +535,7 @@ mod tests {
         assert!(url.contains("state=mystate"));
         assert!(url.contains("code_challenge=mychallenge"));
         assert!(url.contains("code_challenge_method=S256"));
-        assert!(url.contains("scope=app%3Aread%20app%3Awrite"));
+        assert!(url.contains("scope=user%3Aread%20app%3Aread%20app%3Awrite"));
     }
 
     #[test]
@@ -548,7 +548,7 @@ mod tests {
         assert_eq!(config.token_url, "https://appsignal.com/oauth/token");
         assert_eq!(config.client_id, PRODUCTION_CLIENT_ID);
         assert_eq!(config.redirect_uri, "http://127.0.0.1:9789/callback");
-        assert_eq!(config.scopes, "app:read app:write");
+        assert_eq!(config.scopes, "user:read app:read app:write");
     }
 
     #[test]

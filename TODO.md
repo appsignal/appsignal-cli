@@ -38,14 +38,13 @@ Still missing or incomplete:
 ## Applications
 
 ### `get_applications`
-- [x] `apps orgs`
-- [x] `apps list --org <slug>`
+- [x] `apps list`
 - [x] `apps find --name <name> [--environment <env>]`
 - [x] `apps info --app-id <id>`
 
 Notes:
 - The CLI requires org resolution because it works through the public API.
-- The org slug is persisted after `apps list --org ...` or `apps set-org --org ...`.
+- The org slug is persisted after `apps list` or `apps set-org --org ...`.
 
 ### `get_app_resources`
 - [~] `apps resources <resource>`

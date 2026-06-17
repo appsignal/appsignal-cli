@@ -143,12 +143,8 @@ enum AuthAction {
 
 #[derive(Subcommand)]
 enum AppsAction {
-    /// List all applications in an organization (also saves the org as default)
-    List {
-        /// Organization slug (from your AppSignal URL: appsignal.com/<org-slug>)
-        #[arg(long)]
-        org: String,
-    },
+    /// List all applications for the organization attached to the current OAuth token
+    List,
     /// Show details for a specific application by ID
     Info {
         /// The application ID
@@ -175,8 +171,6 @@ enum AppsAction {
     },
     /// Show the current default organization
     ShowOrg,
-    /// List all organizations you have access to
-    Orgs,
     /// Show resources for an app
     Resources {
         #[command(subcommand)]
@@ -976,12 +970,11 @@ impl_telemetry_command!(AuthAction {
 });
 
 impl_telemetry_command!(AppsAction {
-    Self::List { .. } => telemetry::TelemetryCommand::AppsList,
+    Self::List => telemetry::TelemetryCommand::AppsList,
     Self::Info { .. } => telemetry::TelemetryCommand::AppsInfo,
     Self::Find { .. } => telemetry::TelemetryCommand::AppsFind,
     Self::SetOrg { .. } => telemetry::TelemetryCommand::AppsSetOrg,
     Self::ShowOrg => telemetry::TelemetryCommand::AppsShowOrg,
-    Self::Orgs => telemetry::TelemetryCommand::AppsOrgs,
     Self::Resources { action } => action.telemetry_command()
 });
 
@@ -1113,7 +1106,7 @@ async fn run(cli: Cli) -> Result<()> {
             AuthAction::Status => commands::auth::status(cli.output)?,
         },
         Commands::Apps { action } => match action {
-            AppsAction::List { org } => commands::apps::list(&org, cli.output).await?,
+            AppsAction::List => commands::apps::list(cli.output).await?,
             AppsAction::Info { app_id } => commands::apps::info(&app_id, cli.output).await?,
             AppsAction::Find {
                 name,
@@ -1125,7 +1118,6 @@ async fn run(cli: Cli) -> Result<()> {
             }
             AppsAction::SetOrg { org } => commands::apps::set_org(&org, cli.output).await?,
             AppsAction::ShowOrg => commands::apps::show_org(cli.output)?,
-            AppsAction::Orgs => commands::apps::orgs(cli.output).await?,
             AppsAction::Resources { action } => match action {
                 AppResourceAction::All(args) => {
                     commands::apps::resources(

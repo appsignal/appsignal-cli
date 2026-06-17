@@ -37,8 +37,6 @@ pub enum TelemetryCommand {
     AppsSetOrg,
     #[serde(rename = "apps.show-org")]
     AppsShowOrg,
-    #[serde(rename = "apps.orgs")]
-    AppsOrgs,
     #[serde(rename = "apps.resources.all")]
     AppsResourcesAll,
     #[serde(rename = "apps.resources.users")]

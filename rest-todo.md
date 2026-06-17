@@ -68,7 +68,6 @@ Reason: no matching REST endpoints were found for log views or log sources.
 - `apps list`
 - `apps info`
 - `apps find`
-- `apps orgs`
 - `apps resources all`
 - `apps resources users`
 - `apps resources notifiers`
