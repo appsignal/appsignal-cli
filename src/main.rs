@@ -143,12 +143,8 @@ enum AuthAction {
 
 #[derive(Subcommand)]
 enum AppsAction {
-    /// List all applications in an organization (also saves the org as default)
-    List {
-        /// Organization slug (from your AppSignal URL: appsignal.com/<org-slug>)
-        #[arg(long)]
-        org: String,
-    },
+    /// List all applications for the organization attached to the current OAuth token
+    List,
     /// Show details for a specific application by ID
     Info {
         /// The application ID
@@ -974,7 +970,7 @@ impl_telemetry_command!(AuthAction {
 });
 
 impl_telemetry_command!(AppsAction {
-    Self::List { .. } => telemetry::TelemetryCommand::AppsList,
+    Self::List => telemetry::TelemetryCommand::AppsList,
     Self::Info { .. } => telemetry::TelemetryCommand::AppsInfo,
     Self::Find { .. } => telemetry::TelemetryCommand::AppsFind,
     Self::SetOrg { .. } => telemetry::TelemetryCommand::AppsSetOrg,
@@ -1110,7 +1106,7 @@ async fn run(cli: Cli) -> Result<()> {
             AuthAction::Status => commands::auth::status(cli.output)?,
         },
         Commands::Apps { action } => match action {
-            AppsAction::List { org } => commands::apps::list(&org, cli.output).await?,
+            AppsAction::List => commands::apps::list(cli.output).await?,
             AppsAction::Info { app_id } => commands::apps::info(&app_id, cli.output).await?,
             AppsAction::Find {
                 name,

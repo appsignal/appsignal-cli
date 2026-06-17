@@ -186,14 +186,15 @@ impl Render for AppResourcesResponse<'_> {
     }
 }
 
-/// List all applications in an organization (and save the org slug to config).
-pub async fn list(org_slug: &str, format: Output) -> Result<()> {
+/// List all applications for the organization attached to the current OAuth token.
+pub async fn list(format: Output) -> Result<()> {
     let mut config = Config::load()?;
     let client = authenticated_client(&mut config).await?;
+    let org_slug = client.current_org_slug().await?;
 
-    let apps = client.list_apps(org_slug).await?;
+    let apps = client.list_apps(&org_slug).await?;
 
-    config.org = Some(org_slug.to_string());
+    config.org = Some(org_slug);
     config.save()?;
 
     output::print(&AppListing { apps }, format)
