@@ -6,8 +6,8 @@ use serde::Deserialize;
 
 use crate::client_headers::USER_AGENT_VALUE;
 
-const GITHUB_TAGS_URL: &str =
-    "https://api.github.com/repos/appsignal/homebrew-appsignal-cli/tags?per_page=1";
+const GITHUB_LATEST_RELEASE_URL: &str =
+    "https://api.github.com/repos/appsignal/appsignal-cli/releases/latest";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum VersionCheck {
@@ -17,12 +17,12 @@ pub enum VersionCheck {
 }
 
 #[derive(Debug, Deserialize)]
-struct GitHubTag {
-    name: String,
+struct GitHubRelease {
+    tag_name: String,
 }
 
 pub async fn check() -> VersionCheck {
-    check_at(GITHUB_TAGS_URL).await
+    check_at(GITHUB_LATEST_RELEASE_URL).await
 }
 
 async fn check_at(url: &str) -> VersionCheck {
@@ -49,18 +49,12 @@ async fn check_at(url: &str) -> VersionCheck {
         return VersionCheck::UpToDate;
     }
 
-    let tags: Vec<GitHubTag> = match response.json().await {
-        Ok(tags) => tags,
+    let release: GitHubRelease = match response.json().await {
+        Ok(release) => release,
         Err(_) => return VersionCheck::UpToDate,
     };
 
-    classify_versions(
-        env!("CARGO_PKG_VERSION"),
-        match tags.first() {
-            Some(tag) => tag.name.as_str(),
-            None => return VersionCheck::UpToDate,
-        },
-    )
+    classify_versions(env!("CARGO_PKG_VERSION"), release.tag_name.as_str())
 }
 
 fn classify_versions(current: &str, latest: &str) -> VersionCheck {
@@ -91,7 +85,7 @@ fn parse_version(raw: &str) -> Option<Version> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::{header, method, path, query_param};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn newer_same_major_version() -> String {
@@ -141,16 +135,15 @@ mod tests {
         let latest_version = newer_same_major_version();
 
         Mock::given(method("GET"))
-            .and(path("/tags"))
-            .and(query_param("per_page", "1"))
+            .and(path("/releases/latest"))
             .and(header("user-agent", USER_AGENT_VALUE))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                { "name": format!("v{latest_version}") }
-            ])))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "tag_name": format!("v{latest_version}")
+            })))
             .mount(&server)
             .await;
 
-        let result = check_at(&format!("{}/tags?per_page=1", server.uri())).await;
+        let result = check_at(&format!("{}/releases/latest", server.uri())).await;
 
         assert_eq!(result, VersionCheck::UpgradeAvailable(latest_version));
     }
@@ -161,15 +154,14 @@ mod tests {
         let latest_version = newer_major_version();
 
         Mock::given(method("GET"))
-            .and(path("/tags"))
-            .and(query_param("per_page", "1"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                { "name": format!("v{latest_version}") }
-            ])))
+            .and(path("/releases/latest"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "tag_name": format!("v{latest_version}")
+            })))
             .mount(&server)
             .await;
 
-        let result = check_at(&format!("{}/tags?per_page=1", server.uri())).await;
+        let result = check_at(&format!("{}/releases/latest", server.uri())).await;
 
         assert_eq!(result, VersionCheck::UpgradeRequired(latest_version));
     }
@@ -179,12 +171,12 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("GET"))
-            .and(path("/tags"))
+            .and(path("/releases/latest"))
             .respond_with(ResponseTemplate::new(503))
             .mount(&server)
             .await;
 
-        let result = check_at(&format!("{}/tags?per_page=1", server.uri())).await;
+        let result = check_at(&format!("{}/releases/latest", server.uri())).await;
 
         assert_eq!(result, VersionCheck::UpToDate);
     }
@@ -194,14 +186,14 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("GET"))
-            .and(path("/tags"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-                { "name": "not-a-version" }
-            ])))
+            .and(path("/releases/latest"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "tag_name": "not-a-version"
+            })))
             .mount(&server)
             .await;
 
-        let result = check_at(&format!("{}/tags?per_page=1", server.uri())).await;
+        let result = check_at(&format!("{}/releases/latest", server.uri())).await;
 
         assert_eq!(result, VersionCheck::UpToDate);
     }
