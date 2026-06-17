@@ -77,15 +77,10 @@ appsignal-cli project init
 appsignal-cli auth login
 ```
 
-You can also set a project-specific endpoint, REST endpoint, OAuth client ID,
-and default org during initialization:
+You can also set a project-specific default org during initialization:
 
 ```sh
-appsignal-cli project init \
-  --endpoint https://appsignal.example.com \
-  --rest-endpoint https://public-api.appsignal.example.com \
-  --oauth-client-id your-oauth-client-id \
-  --org your-org-slug
+appsignal-cli project init --org your-org-slug
 ```
 
 Credentials are stored in `~/.config/appsignal/config.toml` by default. Once a
@@ -203,7 +198,7 @@ appsignal-cli skill install --target claude
 
 | Command | Description |
 |---|---|
-| `auth login [--endpoint URL] [--rest-endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Authenticate via OAuth using the active config for the current project or your global config |
+| `auth login [--org SLUG]` | Authenticate via OAuth using the active config for the current project or your global config |
 | `auth logout` | Remove stored credentials from the active config |
 | `auth status` | Show authentication status and expiry |
 
@@ -211,7 +206,7 @@ appsignal-cli skill install --target claude
 
 | Command | Description |
 |---|---|
-| `project init [--endpoint URL] [--rest-endpoint URL] [--oauth-client-id ID] [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |
+| `project init [--org SLUG]` | Create or update the project-local `.appsignal.toml`, which becomes the only config used in that project |
 
 ### `apps`
 
@@ -456,8 +451,7 @@ Example:
 
 ```toml
 # .appsignal.toml
-endpoint = "https://appsignal.example.com"
-oauth_client_id = "your-oauth-client-id"
+org = "your-org-slug"
 
 [oauth]
 access_token = "..."
@@ -473,16 +467,6 @@ Global config example:
 ```toml
 org = "your-org-slug"
 
-# Optional: point the CLI at a non-production AppSignal server.
-# This must be the base URL, without `/graphql`.
-endpoint = "https://appsignal.example.com"
-
-# Optional: override the REST/public API base URL separately.
-rest_endpoint = "https://public-api.appsignal.example.com"
-
-# Optional: override the default production OAuth client ID
-oauth_client_id = "your-oauth-client-id"
-
 # Set automatically by `auth login`:
 [oauth]
 access_token = "..."
@@ -491,13 +475,6 @@ expires_at = 1742324400
 ```
 
 Expired OAuth tokens are automatically refreshed before API calls.
-When `oauth_client_id` is unset, the CLI uses the production OAuth client ID.
-For custom endpoints that advertise an OAuth `registration_endpoint`, the CLI
-automatically registers a public client and uses the returned `client_id`
-instead.
-When `endpoint` is set to a base URL like `https://appsignal.example.com`, the
-CLI uses `/graphql` for API calls and the base URL itself for OAuth. Values like
-`https://appsignal.example.com/graphql` are not supported.
 OAuth always uses the built-in local callback at `http://127.0.0.1:9789/callback`.
 
 The `org` value is saved automatically when you run `apps list` or
@@ -526,6 +503,30 @@ cargo fmt --check
 ```
 
 CI runs all three checks on every push and pull request via GitHub Actions.
+
+### Custom endpoints
+
+The CLI supports custom AppSignal endpoints for AppSignal development and
+testing. Most users should not need these options.
+
+```sh
+appsignal-cli project init \
+  --endpoint https://appsignal.example.com \
+  --rest-endpoint https://public-api.appsignal.example.com \
+  --oauth-client-id your-oauth-client-id \
+  --org your-org-slug
+```
+
+`endpoint` must be the base URL, without `/graphql`. When set to a base URL like
+`https://appsignal.example.com`, the CLI uses `/graphql` for API calls and the
+base URL itself for OAuth. Values like `https://appsignal.example.com/graphql`
+are not supported.
+
+`rest_endpoint` can override the REST/public API base URL separately. When
+`oauth_client_id` is unset, the CLI uses the production OAuth client ID. For
+custom endpoints that advertise an OAuth `registration_endpoint`, the CLI
+automatically registers a public client and uses the returned `client_id`
+instead.
 
 ### Versioning
 
