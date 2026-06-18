@@ -88,6 +88,15 @@ The configured `endpoint` value is a base URL.
 It defaults to `https://appsignal.com/`, and the client derives `/graphql` or
 `/api/v2/...` paths from that base.
 
+### Request retries
+
+`AppSignalClient::send_with_retry` wraps every request send and retries (capped
+exponential backoff, max `MAX_REQUEST_RETRIES`) **only** when the server
+provably did not process the request: HTTP 429 (honoring `Retry-After`) and
+connection-establishment errors. 5xx and timeouts are intentionally **not**
+retried — `graphql()` also carries mutations, so retrying an ambiguous failure
+could double-apply one the server already handled.
+
 ### Authentication
 
 The CLI authenticates with **OAuth (PKCE)**. Access tokens are sent via an
