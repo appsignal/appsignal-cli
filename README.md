@@ -155,7 +155,7 @@ appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "produc
 ### Samples
 
 ```sh
-# Fetch the latest sample for an incident
+# Fetch the latest sample for an incident (prints an analysed digest)
 appsignal-cli samples show --incident 42 --app "MyApp" --environment "production"
 
 # Fetch a sample straight from an AppSignal URL
@@ -164,9 +164,21 @@ appsignal-cli samples show "https://appsignal.com/my-org/sites/<app-id>/performa
 # Fetch the sample closest to a known incident time (better for retrospectives than "latest")
 appsignal-cli samples show --incident 42 --app-id <app-id> --at "2026-05-19T14:30:00Z"
 
-# List the samples for an incident within a time window (JSON for LLMs)
-appsignal-cli samples list --incident 42 --app-id <app-id> --start "2026-05-19T00:00:00Z" --end "2026-05-20T00:00:00Z" --output json
+# Show the unprocessed sample instead of the digest
+appsignal-cli samples show --incident 42 --app-id <app-id> --raw
+
+# Get the digest plus the raw sample as JSON (for scripts and LLMs)
+appsignal-cli samples show --incident 42 --app-id <app-id> --output json
+
+# List the samples for an incident within a time window
+appsignal-cli samples list --incident 42 --app-id <app-id> --start "2026-05-19T00:00:00Z" --end "2026-05-20T00:00:00Z"
 ```
+
+By default `samples show` prints a **digest** — request overview, who hit it, a
+performance breakdown by event group, the slowest events and queries, N+1
+detection, and (for errors) the exception, backtrace, causes, and breadcrumbs.
+`--output json` returns both the raw `sample` and a structured `analysis`
+object; `--raw` prints the unprocessed sample instead of the digest.
 
 ### Logs
 
@@ -263,7 +275,7 @@ appsignal-cli skill install --target claude
 
 | Command | Description |
 |---|---|
-| `samples show [URL\|id]` | Show one sample for an incident — the latest, or `--sample-id <id>`, or `--at <ISO>` (closest to a timestamp) |
+| `samples show [URL\|id]` | Show an analysed digest of one sample — the latest, or `--sample-id <id>`, or `--at <ISO>` (closest to a timestamp); `--raw` for the unprocessed sample |
 | `samples list [URL]` | List an incident's samples, optionally narrowed with `--start`/`--end`/`--limit` |
 
 Both accept an AppSignal incident or sample URL (or a bare sample id) as a positional argument, or the explicit `--incident <N>` plus the usual `--app-id`/`--app`/`--environment`/`--org` flags.

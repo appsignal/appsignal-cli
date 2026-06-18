@@ -6,6 +6,7 @@ mod config;
 mod error;
 mod oauth;
 mod output;
+mod sample_analysis;
 mod telemetry;
 mod version_check;
 
@@ -481,6 +482,9 @@ enum SamplesAction {
         /// Fetch the sample closest to this ISO-8601 timestamp
         #[arg(long)]
         at: Option<String>,
+        /// Show the unprocessed sample instead of the analysed digest
+        #[arg(long)]
+        raw: bool,
     },
     /// List the samples for an incident, optionally within a time window
     List {
@@ -1502,6 +1506,7 @@ async fn run(cli: Cli) -> Result<()> {
                 incident,
                 sample_id,
                 at,
+                raw,
             } => {
                 commands::samples::show(
                     reference.as_deref(),
@@ -1512,6 +1517,7 @@ async fn run(cli: Cli) -> Result<()> {
                     incident,
                     sample_id.as_deref(),
                     at.as_deref(),
+                    raw,
                     cli.output,
                 )
                 .await?

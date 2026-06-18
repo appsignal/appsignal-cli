@@ -489,12 +489,86 @@ pub struct Sample {
     pub overview: Option<Vec<KeyStringValue>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment: Option<Vec<KeyStringValue>>,
+    /// Request parameters, session data, and custom data — arbitrary JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
+    #[serde(rename = "sessionData", skip_serializing_if = "Option::is_none")]
+    pub session_data: Option<serde_json::Value>,
+    #[serde(rename = "customData", skip_serializing_if = "Option::is_none")]
+    pub custom_data: Option<serde_json::Value>,
+    /// Performance samples only: the event timeline (one entry per instrumented
+    /// span). The richest source for the digest's breakdown and slow queries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<Vec<TimelineEvent>>,
+    /// Performance samples only: number of timeline events dropped for size.
+    #[serde(
+        rename = "timelineTruncatedEvents",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub timeline_truncated_events: Option<i64>,
+    /// Performance samples only: total duration per event group.
+    #[serde(rename = "groupDurations", skip_serializing_if = "Option::is_none")]
+    pub group_durations: Option<Vec<KeyStringValue>>,
+    /// Performance samples only: total allocations per event group.
+    #[serde(rename = "groupAllocations", skip_serializing_if = "Option::is_none")]
+    pub group_allocations: Option<Vec<KeyStringValue>>,
     /// Exception samples only: the raised error and its backtrace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exception: Option<ExceptionDetail>,
     /// Exception samples only: the chain of underlying causes.
     #[serde(rename = "errorCauses", skip_serializing_if = "Option::is_none")]
     pub error_causes: Option<Vec<ErrorCause>>,
+    /// Exception samples only: the trail of events leading to the error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub breadcrumbs: Option<Vec<Breadcrumb>>,
+}
+
+/// One event in a performance sample's timeline.
+///
+/// Only the fields the digest consumes are modelled; the AppSignal timeline
+/// type carries more (allocation counts, relative offsets) that we don't select.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TimelineEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    /// The instrumentation group, e.g. `sql.active_record`, `view.render`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Duration of this event, in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<i64>,
+    /// A fingerprint shared by structurally identical events (e.g. the same
+    /// query). Repeated digests are the signal for N+1 detection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<TimelinePayload>,
+}
+
+/// The payload of a timeline event — for queries, `body` holds the statement.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TimelinePayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
+/// A breadcrumb: an event recorded before an error occurred.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Breadcrumb {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Vec<KeyStringValue>>,
 }
 
 /// The exception raised in an error sample.
@@ -872,17 +946,27 @@ const COMMON_SAMPLE_FIELDS: &str = r#"
     attributes { key value }
     overview { key value }
     environment { key value }
+    params
+    sessionData
+    customData
 "#;
 
-/// Performance-sample field selection (common fields plus N+1 detection).
+/// Performance-sample field selection: N+1 detection plus the event timeline
+/// and per-group rollups that the digest analyses.
 const PERFORMANCE_SAMPLE_SELECTION: &str = r#"
     hasNPlusOne
+    timelineTruncatedEvents
+    groupDurations { key value }
+    groupAllocations { key value }
+    timeline { name action group duration count digest payload { name body } }
 "#;
 
-/// Exception-sample field selection (common fields plus the error details).
+/// Exception-sample field selection: the error details plus the breadcrumb
+/// trail leading up to it.
 const EXCEPTION_SAMPLE_SELECTION: &str = r#"
     exception { name message backtrace { line path method column original type url } }
     errorCauses { name message }
+    breadcrumbs { category action message metadata { key value } }
 "#;
 
 // -- Log types --

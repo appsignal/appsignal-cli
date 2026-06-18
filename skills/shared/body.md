@@ -29,7 +29,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents show --number <N> [app options]` | Show details for a single incident |
 | `appsignal-cli incidents update --number <N[,N...]> [flags]` | Update state, severity, assignees, or description; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
-| `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [app options]` | Fetch one transaction sample behind an incident: latest, by id, or closest to a timestamp |
+| `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [app options]` | Show an analysed digest of one sample behind an incident (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
 | `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [app options]` | List an incident's transaction samples, optionally within a time window |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time |
 | `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
@@ -99,6 +99,9 @@ Sample URLs (the underlying transaction data behind an incident):
 parse the app, incident, and which sample out of it — no need to pick the pieces
 apart yourself. Use `samples` (not `incidents show`) when you need the actual
 request data: action, duration, queue time, params, and the exception backtrace.
+`samples show` prints an analysed digest by default; add `--output json` to get
+the digest's structured `analysis` alongside the raw sample, or `--raw` for just
+the unprocessed sample.
 
 The same incident number still works if the URL ends with extra page sections such as:
 

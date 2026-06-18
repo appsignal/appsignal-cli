@@ -9,6 +9,7 @@
 use std::io::{self, Write};
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 
 use super::{authenticated_client, resolve_org};
 use crate::api::{
@@ -18,6 +19,17 @@ use crate::appsignal_url::{self, SampleSelector};
 use crate::config::Config;
 use crate::error::CliError;
 use crate::output::{self, Output};
+use crate::sample_analysis::{self, SampleAnalysis};
+
+/// A single sample with its analysis, for `--output json`.
+#[derive(Serialize)]
+struct SampleShowResponse<'a> {
+    incident_number: i64,
+    #[serde(rename = "type")]
+    sample_type: &'a str,
+    sample: &'a Sample,
+    analysis: &'a SampleAnalysis,
+}
 
 /// Fetch a single sample for an incident, by latest / id / timestamp.
 #[allow(clippy::too_many_arguments)]
@@ -30,6 +42,7 @@ pub async fn show(
     incident: Option<i64>,
     sample_id: Option<&str>,
     at: Option<&str>,
+    raw: bool,
     format: Output,
 ) -> Result<()> {
     let parsed = reference.map(appsignal_url::parse).transpose()?;
@@ -77,7 +90,21 @@ pub async fn show(
         .get_incident_sample(&resolved_app_id, incident_number, query)
         .await?;
 
-    output::print_with(&result, format, |w| render_sample_detail(w, &result))
+    // Default to the analysed digest; `--raw` returns the unprocessed sample.
+    if raw {
+        return output::print_with(&result, format, |w| render_sample_detail(w, &result));
+    }
+
+    let analysis =
+        sample_analysis::analyze(&result.sample, &result.sample_type, result.incident_number);
+    let response = SampleShowResponse {
+        incident_number: result.incident_number,
+        sample_type: &result.sample_type,
+        sample: &result.sample,
+        analysis: &analysis,
+    };
+
+    output::print_with(response, format, |w| analysis.render_digest(w))
 }
 
 /// List the samples for an incident, optionally within a time window.
@@ -223,29 +250,12 @@ fn render_backtrace(w: &mut dyn Write, backtrace: &[BacktraceLine]) -> io::Resul
     const MAX_FRAMES: usize = 10;
     writeln!(w, "Backtrace:")?;
     for frame in backtrace.iter().take(MAX_FRAMES) {
-        writeln!(w, "  {}", format_backtrace_line(frame))?;
+        writeln!(w, "  {}", sample_analysis::format_backtrace_frame(frame))?;
     }
     if backtrace.len() > MAX_FRAMES {
         writeln!(w, "  ... {} more frame(s)", backtrace.len() - MAX_FRAMES)?;
     }
     Ok(())
-}
-
-fn format_backtrace_line(frame: &BacktraceLine) -> String {
-    if let Some(original) = &frame.original {
-        if !original.is_empty() {
-            return original.clone();
-        }
-    }
-    let location = match (&frame.path, frame.line) {
-        (Some(path), Some(line)) => format!("{}:{}", path, line),
-        (Some(path), None) => path.clone(),
-        _ => "?".to_string(),
-    };
-    match &frame.method {
-        Some(method) => format!("{} in {}", location, method),
-        None => location,
-    }
 }
 
 fn render_sample_list(w: &mut dyn Write, result: &IncidentSamples) -> io::Result<()> {
@@ -318,8 +328,16 @@ mod tests {
             attributes: None,
             overview: None,
             environment: None,
+            params: None,
+            session_data: None,
+            custom_data: None,
+            timeline: None,
+            timeline_truncated_events: None,
+            group_durations: None,
+            group_allocations: None,
             exception: None,
             error_causes: None,
+            breadcrumbs: None,
         }
     }
 
@@ -382,19 +400,5 @@ mod tests {
         let mut buf = Vec::new();
         render_sample_list(&mut buf, &result).unwrap();
         assert!(String::from_utf8(buf).unwrap().contains("No samples found"));
-    }
-
-    #[test]
-    fn backtrace_line_prefers_original() {
-        let frame = BacktraceLine {
-            line: Some(10),
-            path: Some("a.rb".to_string()),
-            method: Some("m".to_string()),
-            column: None,
-            original: Some("a.rb:10:in `m'".to_string()),
-            kind: None,
-            url: None,
-        };
-        assert_eq!(format_backtrace_line(&frame), "a.rb:10:in `m'");
     }
 }
