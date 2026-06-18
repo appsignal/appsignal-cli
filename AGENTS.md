@@ -7,17 +7,28 @@ Rust CLI for interacting with AppSignal. Binary name is `appsignal-cli` (not
 
 ```
 src/
-  main.rs              CLI entrypoint, clap derive command/subcommand definitions
-  config.rs            Config load/save/delete (~/.config/appsignal/config.toml)
-  api.rs               AppSignalClient — GraphQL client for the AppSignal API
+  main.rs              CLI entrypoint, clap derive command/subcommand definitions + dispatch
+  config.rs            Config load/save (~/.config/appsignal/config.toml or project .appsignal.toml)
+  api.rs               AppSignalClient — GraphQL + REST v2 client for the AppSignal API
   oauth.rs             OAuth PKCE flow (code verifier, challenge, token exchange, refresh)
+  output.rs            Render trait, print()/print_with(), table()/detail()/json_line(), status! macro
+  error.rs             CliError — user-facing error enum and HTTP/GraphQL error mapping
+  telemetry.rs         Best-effort per-command telemetry (TelemetryCommand enum + track_command)
+  version_check.rs     Startup GitHub release check (warn on minor/patch, block on new major)
+  client_headers.rs    Shared User-Agent + X-AppSignal-Client request headers
   commands/
     mod.rs             Shared helpers (resolve_org, authenticated_client) + re-exports
+    about.rs           about — splash overview (version, config, auth, next commands)
     auth.rs            auth login / logout / status (OAuth only)
-    apps.rs            apps list / info / find / set-org / show-org
-    incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show
-    logs.rs            logs tail / search / views / sources
-    skill.rs           skill install (writes bundled AppSignal skills for OpenCode, Codex, or Claude)
+    apps.rs            apps list / info / find / set-org / show-org / resources <section>
+    project.rs         project init (create/update project-local .appsignal.toml)
+    incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show / update / add-note
+    dashboards.rs      dashboards list / create / update
+    triggers.rs        triggers list / create / update / archive (anomaly detection triggers)
+    logs/
+      mod.rs           logs tail / search / views / sources (REST log lines + GraphQL metadata)
+      actions.rs       logs metrics + logs triggers (log-line action CRUD)
+    skill.rs           skill install / update / status (bundled AppSignal skills for OpenCode, Codex, Claude)
 ```
 
 - **CLI framework**: clap v4 with derive macros
@@ -43,6 +54,40 @@ src/
   features, preserve the minimal CLI telemetry flow so command runs still emit
   the dedicated telemetry event and any new endpoint continues to send the
   standard CLI headers.
+
+## Output and errors
+
+- Command **results** are printed through `output::print()` / `output::print_with()`
+  (stdout). JSON falls out of `Serialize` for free; only the human view is
+  hand-written via a `Render` impl or a closure. Compose tables with
+  `output::table()` and key/value panels with `output::detail()`.
+- **Status messages** (progress, prompts, "OK", boxed notices) use the `status!`
+  macro or `output::status_box()` and always go to stderr, so they never pollute
+  `--output json`. `clippy.toml` bans `println!`/`print!`/`eprintln!`/`eprint!`
+  to enforce this — route everything through `output`.
+- Errors shown verbatim to the user must be a `CliError` (constructed directly,
+  or installed as `.context(CliError::msg(...))` / `.context(CliError::from_http(...))`).
+  Anything else is treated as internal and hidden behind a generic message
+  unless `APPSIGNAL_CLI_DEBUG=1` is set. Add new user-facing messages as
+  `CliError` variants or via `CliError::msg`, not as bare `anyhow!` strings.
+
+## Adding a new command
+
+End to end, a new subcommand usually touches:
+
+1. `src/api.rs` — add the client method (and its private `*Data` response
+   structs). Build the GraphQL query with correctly typed variables, assemble
+   `vars` with `json!` + conditional inserts, call `self.graphql(...)`, and
+   unwrap with a `CliError` context. Add a `wiremock` test.
+2. `src/commands/<module>.rs` — add a `#[derive(Serialize)]` response type and a
+   handler that does `Config::load` → `resolve_org` → `authenticated_client` →
+   `resolve_app_id` → client call → `output::print_with(...)`.
+3. `src/main.rs` — add the clap subcommand/action variant and the dispatch arm,
+   **plus a `TelemetryCommand` variant and an `impl_telemetry_command!` arm**
+   (the matches are exhaustive, so this is required to compile).
+4. Docs + release — update `README.md`, this file's command tables, and the
+   bundled skill in `skills/shared/body.md`, then add a changeset for
+   user-facing changes.
 
 ## Git Workflow
 
