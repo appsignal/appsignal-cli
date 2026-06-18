@@ -10,6 +10,7 @@ src/
   main.rs              CLI entrypoint, clap derive command/subcommand definitions + dispatch
   config.rs            Config load/save (~/.config/appsignal/config.toml or project .appsignal.toml)
   api.rs               AppSignalClient — GraphQL + REST v2 client for the AppSignal API
+  appsignal_url.rs     Parse AppSignal incident/sample URLs, paths, and bare sample ids
   oauth.rs             OAuth PKCE flow (code verifier, challenge, token exchange, refresh)
   output.rs            Render trait, print()/print_with(), table()/detail()/json_line(), status! macro
   error.rs             CliError — user-facing error enum and HTTP/GraphQL error mapping
@@ -23,6 +24,7 @@ src/
     apps.rs            apps list / info / find / set-org / show-org / resources <section>
     project.rs         project init (create/update project-local .appsignal.toml)
     incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show / update / add-note
+    samples.rs         samples show / list (transaction samples behind an incident)
     dashboards.rs      dashboards list / create / update
     triggers.rs        triggers list / create / update / archive (anomaly detection triggers)
     logs/
@@ -191,6 +193,29 @@ Extra fields on `AnomalyIncident`:
 - `IncidentOrderEnum`: `ID` (creation order), `LAST` (most recent activity)
 - `AlertStateEnum`: `OPEN`, `CLOSED`, `WARMUP`, `COOLDOWN`, `UNTRACKED`, `ARCHIVED`
 
+### Transaction samples
+
+The raw per-request data behind an incident is reached through the incident:
+`app(id).incident(incidentNumber).sample(...)` for one sample and
+`.samples(start, end, limit)` for many. Because `incident` is a union,
+the `sample`/`samples` fields are selected **inside** the
+`... on PerformanceIncident` / `... on ExceptionIncident` fragments. The sample
+type is taken from the returned `__typename`, never inferred from the input URL —
+see `api.rs::get_incident_sample` and `appsignal_url.rs`.
+
+- `sample(id: $id)` declares `$id: String`; `sample(timestamp: $at)` declares
+  **`$at: DateTime`**, even though the value sent is an ISO-8601 *string*.
+  `samples(start:, end:)` and `metrics.timeseries(start:, end:)` are the same —
+  declaring the variable `String` returns an HTTP 400 type mismatch. This is the
+  single most expensive footgun; the regression tests in `api.rs` assert the
+  `DateTime` declaration is present.
+- Performance samples carry `hasNPlusOne`, `timeline`, and `groupDurations`;
+  exception samples carry `exception { name message backtrace }`, `errorCauses`,
+  and `breadcrumbs`. Common fields: `id`, `action`, `namespace`, `duration`,
+  `queueDuration`, `createdAt`, `revision`, `attributes`/`overview`/`environment`.
+- Targeting the sample closest to a timestamp (`--at`) matters: the "latest"
+  sample often hides the one that triggered the incident.
+
 ### Documented GraphQL queries from the AppSignal docs
 
 Root query fields:
@@ -303,6 +328,8 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli incidents show --number <N> [app options]` | Show full details for a specific incident |
 | `appsignal-cli incidents update --number <N[,N...]> [--state S] [--severity S] [--assign IDs] [--assign-me] [--description D]` | Update incident state, severity, or assignees; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident (markdown supported) |
+| `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [app options]` | Fetch one transaction sample for an incident: latest, by id, or closest to a timestamp |
+| `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [app options]` | List an incident's transaction samples, optionally within a time window |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time (1-second polling) |
 | `appsignal-cli logs search [filters] [--page-all]` | One-shot log search (supports auto-pagination and global `--output json`) |
 | `appsignal-cli logs views [app options]` | List saved log views (filter presets) |

@@ -16,6 +16,7 @@ Use `appsignal-cli` to:
 - List, find, and inspect AppSignal apps
 - Search and tail application logs
 - List, inspect, update, and annotate incidents
+- Fetch the transaction samples behind an incident (by URL, id, or timestamp)
 - Manage dashboards, anomaly detection triggers, log-derived metrics, and
   log-based triggers
 - Render command output as JSON for scripts and LLM agents
@@ -151,6 +152,22 @@ appsignal-cli incidents update --number 42 --app "MyApp" --environment "producti
 appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Root cause identified."
 ```
 
+### Samples
+
+```sh
+# Fetch the latest sample for an incident
+appsignal-cli samples show --incident 42 --app "MyApp" --environment "production"
+
+# Fetch a sample straight from an AppSignal URL
+appsignal-cli samples show "https://appsignal.com/my-org/sites/<app-id>/performance/incidents/42"
+
+# Fetch the sample closest to a known incident time (better for retrospectives than "latest")
+appsignal-cli samples show --incident 42 --app-id <app-id> --at "2026-05-19T14:30:00Z"
+
+# List the samples for an incident within a time window (JSON for LLMs)
+appsignal-cli samples list --incident 42 --app-id <app-id> --start "2026-05-19T00:00:00Z" --end "2026-05-20T00:00:00Z" --output json
+```
+
 ### Logs
 
 ```sh
@@ -241,6 +258,15 @@ appsignal-cli skill install --target claude
 | `incidents show --number <N>` | Show details for a specific incident |
 | `incidents update --number <N[,N...]>` | Update incident state, severity, or assignees; multiple numbers currently support `--state` only |
 | `incidents add-note --number <N> --content "..."` | Add a note to an incident |
+
+### `samples`
+
+| Command | Description |
+|---|---|
+| `samples show [URL\|id]` | Show one sample for an incident — the latest, or `--sample-id <id>`, or `--at <ISO>` (closest to a timestamp) |
+| `samples list [URL]` | List an incident's samples, optionally narrowed with `--start`/`--end`/`--limit` |
+
+Both accept an AppSignal incident or sample URL (or a bare sample id) as a positional argument, or the explicit `--incident <N>` plus the usual `--app-id`/`--app`/`--environment`/`--org` flags.
 
 ### `logs`
 
