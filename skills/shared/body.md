@@ -29,6 +29,8 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents show --number <N> [app options]` | Show details for a single incident |
 | `appsignal-cli incidents update --number <N[,N...]> [flags]` | Update state, severity, assignees, or description; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
+| `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [app options]` | Fetch one transaction sample behind an incident: latest, by id, or closest to a timestamp |
+| `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [app options]` | List an incident's transaction samples, optionally within a time window |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time |
 | `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
 | `appsignal-cli logs views [app options]` | List saved log views |
@@ -84,6 +86,19 @@ Incident URLs:
 | `.../sites/<site_id>/exceptions/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
 | `.../sites/<site_id>/anomalies/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
 | `.../sites/<site_id>/logs/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
+
+Sample URLs (the underlying transaction data behind an incident):
+
+| URL pattern | CLI mapping |
+|---|---|
+| `.../performance/incidents/<number>` | `samples show "<url>"` (latest sample) |
+| `.../exceptions/incidents/<number>/samples/<sample_id>` | `samples show "<url>"` (that sample) |
+| `.../incidents/<number>/samples/timestamp/<ISO8601>` | `samples show "<url>"` (sample nearest the time) |
+
+`samples show`/`samples list` accept the whole URL as a positional argument and
+parse the app, incident, and which sample out of it — no need to pick the pieces
+apart yourself. Use `samples` (not `incidents show`) when you need the actual
+request data: action, duration, queue time, params, and the exception backtrace.
 
 The same incident number still works if the URL ends with extra page sections such as:
 
