@@ -16,6 +16,9 @@ Use `appsignal-cli` to:
 - List, find, and inspect AppSignal apps
 - Search and tail application logs
 - List, inspect, update, and annotate incidents
+- Fetch the transaction samples behind an incident (by URL, id, or timestamp)
+- Discover metric keys and pull metric timeseries and historical datapoints
+- Rank slow performance actions and the queries behind them
 - Manage dashboards, anomaly detection triggers, log-derived metrics, and
   log-based triggers
 - Render command output as JSON for scripts and LLM agents
@@ -90,6 +93,35 @@ automatically.
 `project init` does not copy your stored global OAuth credentials into
 the local file. Authenticate afterward if you want project-specific credentials.
 
+### Headless / CI authentication
+
+For non-interactive environments where the OAuth browser flow is impractical,
+authenticate with a personal API token instead:
+
+```sh
+# Via environment variable (recommended for CI)
+export APPSIGNAL_API_TOKEN="your-personal-api-token"
+appsignal-cli apps list
+
+# Or per-invocation
+appsignal-cli --api-token "your-personal-api-token" incidents list --app-id <app-id>
+```
+
+A token supplied this way takes precedence over any stored OAuth credentials and
+is sent as a `?token=` query parameter; nothing is written to disk. OAuth remains
+the default when no token is provided. `appsignal-cli auth status` shows which
+method is active.
+
+### Verbose output
+
+Pass the global `--verbose` (`-v`) flag to print each outgoing GraphQL request —
+its URL, query, and variables — to **stderr** before it is sent. This is handy
+for debugging and never pollutes `--output json` on stdout:
+
+```sh
+appsignal-cli --verbose incidents show --number 42 --app-id <app-id>
+```
+
 ## Quick start
 
 ```sh
@@ -150,6 +182,105 @@ appsignal-cli incidents update --number 42 --app "MyApp" --environment "producti
 # Add a note to an incident
 appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Root cause identified."
 ```
+
+### Samples
+
+```sh
+# Fetch the latest sample for an incident (prints an analysed digest)
+appsignal-cli samples show --incident 42 --app "MyApp" --environment "production"
+
+# Fetch a sample straight from an AppSignal URL
+appsignal-cli samples show "https://appsignal.com/my-org/sites/<app-id>/performance/incidents/42"
+
+# Fetch the sample closest to a known incident time (better for retrospectives than "latest")
+appsignal-cli samples show --incident 42 --app-id <app-id> --at "2026-05-19T14:30:00Z"
+
+# Show the unprocessed sample instead of the digest
+appsignal-cli samples show --incident 42 --app-id <app-id> --raw
+
+# Get the digest plus the raw sample as JSON (for scripts and LLMs)
+appsignal-cli samples show --incident 42 --app-id <app-id> --output json
+
+# List the samples for an incident within a time window
+appsignal-cli samples list --incident 42 --app-id <app-id> --start "2026-05-19T00:00:00Z" --end "2026-05-20T00:00:00Z"
+
+# Scan a time window across incidents (no --incident) — "what happened between T1 and T2"
+appsignal-cli samples list --app-id <app-id> --start "2026-05-19T13:00:00Z" --end "2026-05-19T14:00:00Z"
+
+# Narrow a window scan to namespaces and a specific user
+appsignal-cli samples list --app-id <app-id> --start "2026-05-19T13:00:00Z" --end "2026-05-19T14:00:00Z" --namespaces web --user alice@example.com
+
+# Re-inspect samples you fetched earlier, offline — no API call
+appsignal-cli samples cache list
+appsignal-cli samples cache search "PG::QueryCanceled"
+
+# Skip caching for a single fetch, or clear the cache
+appsignal-cli samples show --incident 42 --app-id <app-id> --no-cache
+appsignal-cli samples cache clear
+```
+
+By default `samples show` prints a **digest** — request overview, who hit it, a
+performance breakdown by event group, the slowest events and queries, N+1
+detection, and (for errors) the exception, backtrace, causes, and breadcrumbs.
+`--output json` returns both the raw `sample` and a structured `analysis`
+object; `--raw` prints the unprocessed sample instead of the digest.
+
+Every sample fetched by `samples show`/`samples list` is also written to a local
+cache (under the platform cache directory) so you can re-inspect or search it
+offline with `samples cache list` / `samples cache search` — handy when an
+incident is closed or you have lost network access. Caching is best-effort and
+never blocks a fetch. Because samples can include request parameters and session
+data, the cache may hold sensitive values; disable it per call with `--no-cache`
+or globally with `APPSIGNAL_NO_CACHE=1`, and wipe it with `samples cache clear`.
+
+### Metrics
+
+```sh
+# Discover the metric keys reported by an app
+appsignal-cli metrics list --app-id <app-id>
+
+# Filter the key list by name fragment
+appsignal-cli metrics list --app-id <app-id> --name database
+
+# Pull a metric's values over a relative window
+appsignal-cli metrics timeseries --app-id <app-id> --metric database.query_count --timeframe R1H
+
+# Pull a metric over an explicit window, narrowed to a field and a tag
+appsignal-cli metrics timeseries --app-id <app-id> --metric latency \
+  --field p95 --tag hostname=web-1 \
+  --start "2026-05-19T13:00:00Z" --end "2026-05-19T14:00:00Z"
+
+# Error and performance throughput per action over a window ("what got slow / noisy")
+appsignal-cli metrics history --app-id <app-id> \
+  --start "2026-05-19T00:00:00Z" --end "2026-05-20T00:00:00Z" --namespaces web
+```
+
+Metrics come from the public GraphQL API (`app.metrics.keys` /
+`app.metrics.timeseries` and the `timeDetective*DataPoints` fields) — no REST
+access or extra credentials are needed. `metrics timeseries` requires a window:
+either `--timeframe` (e.g. `R1H`, `R1D`) or both `--start` and `--end`.
+
+### Performance
+
+```sh
+# Rank recent performance actions by mean request duration (the slowest typical request)
+appsignal-cli performance actions --app-id <app-id>
+
+# Rank by total time spent or by throughput instead
+appsignal-cli performance actions --app-id <app-id> --sort total
+appsignal-cli performance actions --app-id <app-id> --sort count --namespaces web
+
+# Drill into the slowest actions and show the slow queries + N+1 suspects behind them
+appsignal-cli performance queries --app-id <app-id> --limit 5
+```
+
+`performance actions` ranks the recent performance incidents by `mean` (default),
+`total`, or `count`. `performance queries` takes the slowest actions, fetches the
+latest sample for each, and surfaces the slow database queries and N+1 suspects
+from those samples — useful for "why is this action slow?". Because the public
+API exposes performance data at the **action** level (not per-SQL), the query
+view is derived from the latest sampled request per action, not a full aggregate;
+the output says so.
 
 ### Logs
 
@@ -241,6 +372,38 @@ appsignal-cli skill install --target claude
 | `incidents show --number <N>` | Show details for a specific incident |
 | `incidents update --number <N[,N...]>` | Update incident state, severity, or assignees; multiple numbers currently support `--state` only |
 | `incidents add-note --number <N> --content "..."` | Add a note to an incident |
+
+### `samples`
+
+| Command | Description |
+|---|---|
+| `samples show [URL\|id]` | Show an analysed digest of one sample — the latest, or `--sample-id <id>`, or `--at <ISO>` (closest to a timestamp); `--raw` for the unprocessed sample |
+| `samples list [URL]` | List an incident's samples, or — with no `--incident` — scan a time window (`--start`/`--end`) across incidents, filterable by `--namespaces` and `--user` |
+| `samples cache list` | List recently cached samples (newest first); filter with `--app-id`, cap with `--limit` |
+| `samples cache search <query>` | Search cached samples by their contents (action, user, query bodies, exceptions, …) |
+| `samples cache clear` | Delete every cached sample |
+| `samples cache path` | Print the cache directory |
+
+Both `show` and `list` accept an AppSignal incident or sample URL (or a bare sample id) as a positional argument, or the explicit `--incident <N>` plus the usual `--app-id`/`--app`/`--environment`/`--org` flags. In window mode `--limit` caps how many recent incidents are scanned (default 20).
+
+### `metrics`
+
+| Command | Description |
+|---|---|
+| `metrics list` | Discover the metric keys reported by an app; filter with `--name <fragment>` and cap with `--limit` |
+| `metrics timeseries --metric <name>` | Fetch a metric's values over time; narrow with `--field` and `--tag key=value`; window with `--timeframe` (e.g. `R1H`) or `--start`/`--end` |
+| `metrics history --start <ISO> --end <ISO>` | Per-action error and performance throughput over a window; scope with `--namespaces` |
+
+All `metrics` subcommands take the usual `--app-id`/`--app`/`--environment`/`--org` flags and are served by the public GraphQL API.
+
+### `performance`
+
+| Command | Description |
+|---|---|
+| `performance actions` | Rank recent performance incidents by `--sort mean\|total\|count` (default `mean`); scan depth via `--limit`, scope with `--namespaces`/`--action`/`--state` |
+| `performance queries` | Drill into the `--limit` slowest actions and list the slow queries and N+1 suspects from each one's latest sample |
+
+Both take the usual `--app-id`/`--app`/`--environment`/`--org` flags. `performance queries` is sample-derived (latest request per action), not a full per-query aggregate.
 
 ### `logs`
 

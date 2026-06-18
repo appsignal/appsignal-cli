@@ -71,6 +71,28 @@ pub enum TelemetryCommand {
     IncidentsUpdate,
     #[serde(rename = "incidents.add-note")]
     IncidentsAddNote,
+    #[serde(rename = "samples.show")]
+    SamplesShow,
+    #[serde(rename = "samples.list")]
+    SamplesList,
+    #[serde(rename = "samples.cache.list")]
+    SamplesCacheList,
+    #[serde(rename = "samples.cache.search")]
+    SamplesCacheSearch,
+    #[serde(rename = "samples.cache.clear")]
+    SamplesCacheClear,
+    #[serde(rename = "samples.cache.path")]
+    SamplesCachePath,
+    #[serde(rename = "metrics.list")]
+    MetricsList,
+    #[serde(rename = "metrics.timeseries")]
+    MetricsTimeseries,
+    #[serde(rename = "metrics.history")]
+    MetricsHistory,
+    #[serde(rename = "performance.actions")]
+    PerformanceActions,
+    #[serde(rename = "performance.queries")]
+    PerformanceQueries,
     #[serde(rename = "logs.tail")]
     LogsTail,
     #[serde(rename = "logs.search")]
