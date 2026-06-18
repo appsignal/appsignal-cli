@@ -10,7 +10,7 @@ Status legend:
 
 Key implementation difference:
 - The MCP server has access to internal APIs and direct application data.
-- The CLI currently uses the public GraphQL API, and may need REST endpoints for metrics and other missing features.
+- The CLI currently uses the public GraphQL API, which covers more than previously assumed (metrics included).
 
 REST migration tracking:
 - See `rest-todo.md` for the current GraphQL-to-REST migration inventory and implementation order.
@@ -21,11 +21,12 @@ Implemented in the CLI today:
 - Applications and org discovery
 - App resources: users, notifiers, namespaces, dashboards
 - Incident listing, incident detail, incident update, incident notes
+- Transaction samples behind incidents (fetch, digest, window/user scan)
+- Metric key discovery, raw timeseries, and historical datapoints
 - Log search, log tail, log views, log sources
 - Trigger listing, creation, update, and archiving
 
 Still missing or incomplete:
-- Metrics discovery and querying
 - Dashboard visual management
 - Trace inspection
 - Log line action management
@@ -196,30 +197,25 @@ CLI extras:
 
 ## Metrics
 
-### `discover_metrics`
-- [ ] Not implemented
-
-### `get_metric_names`
-- [ ] Not implemented
-
-### `get_metric_tags`
-- [ ] Not implemented
-
 ### `get_metrics_list`
-- [ ] Not implemented
+- [x] `metrics list [--name <filter>] [--limit N]` (via `app.metrics.keys`)
 
 ### `get_metrics_timeseries`
-- [ ] Not implemented
+- [x] `metrics timeseries --metric <name> [--field F] [--tag k=v] [--timeframe T | --start/--end]` (via `app.metrics.timeseries`)
 
-Likely implementation work:
-- [ ] Add `metrics discover`
-- [ ] Add `metrics names`
-- [ ] Add `metrics tags`
-- [ ] Add `metrics list`
-- [ ] Add `metrics timeseries`
+### Historical windows
+- [x] `metrics history --start <ISO> --end <ISO> [--namespaces ...]` (via `timeDetectiveErrorDataPoints` / `timeDetectivePerformanceDataPoints`)
+
+Still open:
+- [ ] Dedicated metric name / tag discovery subcommands (tags are surfaced inline by `metrics list` today)
 
 Notes:
-- Metrics parity likely requires REST endpoints under `/api/v2/metrics/...`.
+- Metrics are served by the **public GraphQL API**, not REST — `app.metrics.keys`,
+  `app.metrics.timeseries`, and the `timeDetective*DataPoints` fields cover key
+  discovery, raw timeseries, and arbitrary historical windows. The earlier
+  assumption that metrics needed `/api/v2/metrics/...` REST endpoints was wrong.
+- `metrics.timeseries` `query` field names come back lowercased on the wire
+  (`mean`, `p95`, `counter`); the response is parsed accordingly.
 - The MCP server also has category-level discovery behavior that may rely on server-side config unavailable to the CLI.
 
 ---
@@ -316,6 +312,7 @@ Likely implementation work:
 ## Research Notes
 
 - The public GraphQL API already covers more than the previous TODO suggested; this file was stale.
-- Metrics likely require REST support in the CLI in addition to the existing GraphQL client.
+- Metrics are fully GraphQL-backed (`app.metrics.keys` / `app.metrics.timeseries` /
+  `timeDetective*DataPoints`); no REST support is needed for the `metrics` command.
 - Trigger, dashboard, trace, and log rule parity depends on whether the public API exposes the needed queries and mutations.
 - Anomaly state handling may differ from exception/performance incident state enums, so state support should be verified before designing CLI flags.

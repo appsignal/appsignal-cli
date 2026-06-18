@@ -29,6 +29,11 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents show --number <N> [app options]` | Show details for a single incident |
 | `appsignal-cli incidents update --number <N[,N...]> [flags]` | Update state, severity, assignees, or description; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
+| `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [app options]` | Show an analysed digest of one sample behind an incident (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
+| `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--namespaces <list>] [--user <id>] [app options]` | List an incident's samples, or scan a time window across incidents (omit `--incident`; filter with `--user`/`--namespaces`) |
+| `appsignal-cli metrics list [--name <fragment>] [--limit <N>] [app options]` | Discover the metric keys an app reports (name, type, fields, tags) |
+| `appsignal-cli metrics timeseries --metric <name> [--field F...] [--tag k=v...] [--timeframe T \| --start <ISO> --end <ISO>] [app options]` | Fetch a metric's values over time (needs `--timeframe` or both `--start`/`--end`) |
+| `appsignal-cli metrics history --start <ISO> --end <ISO> [--namespaces <list>] [app options]` | Per-action error and performance throughput over a window |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time |
 | `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
 | `appsignal-cli logs views [app options]` | List saved log views |
@@ -84,6 +89,22 @@ Incident URLs:
 | `.../sites/<site_id>/exceptions/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
 | `.../sites/<site_id>/anomalies/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
 | `.../sites/<site_id>/logs/incidents/<number>` | `incidents show --app-id <site_id> --number <number>` |
+
+Sample URLs (the underlying transaction data behind an incident):
+
+| URL pattern | CLI mapping |
+|---|---|
+| `.../performance/incidents/<number>` | `samples show "<url>"` (latest sample) |
+| `.../exceptions/incidents/<number>/samples/<sample_id>` | `samples show "<url>"` (that sample) |
+| `.../incidents/<number>/samples/timestamp/<ISO8601>` | `samples show "<url>"` (sample nearest the time) |
+
+`samples show`/`samples list` accept the whole URL as a positional argument and
+parse the app, incident, and which sample out of it — no need to pick the pieces
+apart yourself. Use `samples` (not `incidents show`) when you need the actual
+request data: action, duration, queue time, params, and the exception backtrace.
+`samples show` prints an analysed digest by default; add `--output json` to get
+the digest's structured `analysis` alongside the raw sample, or `--raw` for just
+the unprocessed sample.
 
 The same incident number still works if the URL ends with extra page sections such as:
 
