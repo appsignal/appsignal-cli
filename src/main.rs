@@ -7,6 +7,7 @@ mod error;
 mod oauth;
 mod output;
 mod sample_analysis;
+mod sample_cache;
 mod telemetry;
 mod version_check;
 
@@ -495,6 +496,9 @@ enum SamplesAction {
         /// Show the unprocessed sample instead of the analysed digest
         #[arg(long)]
         raw: bool,
+        /// Do not write the fetched sample to the local cache
+        #[arg(long)]
+        no_cache: bool,
     },
     /// List the samples for an incident, or scan a time window across incidents
     List {
@@ -522,7 +526,43 @@ enum SamplesAction {
         /// Only keep samples whose user identity matches (id, email, or substring)
         #[arg(long)]
         user: Option<String>,
+        /// Do not write the fetched samples to the local cache
+        #[arg(long)]
+        no_cache: bool,
     },
+    /// Inspect the local cache of fetched samples
+    Cache {
+        #[command(subcommand)]
+        action: SamplesCacheAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum SamplesCacheAction {
+    /// List recently cached samples (newest first)
+    List {
+        /// Only show samples cached for this application ID
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Maximum number of entries to show
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Search cached samples by their contents (action, user, query bodies, ...)
+    Search {
+        /// Case-insensitive substring to look for
+        query: String,
+        /// Only search samples cached for this application ID
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Maximum number of matches to show
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// Delete every cached sample
+    Clear,
+    /// Print the cache directory path
+    Path,
 }
 
 #[derive(Args)]
@@ -1210,7 +1250,15 @@ impl_telemetry_command!(IncidentsAction {
 
 impl_telemetry_command!(SamplesAction {
     Self::Show { .. } => telemetry::TelemetryCommand::SamplesShow,
-    Self::List { .. } => telemetry::TelemetryCommand::SamplesList
+    Self::List { .. } => telemetry::TelemetryCommand::SamplesList,
+    Self::Cache { action } => action.telemetry_command()
+});
+
+impl_telemetry_command!(SamplesCacheAction {
+    Self::List { .. } => telemetry::TelemetryCommand::SamplesCacheList,
+    Self::Search { .. } => telemetry::TelemetryCommand::SamplesCacheSearch,
+    Self::Clear => telemetry::TelemetryCommand::SamplesCacheClear,
+    Self::Path => telemetry::TelemetryCommand::SamplesCachePath
 });
 
 impl_telemetry_command!(MetricsAction {
@@ -1654,6 +1702,7 @@ async fn run(cli: Cli) -> Result<()> {
                 sample_id,
                 at,
                 raw,
+                no_cache,
             } => {
                 commands::samples::show(
                     reference.as_deref(),
@@ -1665,6 +1714,7 @@ async fn run(cli: Cli) -> Result<()> {
                     sample_id.as_deref(),
                     at.as_deref(),
                     raw,
+                    no_cache,
                     cli.output,
                 )
                 .await?
@@ -1678,6 +1728,7 @@ async fn run(cli: Cli) -> Result<()> {
                 limit,
                 namespaces,
                 user,
+                no_cache,
             } => {
                 commands::samples::list(
                     reference.as_deref(),
@@ -1691,10 +1742,23 @@ async fn run(cli: Cli) -> Result<()> {
                     limit,
                     namespaces.as_deref(),
                     user.as_deref(),
+                    no_cache,
                     cli.output,
                 )
                 .await?
             }
+            SamplesAction::Cache { action } => match action {
+                SamplesCacheAction::List { app_id, limit } => {
+                    commands::samples::cache_list(app_id.as_deref(), limit, cli.output)?
+                }
+                SamplesCacheAction::Search {
+                    query,
+                    app_id,
+                    limit,
+                } => commands::samples::cache_search(&query, app_id.as_deref(), limit, cli.output)?,
+                SamplesCacheAction::Clear => commands::samples::cache_clear(cli.output)?,
+                SamplesCacheAction::Path => commands::samples::cache_path(cli.output)?,
+            },
         },
         Commands::Metrics { action } => match action {
             MetricsAction::List { app, name, limit } => {

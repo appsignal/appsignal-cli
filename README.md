@@ -180,6 +180,14 @@ appsignal-cli samples list --app-id <app-id> --start "2026-05-19T13:00:00Z" --en
 
 # Narrow a window scan to namespaces and a specific user
 appsignal-cli samples list --app-id <app-id> --start "2026-05-19T13:00:00Z" --end "2026-05-19T14:00:00Z" --namespaces web --user alice@example.com
+
+# Re-inspect samples you fetched earlier, offline — no API call
+appsignal-cli samples cache list
+appsignal-cli samples cache search "PG::QueryCanceled"
+
+# Skip caching for a single fetch, or clear the cache
+appsignal-cli samples show --incident 42 --app-id <app-id> --no-cache
+appsignal-cli samples cache clear
 ```
 
 By default `samples show` prints a **digest** — request overview, who hit it, a
@@ -187,6 +195,14 @@ performance breakdown by event group, the slowest events and queries, N+1
 detection, and (for errors) the exception, backtrace, causes, and breadcrumbs.
 `--output json` returns both the raw `sample` and a structured `analysis`
 object; `--raw` prints the unprocessed sample instead of the digest.
+
+Every sample fetched by `samples show`/`samples list` is also written to a local
+cache (under the platform cache directory) so you can re-inspect or search it
+offline with `samples cache list` / `samples cache search` — handy when an
+incident is closed or you have lost network access. Caching is best-effort and
+never blocks a fetch. Because samples can include request parameters and session
+data, the cache may hold sensitive values; disable it per call with `--no-cache`
+or globally with `APPSIGNAL_NO_CACHE=1`, and wipe it with `samples cache clear`.
 
 ### Metrics
 
@@ -334,8 +350,12 @@ appsignal-cli skill install --target claude
 |---|---|
 | `samples show [URL\|id]` | Show an analysed digest of one sample — the latest, or `--sample-id <id>`, or `--at <ISO>` (closest to a timestamp); `--raw` for the unprocessed sample |
 | `samples list [URL]` | List an incident's samples, or — with no `--incident` — scan a time window (`--start`/`--end`) across incidents, filterable by `--namespaces` and `--user` |
+| `samples cache list` | List recently cached samples (newest first); filter with `--app-id`, cap with `--limit` |
+| `samples cache search <query>` | Search cached samples by their contents (action, user, query bodies, exceptions, …) |
+| `samples cache clear` | Delete every cached sample |
+| `samples cache path` | Print the cache directory |
 
-Both accept an AppSignal incident or sample URL (or a bare sample id) as a positional argument, or the explicit `--incident <N>` plus the usual `--app-id`/`--app`/`--environment`/`--org` flags. In window mode `--limit` caps how many recent incidents are scanned (default 20).
+Both `show` and `list` accept an AppSignal incident or sample URL (or a bare sample id) as a positional argument, or the explicit `--incident <N>` plus the usual `--app-id`/`--app`/`--environment`/`--org` flags. In window mode `--limit` caps how many recent incidents are scanned (default 20).
 
 ### `metrics`
 

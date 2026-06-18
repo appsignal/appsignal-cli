@@ -75,6 +75,14 @@ pub enum TelemetryCommand {
     SamplesShow,
     #[serde(rename = "samples.list")]
     SamplesList,
+    #[serde(rename = "samples.cache.list")]
+    SamplesCacheList,
+    #[serde(rename = "samples.cache.search")]
+    SamplesCacheSearch,
+    #[serde(rename = "samples.cache.clear")]
+    SamplesCacheClear,
+    #[serde(rename = "samples.cache.path")]
+    SamplesCachePath,
     #[serde(rename = "metrics.list")]
     MetricsList,
     #[serde(rename = "metrics.timeseries")]

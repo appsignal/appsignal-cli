@@ -21,6 +21,7 @@ use crate::config::Config;
 use crate::error::CliError;
 use crate::output::{self, Output};
 use crate::sample_analysis::{self, SampleAnalysis};
+use crate::sample_cache::{self, CachedSample};
 
 /// A single sample with its analysis, for `--output json`.
 #[derive(Serialize)]
@@ -44,6 +45,7 @@ pub async fn show(
     sample_id: Option<&str>,
     at: Option<&str>,
     raw: bool,
+    no_cache: bool,
     format: Output,
 ) -> Result<()> {
     let parsed = reference.map(appsignal_url::parse).transpose()?;
@@ -91,6 +93,16 @@ pub async fn show(
         .get_incident_sample(&resolved_app_id, incident_number, query)
         .await?;
 
+    cache_samples(
+        no_cache,
+        &resolved_app_id,
+        [(
+            result.incident_number,
+            result.sample_type.as_str(),
+            &result.sample,
+        )],
+    );
+
     // Default to the analysed digest; `--raw` returns the unprocessed sample.
     if raw {
         return output::print_with(&result, format, |w| render_sample_detail(w, &result));
@@ -133,6 +145,7 @@ pub async fn list(
     limit: Option<i64>,
     namespaces: Option<&str>,
     user: Option<&str>,
+    no_cache: bool,
     format: Output,
 ) -> Result<()> {
     let parsed = reference.map(appsignal_url::parse).transpose()?;
@@ -165,6 +178,14 @@ pub async fn list(
             if let Some(user) = user {
                 result.samples.retain(|s| sample_matches_user(s, user));
             }
+            cache_samples(
+                no_cache,
+                &resolved_app_id,
+                result
+                    .samples
+                    .iter()
+                    .map(|s| (result.incident_number, result.sample_type.as_str(), s)),
+            );
             output::print_with(&result, format, |w| render_sample_list(w, &result))
         }
         // Window mode: scan incidents and collect samples in [start, end].
@@ -193,6 +214,13 @@ pub async fn list(
             if let Some(user) = user {
                 samples.retain(|w| sample_matches_user(&w.sample, user));
             }
+            cache_samples(
+                no_cache,
+                &resolved_app_id,
+                samples
+                    .iter()
+                    .map(|w| (w.incident_number, w.sample_type.as_str(), &w.sample)),
+            );
             sort_window_samples(&mut samples);
 
             let response = WindowSamplesResponse {
@@ -204,6 +232,128 @@ pub async fn list(
             })
         }
     }
+}
+
+/// Best-effort cache of every sample a fetch returned. Honours `--no-cache` and
+/// the `APPSIGNAL_NO_CACHE` environment variable, and never fails the command.
+fn cache_samples<'a>(
+    no_cache: bool,
+    app_id: &str,
+    entries: impl IntoIterator<Item = (i64, &'a str, &'a Sample)>,
+) {
+    if no_cache || sample_cache::disabled_by_env() {
+        return;
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    for (incident_number, sample_type, sample) in entries {
+        sample_cache::store_best_effort(app_id, incident_number, sample_type, sample, &now);
+    }
+}
+
+/// A cache listing or search result, for `--output json`.
+#[derive(Serialize)]
+struct CacheListResponse<'a> {
+    count: usize,
+    entries: &'a [CachedSample],
+}
+
+/// `samples cache list` — show recently cached samples.
+pub fn cache_list(app_id: Option<&str>, limit: Option<usize>, format: Output) -> Result<()> {
+    let dir = sample_cache::default_dir()
+        .context(CliError::msg("Could not determine the cache directory."))?;
+    let mut entries = sample_cache::load_all(&dir, app_id)?;
+    if let Some(limit) = limit {
+        entries.truncate(limit);
+    }
+    output::print_with(
+        CacheListResponse {
+            count: entries.len(),
+            entries: &entries,
+        },
+        format,
+        |w| render_cache_entries(w, &entries, None),
+    )
+}
+
+/// `samples cache search <query>` — search cached samples by their contents.
+pub fn cache_search(
+    query: &str,
+    app_id: Option<&str>,
+    limit: Option<usize>,
+    format: Output,
+) -> Result<()> {
+    let dir = sample_cache::default_dir()
+        .context(CliError::msg("Could not determine the cache directory."))?;
+    let mut entries = sample_cache::search(&dir, query, app_id)?;
+    if let Some(limit) = limit {
+        entries.truncate(limit);
+    }
+    output::print_with(
+        CacheListResponse {
+            count: entries.len(),
+            entries: &entries,
+        },
+        format,
+        |w| render_cache_entries(w, &entries, Some(query)),
+    )
+}
+
+/// `samples cache clear` — delete every cached sample.
+pub fn cache_clear(format: Output) -> Result<()> {
+    let dir = sample_cache::default_dir()
+        .context(CliError::msg("Could not determine the cache directory."))?;
+    let removed = sample_cache::clear(&dir)?;
+    output::print_with(serde_json::json!({ "removed": removed }), format, |w| {
+        writeln!(w, "Removed {} cached sample(s).", removed)
+    })
+}
+
+/// `samples cache path` — print the cache directory.
+pub fn cache_path(format: Output) -> Result<()> {
+    let path = sample_cache::dir_display()?;
+    output::print_with(serde_json::json!({ "path": path }), format, |w| {
+        writeln!(w, "{}", path)
+    })
+}
+
+fn render_cache_entries(
+    w: &mut dyn Write,
+    entries: &[CachedSample],
+    query: Option<&str>,
+) -> io::Result<()> {
+    if entries.is_empty() {
+        return match query {
+            Some(q) => writeln!(w, "No cached samples matched \"{}\".", q),
+            None => writeln!(
+                w,
+                "No cached samples. Run `samples show`/`samples list` first."
+            ),
+        };
+    }
+
+    if let Some(q) = query {
+        writeln!(w, "Cached samples matching \"{}\":", q)?;
+    }
+    writeln!(
+        w,
+        "{:<22} {:<26} {:<6} {:<5} {:<28} {:<22} SAMPLE",
+        "CACHED", "APP", "INC", "TYPE", "ACTION", "USER"
+    )?;
+    writeln!(w, "{}", "-".repeat(120))?;
+    for entry in entries {
+        writeln!(
+            w,
+            "{:<22} {:<26} {:<6} {:<5} {:<28} {:<22} {}",
+            truncate(&entry.cached_at, 22),
+            truncate(&entry.app_id, 26),
+            entry.incident_number,
+            short_type(&entry.sample_type),
+            truncate(entry.action().unwrap_or("-"), 28),
+            truncate(entry.user().as_deref().unwrap_or("-"), 22),
+            entry.sample.id,
+        )?;
+    }
+    writeln!(w, "{} cached sample(s).", entries.len())
 }
 
 fn parse_namespaces(namespaces: Option<&str>) -> Option<Vec<String>> {

@@ -12,6 +12,7 @@ src/
   api.rs               AppSignalClient — GraphQL + REST v2 client for the AppSignal API
   appsignal_url.rs     Parse AppSignal incident/sample URLs, paths, and bare sample ids
   sample_analysis.rs   Distil a Sample into the investigator digest (breakdown, N+1, slow queries, error trail)
+  sample_cache.rs      Best-effort on-disk cache of fetched samples (dirs cache dir) + list/search/clear
   oauth.rs             OAuth PKCE flow (code verifier, challenge, token exchange, refresh)
   output.rs            Render trait, print()/print_with(), table()/detail()/json_line(), status! macro
   error.rs             CliError — user-facing error enum and HTTP/GraphQL error mapping
@@ -231,6 +232,14 @@ see `api.rs::get_incident_sample` and `appsignal_url.rs`.
   sample level. `--user` filters on the sample's user identity (see
   `sample_analysis::sample_user`, which also reads `sessionData`); `--namespaces`
   filters the incident list.
+- Every fetched sample is also written to an on-disk cache (`sample_cache.rs`,
+  one JSON file per sample under `dirs::cache_dir()/appsignal/samples/`) so
+  `samples cache list`/`search` can re-inspect them offline. Caching is
+  best-effort (never fatal) and additive — it does not change `show`/`list`
+  output. Opt out per call with `--no-cache` or globally with `APPSIGNAL_NO_CACHE`.
+  `search` matches the case-insensitive query against each entry's full
+  serialized JSON, so it covers action, user, query bodies, params, and
+  exceptions. Samples can hold sensitive data; `samples cache clear` wipes it.
 
 ### Metrics
 
@@ -382,8 +391,11 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli incidents show --number <N> [app options]` | Show full details for a specific incident |
 | `appsignal-cli incidents update --number <N[,N...]> [--state S] [--severity S] [--assign IDs] [--assign-me] [--description D]` | Update incident state, severity, or assignees; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident (markdown supported) |
-| `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [app options]` | Show an analysed digest of one sample (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
-| `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [--namespaces <list>] [--user <id>] [app options]` | List an incident's samples, or scan a time window across incidents (no `--incident`; `--user`/`--namespaces` filter) |
+| `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [--no-cache] [app options]` | Show an analysed digest of one sample (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
+| `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [--namespaces <list>] [--user <id>] [--no-cache] [app options]` | List an incident's samples, or scan a time window across incidents (no `--incident`; `--user`/`--namespaces` filter) |
+| `appsignal-cli samples cache list [--app-id <id>] [--limit <N>]` | List locally cached samples (newest first) |
+| `appsignal-cli samples cache search <query> [--app-id <id>] [--limit <N>]` | Search cached samples by their serialized contents |
+| `appsignal-cli samples cache clear` / `samples cache path` | Delete all cached samples / print the cache directory |
 | `appsignal-cli metrics list [--name <fragment>] [--limit <N>] [app options]` | Discover the metric keys an app reports (name, type, fields, tags) |
 | `appsignal-cli metrics timeseries --metric <name> [--field F...] [--tag k=v...] [--timeframe T \| --start <ISO> --end <ISO>] [app options]` | Fetch a metric's values over time; requires `--timeframe` or both `--start`/`--end` |
 | `appsignal-cli metrics history --start <ISO> --end <ISO> [--namespaces <list>] [app options]` | Per-action error and performance throughput over a window (time-detective datapoints) |
