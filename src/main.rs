@@ -1,10 +1,12 @@
 mod api;
+mod appsignal_url;
 mod client_headers;
 mod commands;
 mod config;
 mod error;
 mod oauth;
 mod output;
+mod sample_analysis;
 mod telemetry;
 mod version_check;
 
@@ -61,6 +63,11 @@ enum Commands {
     Incidents {
         #[command(subcommand)]
         action: IncidentsAction,
+    },
+    /// Fetch transaction samples behind an incident
+    Samples {
+        #[command(subcommand)]
+        action: SamplesAction,
     },
     /// Stream, search, and inspect application logs
     Logs {
@@ -437,6 +444,74 @@ enum IncidentsAction {
         /// Organization slug (uses saved default if omitted)
         #[arg(long)]
         org: Option<String>,
+    },
+}
+
+#[derive(Args)]
+struct SamplesAppArgs {
+    /// Application ID (alternative to --app + --environment).
+    /// Taken from the URL automatically when a reference is given.
+    #[arg(long)]
+    app_id: Option<String>,
+    /// Application name — used with optional --environment to find the app
+    #[arg(long)]
+    app: Option<String>,
+    /// Environment filter (e.g. "production") — used with --app
+    #[arg(long)]
+    environment: Option<String>,
+    /// Organization slug (uses saved default if omitted)
+    #[arg(long)]
+    org: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum SamplesAction {
+    /// Show a single sample for an incident (latest, by id, or by timestamp)
+    Show {
+        /// An AppSignal incident/sample URL or a sample id. When given, it
+        /// supplies the app, incident, and which sample to fetch.
+        reference: Option<String>,
+        #[command(flatten)]
+        app: SamplesAppArgs,
+        /// Incident number (when not using a URL reference)
+        #[arg(long)]
+        incident: Option<i64>,
+        /// Fetch a specific sample by id
+        #[arg(long)]
+        sample_id: Option<String>,
+        /// Fetch the sample closest to this ISO-8601 timestamp
+        #[arg(long)]
+        at: Option<String>,
+        /// Show the unprocessed sample instead of the analysed digest
+        #[arg(long)]
+        raw: bool,
+    },
+    /// List the samples for an incident, or scan a time window across incidents
+    List {
+        /// An AppSignal incident URL (supplies the app and incident)
+        reference: Option<String>,
+        #[command(flatten)]
+        app: SamplesAppArgs,
+        /// Incident number. Omit to scan multiple incidents in a time window
+        /// (requires --start and --end).
+        #[arg(long)]
+        incident: Option<i64>,
+        /// Only include samples at or after this ISO-8601 timestamp
+        #[arg(long)]
+        start: Option<String>,
+        /// Only include samples at or before this ISO-8601 timestamp
+        #[arg(long)]
+        end: Option<String>,
+        /// With --incident: max samples. In window mode: max incidents to scan.
+        #[arg(long)]
+        limit: Option<i64>,
+        /// Window mode only: filter scanned incidents by namespace
+        /// (comma-separated, e.g. "web,background"). Ignored with --incident.
+        #[arg(long)]
+        namespaces: Option<String>,
+        /// Only keep samples whose user identity matches (id, email, or substring)
+        #[arg(long)]
+        user: Option<String>,
     },
 }
 
@@ -954,6 +1029,7 @@ impl_telemetry_command!(Commands {
     Self::Apps { action } => action.telemetry_command(),
     Self::Project { action } => action.telemetry_command(),
     Self::Incidents { action } => action.telemetry_command(),
+    Self::Samples { action } => action.telemetry_command(),
     Self::Logs { action } => action.telemetry_command(),
     Self::Dashboards { action } => action.telemetry_command(),
     Self::Triggers { action } => action.telemetry_command(),
@@ -1002,6 +1078,11 @@ impl_telemetry_command!(IncidentsAction {
     Self::Show { .. } => telemetry::TelemetryCommand::IncidentsShow,
     Self::Update { .. } => telemetry::TelemetryCommand::IncidentsUpdate,
     Self::AddNote { .. } => telemetry::TelemetryCommand::IncidentsAddNote
+});
+
+impl_telemetry_command!(SamplesAction {
+    Self::Show { .. } => telemetry::TelemetryCommand::SamplesShow,
+    Self::List { .. } => telemetry::TelemetryCommand::SamplesList
 });
 
 impl_telemetry_command!(LogsAction {
@@ -1421,6 +1502,56 @@ async fn run(cli: Cli) -> Result<()> {
                     app.as_deref(),
                     environment.as_deref(),
                     org.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+        },
+        Commands::Samples { action } => match action {
+            SamplesAction::Show {
+                reference,
+                app,
+                incident,
+                sample_id,
+                at,
+                raw,
+            } => {
+                commands::samples::show(
+                    reference.as_deref(),
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    incident,
+                    sample_id.as_deref(),
+                    at.as_deref(),
+                    raw,
+                    cli.output,
+                )
+                .await?
+            }
+            SamplesAction::List {
+                reference,
+                app,
+                incident,
+                start,
+                end,
+                limit,
+                namespaces,
+                user,
+            } => {
+                commands::samples::list(
+                    reference.as_deref(),
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    incident,
+                    start.as_deref(),
+                    end.as_deref(),
+                    limit,
+                    namespaces.as_deref(),
+                    user.as_deref(),
                     cli.output,
                 )
                 .await?
