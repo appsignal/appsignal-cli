@@ -447,6 +447,297 @@ impl Incident {
     pub fn assignee_ids(&self) -> Vec<String> {
         self.assignees().iter().map(|u| u.id.clone()).collect()
     }
+
+    /// Namespace for incident kinds that carry one (exception/performance).
+    pub fn namespace(&self) -> Option<&str> {
+        match self {
+            Incident::ExceptionIncident { namespace, .. }
+            | Incident::PerformanceIncident { namespace, .. } => namespace.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Action names for incident kinds that carry them (exception/performance).
+    pub fn action_names(&self) -> &[String] {
+        match self {
+            Incident::ExceptionIncident { action_names, .. }
+            | Incident::PerformanceIncident { action_names, .. } => {
+                action_names.as_deref().unwrap_or(&[])
+            }
+            _ => &[],
+        }
+    }
+
+    /// Mean request duration (ms) — performance incidents only.
+    pub fn mean(&self) -> Option<f64> {
+        match self {
+            Incident::PerformanceIncident { mean, .. } => *mean,
+            _ => None,
+        }
+    }
+
+    /// Total request duration (ms) across occurrences — performance incidents only.
+    pub fn total_duration(&self) -> Option<f64> {
+        match self {
+            Incident::PerformanceIncident { total_duration, .. } => *total_duration,
+            _ => None,
+        }
+    }
+}
+
+// -- Sample types --
+
+/// A transaction sample: the raw per-request data behind an incident.
+///
+/// Performance and exception samples share most fields; the type-specific ones
+/// (`exception`/`error_causes` for errors, `has_n_plus_one` for performance)
+/// are optional and only populated for the relevant sample type. Every field is
+/// optional so the same struct deserializes either shape and tolerates the API
+/// omitting fields.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Sample {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// Total request duration, in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f64>,
+    /// Time spent queued before processing, in milliseconds.
+    #[serde(rename = "queueDuration", skip_serializing_if = "Option::is_none")]
+    pub queue_duration: Option<f64>,
+    /// When the sample was recorded (ISO-8601).
+    #[serde(rename = "createdAt", skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(rename = "originalId", skip_serializing_if = "Option::is_none")]
+    pub original_id: Option<String>,
+    /// Performance samples only: whether AppSignal detected an N+1 query.
+    #[serde(rename = "hasNPlusOne", skip_serializing_if = "Option::is_none")]
+    pub has_n_plus_one: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attributes: Option<Vec<KeyStringValue>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overview: Option<Vec<KeyStringValue>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<Vec<KeyStringValue>>,
+    /// Request parameters, session data, and custom data — arbitrary JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
+    #[serde(rename = "sessionData", skip_serializing_if = "Option::is_none")]
+    pub session_data: Option<serde_json::Value>,
+    #[serde(rename = "customData", skip_serializing_if = "Option::is_none")]
+    pub custom_data: Option<serde_json::Value>,
+    /// Performance samples only: the event timeline (one entry per instrumented
+    /// span). The richest source for the digest's breakdown and slow queries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<Vec<TimelineEvent>>,
+    /// Performance samples only: number of timeline events dropped for size.
+    #[serde(
+        rename = "timelineTruncatedEvents",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub timeline_truncated_events: Option<i64>,
+    /// Performance samples only: total duration per event group.
+    #[serde(rename = "groupDurations", skip_serializing_if = "Option::is_none")]
+    pub group_durations: Option<Vec<KeyStringValue>>,
+    /// Performance samples only: total allocations per event group.
+    #[serde(rename = "groupAllocations", skip_serializing_if = "Option::is_none")]
+    pub group_allocations: Option<Vec<KeyStringValue>>,
+    /// Exception samples only: the raised error and its backtrace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exception: Option<ExceptionDetail>,
+    /// Exception samples only: the chain of underlying causes.
+    #[serde(rename = "errorCauses", skip_serializing_if = "Option::is_none")]
+    pub error_causes: Option<Vec<ErrorCause>>,
+    /// Exception samples only: the trail of events leading to the error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub breadcrumbs: Option<Vec<Breadcrumb>>,
+}
+
+/// One event in a performance sample's timeline.
+///
+/// Only the fields the digest consumes are modelled; the AppSignal timeline
+/// type carries more (allocation counts, relative offsets) that we don't select.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TimelineEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    /// The instrumentation group, e.g. `sql.active_record`, `view.render`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Duration of this event, in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<i64>,
+    /// A fingerprint shared by structurally identical events (e.g. the same
+    /// query). Repeated digests are the signal for N+1 detection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<TimelinePayload>,
+}
+
+/// The payload of a timeline event — for queries, `body` holds the statement.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TimelinePayload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
+/// A breadcrumb: an event recorded before an error occurred.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Breadcrumb {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Vec<KeyStringValue>>,
+}
+
+/// The exception raised in an error sample.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ExceptionDetail {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backtrace: Option<Vec<BacktraceLine>>,
+}
+
+/// A single frame of an exception backtrace.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct BacktraceLine {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// An entry in an error sample's cause chain.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ErrorCause {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Which sample to fetch for an incident.
+#[derive(Debug, Clone, Copy)]
+pub enum SampleQuery<'a> {
+    /// The most recent sample.
+    Latest,
+    /// A specific sample by id.
+    Id(&'a str),
+    /// The sample closest to an ISO-8601 timestamp.
+    Timestamp(&'a str),
+}
+
+/// A sample together with the incident and incident type it belongs to.
+#[derive(Debug, Serialize)]
+pub struct IncidentSample {
+    pub incident_number: i64,
+    /// `"performance"` or `"error"`, taken from the incident `__typename`.
+    #[serde(rename = "type")]
+    pub sample_type: String,
+    pub sample: Sample,
+}
+
+/// Samples for an incident together with the incident type.
+#[derive(Debug, Serialize)]
+pub struct IncidentSamples {
+    pub incident_number: i64,
+    #[serde(rename = "type")]
+    pub sample_type: String,
+    pub samples: Vec<Sample>,
+}
+
+/// A sample paired with the incident it belongs to, produced by a window scan
+/// across multiple incidents.
+#[derive(Debug, Serialize)]
+pub struct WindowSample {
+    pub incident_number: i64,
+    #[serde(rename = "type")]
+    pub sample_type: String,
+    pub sample: Sample,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppIncidentSampleData {
+    app: Option<AppIncidentSample>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppIncidentSample {
+    incident: Option<IncidentSampleEnvelope>,
+}
+
+/// The `incident` object after fragment flattening: `__typename` is always
+/// present, and `number`/`sample`/`samples` come from whichever incident-type
+/// fragment matched (so they are absent for anomaly/log incidents, which have
+/// no samples).
+#[derive(Debug, Deserialize)]
+struct IncidentSampleEnvelope {
+    #[serde(rename = "__typename")]
+    typename: String,
+    number: Option<i64>,
+    sample: Option<Sample>,
+    samples: Option<Vec<Sample>>,
+}
+
+/// Unwrap the `app.incident` envelope from a sample query, mapping the
+/// "missing app" and "missing incident" cases to user-facing errors.
+fn incident_envelope(
+    data: AppIncidentSampleData,
+    incident_number: i64,
+) -> Result<IncidentSampleEnvelope> {
+    let app = data.app.context(CliError::msg("Application not found"))?;
+    app.incident
+        .with_context(|| CliError::msg(format!("Incident #{} not found", incident_number)))
+}
+
+/// Map an incident `__typename` to a sample type, rejecting incident types that
+/// don't carry transaction samples.
+fn incident_sample_type(typename: &str, incident_number: i64) -> Result<String> {
+    match typename {
+        "PerformanceIncident" => Ok("performance".to_string()),
+        "ExceptionIncident" => Ok("error".to_string()),
+        other => {
+            let kind = match other {
+                "AnomalyIncident" => "an anomaly",
+                "LogIncident" => "a log",
+                _ => "this kind of",
+            };
+            anyhow::bail!(CliError::msg(format!(
+                "Incident #{} is {} incident and has no transaction samples.",
+                incident_number, kind
+            )))
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -686,6 +977,198 @@ const LOG_LINE_ACTION_SELECTION: &str = r#"
         user { id name email }
     }
 "#;
+
+/// Fields common to performance and exception samples.
+const COMMON_SAMPLE_FIELDS: &str = r#"
+    id
+    action
+    namespace
+    duration
+    queueDuration
+    createdAt
+    revision
+    version
+    originalId
+    attributes { key value }
+    overview { key value }
+    environment { key value }
+    params
+    sessionData
+    customData
+"#;
+
+/// Performance-sample field selection: N+1 detection plus the event timeline
+/// and per-group rollups that the digest analyses.
+const PERFORMANCE_SAMPLE_SELECTION: &str = r#"
+    hasNPlusOne
+    timelineTruncatedEvents
+    groupDurations { key value }
+    groupAllocations { key value }
+    timeline { name action group duration count digest payload { name body } }
+"#;
+
+/// Exception-sample field selection: the error details plus the breadcrumb
+/// trail leading up to it.
+const EXCEPTION_SAMPLE_SELECTION: &str = r#"
+    exception { name message backtrace { line path method column original type url } }
+    errorCauses { name message }
+    breadcrumbs { category action message metadata { key value } }
+"#;
+
+// -- Metric types --
+
+/// A metric key as returned by `app.metrics.keys`.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MetricKey {
+    pub name: String,
+    /// The metric type (`gauge`, `counter`, `measurement`, …). `type` is a
+    /// reserved word, so it's exposed as `kind`.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<KeyStringValue>>,
+    /// The field names available for this metric (e.g. `COUNTER`, `MEAN`, `P90`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<String>>,
+}
+
+/// One field selector inside a [`MetricTimeseriesInput`].
+#[derive(Debug, Serialize, Clone)]
+pub struct MetricFieldInput {
+    pub field: String,
+}
+
+/// A tag filter inside a [`MetricTimeseriesInput`].
+#[derive(Debug, Serialize, Clone)]
+pub struct MetricTagInput {
+    pub key: String,
+    pub value: String,
+}
+
+/// One entry in the `query: [MetricTimeseries!]!` argument of
+/// `app.metrics.timeseries`.
+#[derive(Debug, Serialize, Clone)]
+pub struct MetricTimeseriesInput {
+    pub name: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<MetricFieldInput>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<MetricTagInput>,
+}
+
+/// The result of `app.metrics.timeseries`.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MetricTimeseries {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<MetricTimeseriesKey>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<MetricTimeseriesPoint>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MetricTimeseriesKey {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<KeyStringValue>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MetricTimeseriesPoint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    /// Field name → value. Field names come back lowercased (`mean`, `p95`,
+    /// `counter`), matching the wire casing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<KeyStringValue>,
+}
+
+/// Error and performance datapoints for a historical window, from the
+/// `timeDetective*DataPoints` fields.
+#[derive(Debug, Serialize)]
+pub struct TimeDetective {
+    pub errors: Vec<ErrorDataPoint>,
+    pub performance: Vec<PerformanceDataPoint>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ErrorDataPoint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(rename = "actionName", skip_serializing_if = "Option::is_none")]
+    pub action_name: Option<String>,
+    #[serde(rename = "exceptionName", skip_serializing_if = "Option::is_none")]
+    pub exception_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct PerformanceDataPoint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(rename = "actionName", skip_serializing_if = "Option::is_none")]
+    pub action_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p90: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppMetricKeysData {
+    app: Option<AppMetricKeys>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppMetricKeys {
+    metrics: Option<MetricKeysHolder>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MetricKeysHolder {
+    keys: Option<Vec<MetricKey>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppMetricTimeseriesData {
+    app: Option<AppMetricTimeseries>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppMetricTimeseries {
+    metrics: Option<MetricTimeseriesHolder>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MetricTimeseriesHolder {
+    timeseries: Option<MetricTimeseries>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TimeDetectiveData {
+    app: Option<TimeDetectiveApp>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TimeDetectiveApp {
+    #[serde(rename = "timeDetectiveErrorDataPoints")]
+    errors: Option<Vec<ErrorDataPoint>>,
+    #[serde(rename = "timeDetectivePerformanceDataPoints")]
+    performance: Option<Vec<PerformanceDataPoint>>,
+}
 
 // -- Log types --
 
@@ -1783,6 +2266,324 @@ impl AppSignalClient {
         let app = data.app.context(CliError::msg("Application not found"))?;
         app.incident
             .with_context(|| CliError::msg(format!("Incident #{} not found", incident_number)))
+    }
+
+    /// Fetch a single transaction sample for an incident.
+    ///
+    /// One query covers both performance and exception incidents via inline
+    /// fragments; the sample type is taken from the incident `__typename` the
+    /// API returns, never inferred from the caller's input — an exception
+    /// incident can never be miscategorised as performance.
+    ///
+    /// `query` selects which sample: the latest, one by id, or the one closest
+    /// to a timestamp. Note the timestamp variable is declared as `DateTime`
+    /// even though an ISO-8601 string is sent — declaring it `String` returns a
+    /// 400 type-mismatch from the API.
+    pub async fn get_incident_sample(
+        &self,
+        app_id: &str,
+        incident_number: i64,
+        query: SampleQuery<'_>,
+    ) -> Result<IncidentSample> {
+        let (selector_decl, selector_args) = match query {
+            SampleQuery::Latest => ("", String::new()),
+            SampleQuery::Id(_) => (", $sampleId: String", "(id: $sampleId)".to_string()),
+            SampleQuery::Timestamp(_) => (", $at: DateTime", "(timestamp: $at)".to_string()),
+        };
+
+        let query_str = format!(
+            r#"
+            query IncidentSample($appId: String!, $incidentNumber: Int!{selector_decl}) {{
+                app(id: $appId) {{
+                    incident(incidentNumber: $incidentNumber) {{
+                        __typename
+                        ... on PerformanceIncident {{
+                            number
+                            sample{selector_args} {{ {common}{perf} }}
+                        }}
+                        ... on ExceptionIncident {{
+                            number
+                            sample{selector_args} {{ {common}{exc} }}
+                        }}
+                    }}
+                }}
+            }}
+            "#,
+            common = COMMON_SAMPLE_FIELDS,
+            perf = PERFORMANCE_SAMPLE_SELECTION,
+            exc = EXCEPTION_SAMPLE_SELECTION,
+        );
+
+        let mut vars = json!({ "appId": app_id, "incidentNumber": incident_number });
+        match query {
+            SampleQuery::Latest => {}
+            SampleQuery::Id(id) => vars["sampleId"] = json!(id),
+            SampleQuery::Timestamp(at) => vars["at"] = json!(at),
+        }
+
+        let data: AppIncidentSampleData = self.graphql(&query_str, vars).await?;
+        let envelope = incident_envelope(data, incident_number)?;
+        let sample_type = incident_sample_type(&envelope.typename, incident_number)?;
+        let sample = envelope.sample.with_context(|| {
+            CliError::msg(format!(
+                "No matching sample found for incident #{}",
+                incident_number
+            ))
+        })?;
+
+        Ok(IncidentSample {
+            incident_number: envelope.number.unwrap_or(incident_number),
+            sample_type,
+            sample,
+        })
+    }
+
+    /// Fetch the samples for an incident, optionally narrowed to a time window
+    /// and capped by `limit`.
+    ///
+    /// `start`/`end` are ISO-8601 strings bound to `DateTime` GraphQL variables.
+    /// As with [`get_incident_sample`], the sample type comes from the incident
+    /// `__typename`.
+    pub async fn get_incident_samples(
+        &self,
+        app_id: &str,
+        incident_number: i64,
+        start: Option<&str>,
+        end: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<IncidentSamples> {
+        let query_str = format!(
+            r#"
+            query IncidentSamples($appId: String!, $incidentNumber: Int!, $start: DateTime, $end: DateTime, $limit: Int) {{
+                app(id: $appId) {{
+                    incident(incidentNumber: $incidentNumber) {{
+                        __typename
+                        ... on PerformanceIncident {{
+                            number
+                            samples(start: $start, end: $end, limit: $limit) {{ {common}{perf} }}
+                        }}
+                        ... on ExceptionIncident {{
+                            number
+                            samples(start: $start, end: $end, limit: $limit) {{ {common}{exc} }}
+                        }}
+                    }}
+                }}
+            }}
+            "#,
+            common = COMMON_SAMPLE_FIELDS,
+            perf = PERFORMANCE_SAMPLE_SELECTION,
+            exc = EXCEPTION_SAMPLE_SELECTION,
+        );
+
+        let mut vars = json!({ "appId": app_id, "incidentNumber": incident_number });
+        if let Some(start) = start {
+            vars["start"] = json!(start);
+        }
+        if let Some(end) = end {
+            vars["end"] = json!(end);
+        }
+        if let Some(limit) = limit {
+            vars["limit"] = json!(limit);
+        }
+
+        let data: AppIncidentSampleData = self.graphql(&query_str, vars).await?;
+        let envelope = incident_envelope(data, incident_number)?;
+        let sample_type = incident_sample_type(&envelope.typename, incident_number)?;
+
+        Ok(IncidentSamples {
+            incident_number: envelope.number.unwrap_or(incident_number),
+            sample_type,
+            samples: envelope.samples.unwrap_or_default(),
+        })
+    }
+
+    /// Scan recent incidents for samples that fall within a time window.
+    ///
+    /// The GraphQL `incidents` query has no time-range filter, so the window is
+    /// applied at the sample level (`samples(start:, end:)`): the most recent
+    /// incidents (capped by `incident_limit`) are listed, then each performance
+    /// or exception incident's samples within `[start, end]` are collected.
+    /// Anomaly and log incidents carry no samples and are skipped.
+    pub async fn scan_samples_in_window(
+        &self,
+        app_id: &str,
+        start: &str,
+        end: &str,
+        namespaces: Option<&[String]>,
+        incident_limit: i64,
+    ) -> Result<Vec<WindowSample>> {
+        let incidents = self
+            .list_incidents(
+                app_id,
+                Some(incident_limit),
+                None,
+                None,
+                Some("LAST"),
+                namespaces,
+                None,
+            )
+            .await?;
+
+        let mut samples = Vec::new();
+        for incident in &incidents {
+            if !matches!(
+                incident,
+                Incident::ExceptionIncident { .. } | Incident::PerformanceIncident { .. }
+            ) {
+                continue;
+            }
+
+            let result = self
+                .get_incident_samples(app_id, incident.number(), Some(start), Some(end), None)
+                .await?;
+            for sample in result.samples {
+                samples.push(WindowSample {
+                    incident_number: result.incident_number,
+                    sample_type: result.sample_type.clone(),
+                    sample,
+                });
+            }
+        }
+
+        Ok(samples)
+    }
+
+    /// Discover metric keys for an app via `app.metrics.keys`.
+    pub async fn list_metric_keys(
+        &self,
+        app_id: &str,
+        name: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<MetricKey>> {
+        let query = r#"
+            query MetricKeys($appId: String!, $name: String, $limit: Int) {
+                app(id: $appId) {
+                    metrics {
+                        keys(name: $name, limit: $limit) {
+                            name
+                            type
+                            digest
+                            tags { key value }
+                            fields
+                        }
+                    }
+                }
+            }
+        "#;
+
+        let mut vars = json!({ "appId": app_id });
+        if let Some(name) = name {
+            vars["name"] = json!(name);
+        }
+        if let Some(limit) = limit {
+            vars["limit"] = json!(limit);
+        }
+
+        let data: AppMetricKeysData = self.graphql(query, vars).await?;
+        Ok(data
+            .app
+            .and_then(|app| app.metrics)
+            .and_then(|metrics| metrics.keys)
+            .unwrap_or_default())
+    }
+
+    /// Fetch a metric's timeseries via `app.metrics.timeseries`.
+    ///
+    /// `start`/`end` are ISO-8601 strings bound to `DateTime` variables (the
+    /// usual gotcha). `timeframe` is a relative-window enum value (e.g. `R1H`);
+    /// because its GraphQL enum type name isn't part of the public contract we
+    /// rely on here, it is validated to be alphanumeric and interpolated as a
+    /// literal enum rather than passed as a typed variable.
+    pub async fn fetch_metric_timeseries(
+        &self,
+        app_id: &str,
+        query: &[MetricTimeseriesInput],
+        timeframe: Option<&str>,
+        start: Option<&str>,
+        end: Option<&str>,
+    ) -> Result<MetricTimeseries> {
+        let timeframe_arg = match timeframe {
+            Some(value) => {
+                if !value.chars().all(|c| c.is_ascii_alphanumeric()) {
+                    anyhow::bail!(CliError::msg(format!(
+                        "Invalid --timeframe '{}'. Expected a value like R1H or R7D.",
+                        value
+                    )));
+                }
+                format!(", timeframe: {value}")
+            }
+            None => String::new(),
+        };
+
+        let query_str = format!(
+            r#"
+            query MetricsTimeseries($appId: String!, $start: DateTime, $end: DateTime, $query: [MetricTimeseries!]!) {{
+                app(id: $appId) {{
+                    metrics {{
+                        timeseries(start: $start, end: $end, query: $query{timeframe_arg}) {{
+                            start
+                            end
+                            resolution
+                            keys {{ name digest tags {{ key value }} }}
+                            points {{ timestamp values {{ key value }} }}
+                        }}
+                    }}
+                }}
+            }}
+            "#
+        );
+
+        let mut vars = json!({ "appId": app_id, "query": query });
+        if let Some(start) = start {
+            vars["start"] = json!(start);
+        }
+        if let Some(end) = end {
+            vars["end"] = json!(end);
+        }
+
+        let data: AppMetricTimeseriesData = self.graphql(&query_str, vars).await?;
+        data.app
+            .and_then(|app| app.metrics)
+            .and_then(|metrics| metrics.timeseries)
+            .context(CliError::msg("No timeseries returned for this metric"))
+    }
+
+    /// Fetch error and performance datapoints for a historical window via the
+    /// `timeDetective*DataPoints` fields. `start`/`end`/`namespaces` are
+    /// non-null GraphQL arguments.
+    pub async fn fetch_time_detective(
+        &self,
+        app_id: &str,
+        start: &str,
+        end: &str,
+        namespaces: &[String],
+    ) -> Result<TimeDetective> {
+        let query = r#"
+            query TimeDetective($appId: String!, $start: DateTime!, $end: DateTime!, $namespaces: [String!]!) {
+                app(id: $appId) {
+                    timeDetectiveErrorDataPoints(start: $start, end: $end, namespaces: $namespaces) {
+                        namespace actionName exceptionName throughput
+                    }
+                    timeDetectivePerformanceDataPoints(start: $start, end: $end, namespaces: $namespaces) {
+                        namespace actionName throughput mean p90
+                    }
+                }
+            }
+        "#;
+
+        let vars = json!({
+            "appId": app_id,
+            "start": start,
+            "end": end,
+            "namespaces": namespaces,
+        });
+
+        let data: TimeDetectiveData = self.graphql(query, vars).await?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
+        Ok(TimeDetective {
+            errors: app.errors.unwrap_or_default(),
+            performance: app.performance.unwrap_or_default(),
+        })
     }
 
     /// Update a single incident (state, severity, assignees, description).
@@ -3635,6 +4436,416 @@ mod tests {
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let err = client.get_incident("app1", 999).await.unwrap_err();
         assert!(err.to_string().contains("999"));
+    }
+
+    fn performance_sample_json() -> serde_json::Value {
+        json!({
+            "id": "0123456789abcdef01234567-42",
+            "action": "Web::OrdersController#create",
+            "namespace": "web",
+            "duration": 123.45,
+            "queueDuration": 12.5,
+            "createdAt": "2026-05-19T14:30:00Z",
+            "revision": "abc123",
+            "version": null,
+            "originalId": null,
+            "hasNPlusOne": true,
+            "attributes": [{ "key": "request_id", "value": "req-1" }],
+            "overview": [{ "key": "user_id", "value": "user-9" }],
+            "environment": [{ "key": "framework", "value": "rails" }]
+        })
+    }
+
+    fn exception_sample_json() -> serde_json::Value {
+        json!({
+            "id": "0123456789abcdef01234567-77",
+            "action": "Web::OrdersController#show",
+            "namespace": "web",
+            "duration": 88.0,
+            "queueDuration": null,
+            "createdAt": "2026-05-19T15:00:00Z",
+            "revision": "abc123",
+            "version": null,
+            "originalId": null,
+            "attributes": [],
+            "overview": [],
+            "environment": [],
+            "exception": {
+                "name": "RuntimeError",
+                "message": "boom",
+                "backtrace": [
+                    { "line": 42, "path": "app/controllers/orders_controller.rb", "method": "show",
+                      "column": null, "original": null, "type": null, "url": null }
+                ]
+            },
+            "errorCauses": [{ "name": "ArgumentError", "message": "bad input" }]
+        })
+    }
+
+    #[tokio::test]
+    async fn test_get_incident_sample_latest_performance() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incident": {
+                            "__typename": "PerformanceIncident",
+                            "number": 42,
+                            "sample": performance_sample_json()
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let result = client
+            .get_incident_sample("app1", 42, SampleQuery::Latest)
+            .await
+            .unwrap();
+
+        assert_eq!(result.incident_number, 42);
+        assert_eq!(result.sample_type, "performance");
+        assert_eq!(
+            result.sample.action.as_deref(),
+            Some("Web::OrdersController#create")
+        );
+        assert_eq!(result.sample.has_n_plus_one, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_get_incident_sample_by_timestamp_declares_datetime_variable() {
+        // Regression guard for the DateTime gotcha: the timestamp variable must
+        // be declared `DateTime`, even though an ISO-8601 string is sent.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("$at: DateTime"))
+            .and(body_string_contains("timestamp: $at"))
+            .and(body_string_contains("2026-05-19T14:30:00Z"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incident": {
+                            "__typename": "PerformanceIncident",
+                            "number": 42,
+                            "sample": performance_sample_json()
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let result = client
+            .get_incident_sample("app1", 42, SampleQuery::Timestamp("2026-05-19T14:30:00Z"))
+            .await
+            .unwrap();
+        assert_eq!(result.sample_type, "performance");
+    }
+
+    #[tokio::test]
+    async fn test_get_incident_sample_by_id_declares_string_variable() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("$sampleId: String"))
+            .and(body_string_contains("id: $sampleId"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incident": {
+                            "__typename": "ExceptionIncident",
+                            "number": 77,
+                            "sample": exception_sample_json()
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let result = client
+            .get_incident_sample("app1", 77, SampleQuery::Id("0123456789abcdef01234567-77"))
+            .await
+            .unwrap();
+
+        assert_eq!(result.sample_type, "error");
+        let exception = result.sample.exception.unwrap();
+        assert_eq!(exception.name.as_deref(), Some("RuntimeError"));
+        assert_eq!(exception.backtrace.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_incident_sample_anomaly_has_no_samples() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incident": { "__typename": "AnomalyIncident" }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let err = client
+            .get_incident_sample("app1", 5, SampleQuery::Latest)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("anomaly"));
+        assert!(err.to_string().contains("no transaction samples"));
+    }
+
+    #[tokio::test]
+    async fn test_get_incident_samples_window_declares_datetime_variables() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("$start: DateTime"))
+            .and(body_string_contains("$end: DateTime"))
+            .and(body_string_contains("$limit: Int"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incident": {
+                            "__typename": "PerformanceIncident",
+                            "number": 42,
+                            "samples": [performance_sample_json(), performance_sample_json()]
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let result = client
+            .get_incident_samples(
+                "app1",
+                42,
+                Some("2026-05-19T00:00:00Z"),
+                Some("2026-05-20T00:00:00Z"),
+                Some(50),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.sample_type, "performance");
+        assert_eq!(result.samples.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_scan_samples_in_window_collects_across_incidents() {
+        let server = MockServer::start().await;
+
+        // The incident listing: one performance incident (has samples) and one
+        // anomaly incident (no samples, must be skipped).
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("AppIncidents"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incidents": [
+                            {
+                                "__typename": "PerformanceIncident",
+                                "id": "p1", "number": 7, "state": "OPEN",
+                                "severity": "WARNING", "description": "slow",
+                                "count": 3,
+                                "createdAt": "2026-05-19T00:00:00Z",
+                                "lastOccurredAt": "2026-05-19T12:00:00Z",
+                                "updatedAt": null,
+                                "actionNames": ["Web#index"], "namespace": "web",
+                                "mean": 10.0, "totalDuration": 30.0
+                            },
+                            {
+                                "__typename": "AnomalyIncident",
+                                "id": "a1", "number": 8, "state": "OPEN",
+                                "severity": "WARNING", "description": "anomaly",
+                                "count": 1,
+                                "createdAt": "2026-05-19T00:00:00Z",
+                                "lastOccurredAt": "2026-05-19T12:00:00Z",
+                                "updatedAt": null,
+                                "alertState": "OPEN",
+                                "trigger": null, "tags": []
+                            }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        // The per-incident samples query (only the performance incident reaches it).
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("IncidentSamples"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incident": {
+                            "__typename": "PerformanceIncident",
+                            "number": 7,
+                            "samples": [performance_sample_json()]
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let samples = client
+            .scan_samples_in_window(
+                "app1",
+                "2026-05-19T00:00:00Z",
+                "2026-05-20T00:00:00Z",
+                None,
+                20,
+            )
+            .await
+            .unwrap();
+
+        // Only the performance incident contributes a sample; the anomaly is skipped.
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].incident_number, 7);
+        assert_eq!(samples[0].sample_type, "performance");
+    }
+
+    #[tokio::test]
+    async fn test_list_metric_keys() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("MetricKeys"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "metrics": {
+                            "keys": [
+                                {
+                                    "name": "database.query_count",
+                                    "type": "counter",
+                                    "digest": "abc",
+                                    "tags": [{ "key": "hostname", "value": "web-1" }],
+                                    "fields": ["COUNTER"]
+                                }
+                            ]
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let keys = client
+            .list_metric_keys("app1", Some("database"), Some(50))
+            .await
+            .unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].name, "database.query_count");
+        assert_eq!(keys[0].kind.as_deref(), Some("counter"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_metric_timeseries_declares_datetime_and_inlines_timeframe() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("$start: DateTime"))
+            .and(body_string_contains("$query: [MetricTimeseries!]!"))
+            .and(body_string_contains("timeframe: R1H"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "metrics": {
+                            "timeseries": {
+                                "start": "2026-05-19T00:00:00Z",
+                                "end": "2026-05-19T01:00:00Z",
+                                "resolution": "MINUTELY",
+                                "keys": [{ "name": "latency", "digest": "d", "tags": [] }],
+                                "points": [
+                                    { "timestamp": "2026-05-19T00:00:00Z", "values": [{ "key": "mean", "value": "12.5" }] }
+                                ]
+                            }
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let query = vec![MetricTimeseriesInput {
+            name: "latency".to_string(),
+            fields: vec![MetricFieldInput {
+                field: "MEAN".to_string(),
+            }],
+            tags: vec![],
+        }];
+        let series = client
+            .fetch_metric_timeseries("app1", &query, Some("R1H"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(series.points.len(), 1);
+        assert_eq!(series.points[0].values[0].key, "mean");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_metric_timeseries_rejects_unsafe_timeframe() {
+        let client = AppSignalClient::new("tok", None);
+        let err = client
+            .fetch_metric_timeseries("app1", &[], Some("R1H) evil"), None, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Invalid --timeframe"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_time_detective_declares_nonnull_datetime() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("$start: DateTime!"))
+            .and(body_string_contains("$namespaces: [String!]!"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "timeDetectiveErrorDataPoints": [
+                            { "namespace": "web", "actionName": "Web#index", "exceptionName": "RuntimeError", "throughput": 3.0 }
+                        ],
+                        "timeDetectivePerformanceDataPoints": [
+                            { "namespace": "web", "actionName": "Web#index", "throughput": 100.0, "mean": 12.5, "p90": 30.0 }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let detective = client
+            .fetch_time_detective(
+                "app1",
+                "2026-05-19T00:00:00Z",
+                "2026-05-20T00:00:00Z",
+                &["web".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(detective.errors.len(), 1);
+        assert_eq!(detective.performance.len(), 1);
+        assert_eq!(detective.performance[0].p90, Some(30.0));
     }
 
     #[tokio::test]

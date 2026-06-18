@@ -7,17 +7,33 @@ Rust CLI for interacting with AppSignal. Binary name is `appsignal-cli` (not
 
 ```
 src/
-  main.rs              CLI entrypoint, clap derive command/subcommand definitions
-  config.rs            Config load/save/delete (~/.config/appsignal/config.toml)
-  api.rs               AppSignalClient — GraphQL client for the AppSignal API
+  main.rs              CLI entrypoint, clap derive command/subcommand definitions + dispatch
+  config.rs            Config load/save (~/.config/appsignal/config.toml or project .appsignal.toml)
+  api.rs               AppSignalClient — GraphQL + REST v2 client for the AppSignal API
+  appsignal_url.rs     Parse AppSignal incident/sample URLs, paths, and bare sample ids
+  sample_analysis.rs   Distil a Sample into the investigator digest (breakdown, N+1, slow queries, error trail)
   oauth.rs             OAuth PKCE flow (code verifier, challenge, token exchange, refresh)
+  output.rs            Render trait, print()/print_with(), table()/detail()/json_line(), status! macro
+  error.rs             CliError — user-facing error enum and HTTP/GraphQL error mapping
+  telemetry.rs         Best-effort per-command telemetry (TelemetryCommand enum + track_command)
+  version_check.rs     Startup GitHub release check (warn on minor/patch, block on new major)
+  client_headers.rs    Shared User-Agent + X-AppSignal-Client request headers
   commands/
     mod.rs             Shared helpers (resolve_org, authenticated_client) + re-exports
+    about.rs           about — splash overview (version, config, auth, next commands)
     auth.rs            auth login / logout / status (OAuth only)
-    apps.rs            apps list / info / find / set-org / show-org
-    incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show
-    logs.rs            logs tail / search / views / sources
-    skill.rs           skill install (writes bundled AppSignal skills for OpenCode, Codex, or Claude)
+    apps.rs            apps list / info / find / set-org / show-org / resources <section>
+    project.rs         project init (create/update project-local .appsignal.toml)
+    incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show / update / add-note
+    samples.rs         samples show / list (transaction samples behind an incident)
+    metrics.rs         metrics list / timeseries / history (GraphQL metric keys, timeseries, time-detective datapoints)
+    performance.rs     performance actions / queries (rank slow performance incidents; drill into slow queries via samples)
+    dashboards.rs      dashboards list / create / update
+    triggers.rs        triggers list / create / update / archive (anomaly detection triggers)
+    logs/
+      mod.rs           logs tail / search / views / sources (REST log lines + GraphQL metadata)
+      actions.rs       logs metrics + logs triggers (log-line action CRUD)
+    skill.rs           skill install / update / status (bundled AppSignal skills for OpenCode, Codex, Claude)
 ```
 
 - **CLI framework**: clap v4 with derive macros
@@ -43,6 +59,40 @@ src/
   features, preserve the minimal CLI telemetry flow so command runs still emit
   the dedicated telemetry event and any new endpoint continues to send the
   standard CLI headers.
+
+## Output and errors
+
+- Command **results** are printed through `output::print()` / `output::print_with()`
+  (stdout). JSON falls out of `Serialize` for free; only the human view is
+  hand-written via a `Render` impl or a closure. Compose tables with
+  `output::table()` and key/value panels with `output::detail()`.
+- **Status messages** (progress, prompts, "OK", boxed notices) use the `status!`
+  macro or `output::status_box()` and always go to stderr, so they never pollute
+  `--output json`. `clippy.toml` bans `println!`/`print!`/`eprintln!`/`eprint!`
+  to enforce this — route everything through `output`.
+- Errors shown verbatim to the user must be a `CliError` (constructed directly,
+  or installed as `.context(CliError::msg(...))` / `.context(CliError::from_http(...))`).
+  Anything else is treated as internal and hidden behind a generic message
+  unless `APPSIGNAL_CLI_DEBUG=1` is set. Add new user-facing messages as
+  `CliError` variants or via `CliError::msg`, not as bare `anyhow!` strings.
+
+## Adding a new command
+
+End to end, a new subcommand usually touches:
+
+1. `src/api.rs` — add the client method (and its private `*Data` response
+   structs). Build the GraphQL query with correctly typed variables, assemble
+   `vars` with `json!` + conditional inserts, call `self.graphql(...)`, and
+   unwrap with a `CliError` context. Add a `wiremock` test.
+2. `src/commands/<module>.rs` — add a `#[derive(Serialize)]` response type and a
+   handler that does `Config::load` → `resolve_org` → `authenticated_client` →
+   `resolve_app_id` → client call → `output::print_with(...)`.
+3. `src/main.rs` — add the clap subcommand/action variant and the dispatch arm,
+   **plus a `TelemetryCommand` variant and an `impl_telemetry_command!` arm**
+   (the matches are exhaustive, so this is required to compile).
+4. Docs + release — update `README.md`, this file's command tables, and the
+   bundled skill in `skills/shared/body.md`, then add a changeset for
+   user-facing changes.
 
 ## Git Workflow
 
@@ -146,6 +196,80 @@ Extra fields on `AnomalyIncident`:
 - `IncidentOrderEnum`: `ID` (creation order), `LAST` (most recent activity)
 - `AlertStateEnum`: `OPEN`, `CLOSED`, `WARMUP`, `COOLDOWN`, `UNTRACKED`, `ARCHIVED`
 
+### Transaction samples
+
+The raw per-request data behind an incident is reached through the incident:
+`app(id).incident(incidentNumber).sample(...)` for one sample and
+`.samples(start, end, limit)` for many. Because `incident` is a union,
+the `sample`/`samples` fields are selected **inside** the
+`... on PerformanceIncident` / `... on ExceptionIncident` fragments. The sample
+type is taken from the returned `__typename`, never inferred from the input URL —
+see `api.rs::get_incident_sample` and `appsignal_url.rs`.
+
+- `sample(id: $id)` declares `$id: String`; `sample(timestamp: $at)` declares
+  **`$at: DateTime`**, even though the value sent is an ISO-8601 *string*.
+  `samples(start:, end:)` and `metrics.timeseries(start:, end:)` are the same —
+  declaring the variable `String` returns an HTTP 400 type mismatch. This is the
+  single most expensive footgun; the regression tests in `api.rs` assert the
+  `DateTime` declaration is present.
+- Performance samples carry `hasNPlusOne`, `timeline`, and `groupDurations`;
+  exception samples carry `exception { name message backtrace }`, `errorCauses`,
+  and `breadcrumbs`. Common fields: `id`, `action`, `namespace`, `duration`,
+  `queueDuration`, `createdAt`, `revision`, `attributes`/`overview`/`environment`.
+- Targeting the sample closest to a timestamp (`--at`) matters: the "latest"
+  sample often hides the one that triggered the incident.
+- `samples show` renders an investigator **digest** by default (see
+  `sample_analysis.rs`): request overview + acting user, a per-group performance
+  breakdown, slowest events/queries, N+1 detection (`hasNPlusOne` plus repeated
+  timeline `digest`s), and for errors the exception, backtrace, causes, and
+  breadcrumbs. `--output json` adds a structured `analysis` object alongside the
+  raw `sample`; `--raw` prints the unprocessed sample instead. The analysis is
+  pure and unit-tested on synthetic samples.
+- `samples list` without `--incident` runs a **window scan**: the `incidents`
+  query has no time-range filter, so `scan_samples_in_window` lists recent
+  incidents (capped by `--limit`, default 20) and applies the window at the
+  sample level. `--user` filters on the sample's user identity (see
+  `sample_analysis::sample_user`, which also reads `sessionData`); `--namespaces`
+  filters the incident list.
+
+### Metrics
+
+Metrics are **GraphQL, not REST** — `app.metrics.keys(...)`,
+`app.metrics.timeseries(...)`, and the app-level `timeDetectiveErrorDataPoints` /
+`timeDetectivePerformanceDataPoints` fields cover every `metrics` subcommand. See
+`api.rs::list_metric_keys`, `fetch_metric_timeseries`, and `fetch_time_detective`.
+
+- `metrics.timeseries(start:, end:)` declares its window variables **`DateTime`**,
+  same footgun as samples above. The `timeDetective*DataPoints(start:, end:)`
+  fields go further and require **`DateTime!`** (non-null). Both have regression
+  tests asserting the declaration.
+- The `timeframe` argument (e.g. `R1H`, `R1D`) is a GraphQL **enum**, not a
+  string. To avoid hard-coding its enum type name, `fetch_metric_timeseries`
+  validates the value is alphanumeric and inlines it as a literal
+  (`timeframe: R1H`) rather than passing it as a typed variable.
+- Timeseries response field names come back **lowercased** on the wire (`mean`,
+  `p95`, `counter`); deserialize accordingly.
+- `metrics history` needs both `--start` and `--end`; `metrics timeseries` needs
+  either `--timeframe` or both `--start`/`--end` (validated in `commands/metrics.rs`).
+
+### Performance ranking
+
+The `performance` command (see `commands/performance.rs`) is built entirely on
+existing API surface — it does **not** add new GraphQL queries:
+
+- `performance actions` calls `list_performance_incidents` (order `LAST`), then
+  ranks the returned set **client-side** by `mean`, `totalDuration`, or `count`
+  (the public API has no order-by-duration). `--limit` is the scan/rank depth.
+- The public `performanceIncidents` data is **action-level**, not per-SQL. To get
+  per-query timing, `performance queries` fetches each top action's latest sample
+  (`get_incident_sample`, `SampleQuery::Latest`) and reuses `sample_analysis` to
+  pull `slow_queries` / `n_plus_one_suspects` from the timeline. This is therefore
+  derived from the latest sampled request per action, not a full aggregate — the
+  human and JSON output both state this. A missing sample for an action is
+  reported per-row, not fatal.
+- New `Incident` accessors `namespace()`, `action_names()`, `mean()`, and
+  `total_duration()` expose the performance-specific fields for ranking.
+
 ### Documented GraphQL queries from the AppSignal docs
 
 Root query fields:
@@ -163,7 +287,7 @@ Key fields on `App`:
 - `anomalyIncidents(state, limit, offset, order)` — anomaly incidents only (fewer filters than exceptions)
 - `logIncidents(state, limit, offset, order)`
 - `deployMarkers(limit, offset, start, end)`
-- `metrics { list(...) }`, `metrics { timeseries(...) }`
+- `metrics { keys(...) }`, `metrics { timeseries(...) }`; `timeDetectiveErrorDataPoints(...)`, `timeDetectivePerformanceDataPoints(...)`
 - `uptimeMonitors`
 
 See https://docs.appsignal.com/api/graphql/examples.html for full examples.
@@ -258,6 +382,13 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli incidents show --number <N> [app options]` | Show full details for a specific incident |
 | `appsignal-cli incidents update --number <N[,N...]> [--state S] [--severity S] [--assign IDs] [--assign-me] [--description D]` | Update incident state, severity, or assignees; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident (markdown supported) |
+| `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [app options]` | Show an analysed digest of one sample (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
+| `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [--namespaces <list>] [--user <id>] [app options]` | List an incident's samples, or scan a time window across incidents (no `--incident`; `--user`/`--namespaces` filter) |
+| `appsignal-cli metrics list [--name <fragment>] [--limit <N>] [app options]` | Discover the metric keys an app reports (name, type, fields, tags) |
+| `appsignal-cli metrics timeseries --metric <name> [--field F...] [--tag k=v...] [--timeframe T \| --start <ISO> --end <ISO>] [app options]` | Fetch a metric's values over time; requires `--timeframe` or both `--start`/`--end` |
+| `appsignal-cli metrics history --start <ISO> --end <ISO> [--namespaces <list>] [app options]` | Per-action error and performance throughput over a window (time-detective datapoints) |
+| `appsignal-cli performance actions [--sort mean\|total\|count] [--limit <N>] [--namespaces <list>] [--action <name>] [--state <s>] [app options]` | Rank recent performance incidents by mean/total duration or throughput |
+| `appsignal-cli performance queries [--limit <N>] [--namespaces <list>] [--action <name>] [--state <s>] [app options]` | Slow queries + N+1 suspects from the latest sample of each of the slowest actions |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time (1-second polling) |
 | `appsignal-cli logs search [filters] [--page-all]` | One-shot log search (supports auto-pagination and global `--output json`) |
 | `appsignal-cli logs views [app options]` | List saved log views (filter presets) |
