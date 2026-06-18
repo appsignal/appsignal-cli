@@ -88,6 +88,10 @@ pub struct PerformanceAnalysis {
     pub slow_queries: Vec<SlowQuery>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub n_plus_one_suspects: Vec<NPlusOneSuspect>,
+    /// How many timeline events the API dropped before returning the sample.
+    /// When present, the breakdown and slowest-events lists are understated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated_events: Option<i64>,
 }
 
 /// Per-group rollup: how much of the request a group of events accounts for.
@@ -263,6 +267,8 @@ fn build_performance(sample: &Sample) -> PerformanceAnalysis {
     let slow_queries = slow_queries(timeline);
     let n_plus_one_suspects = n_plus_one_suspects(timeline);
     let has_n_plus_one = sample.has_n_plus_one == Some(true) || !n_plus_one_suspects.is_empty();
+    // Only flag truncation when the API actually dropped events (> 0).
+    let truncated_events = sample.timeline_truncated_events.filter(|n| *n > 0);
 
     PerformanceAnalysis {
         has_n_plus_one,
@@ -271,6 +277,7 @@ fn build_performance(sample: &Sample) -> PerformanceAnalysis {
         slowest_events,
         slow_queries,
         n_plus_one_suspects,
+        truncated_events,
     }
 }
 
@@ -563,6 +570,15 @@ impl SampleAnalysis {
 
 impl PerformanceAnalysis {
     fn render(&self, w: &mut dyn Write) -> io::Result<()> {
+        if let Some(truncated) = self.truncated_events {
+            writeln!(
+                w,
+                "\n⚠ {} timeline event(s) truncated by the API — the breakdown and \
+                 slowest-events below are understated.",
+                truncated
+            )?;
+        }
+
         if self.has_n_plus_one {
             writeln!(w, "\n⚠ N+1 query pattern detected")?;
         }
@@ -781,6 +797,44 @@ mod tests {
         let db = perf.database.expect("database rollup");
         assert_eq!(db.count, 2);
         assert_eq!(db.total_ms, 90.0);
+    }
+
+    #[test]
+    fn surfaces_timeline_truncation_in_analysis_and_digest() {
+        let mut sample = base_sample();
+        sample.timeline = Some(vec![event("view.render", "index.html", 120.0, None)]);
+        sample.timeline_truncated_events = Some(37);
+        let analysis = analyze(&sample, "performance", 12);
+        let perf = analysis.performance.as_ref().unwrap();
+        assert_eq!(perf.truncated_events, Some(37));
+
+        let mut buf = Vec::new();
+        analysis.render_digest(&mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("37 timeline event(s) truncated"));
+        assert!(out.contains("understated"));
+    }
+
+    #[test]
+    fn does_not_flag_truncation_when_zero_or_absent() {
+        let mut sample = base_sample();
+        sample.timeline = Some(vec![event("view.render", "index.html", 120.0, None)]);
+        // Absent and explicit-zero both mean "nothing dropped".
+        assert_eq!(
+            analyze(&sample, "performance", 1)
+                .performance
+                .unwrap()
+                .truncated_events,
+            None
+        );
+        sample.timeline_truncated_events = Some(0);
+        assert_eq!(
+            analyze(&sample, "performance", 1)
+                .performance
+                .unwrap()
+                .truncated_events,
+            None
+        );
     }
 
     #[test]

@@ -238,9 +238,12 @@ see `api.rs::get_incident_sample` and `appsignal_url.rs`.
   `sample_analysis.rs`): request overview + acting user, a per-group performance
   breakdown, slowest events/queries, N+1 detection (`hasNPlusOne` plus repeated
   timeline `digest`s), and for errors the exception, backtrace, causes, and
-  breadcrumbs. `--output json` adds a structured `analysis` object alongside the
-  raw `sample`; `--raw` prints the unprocessed sample instead. The analysis is
-  pure and unit-tested on synthetic samples.
+  breadcrumbs. When the API truncates the timeline for a large sample
+  (`timelineTruncatedEvents > 0`), the performance section warns that the
+  breakdown is understated and `analysis.performance.truncated_events` carries
+  the dropped count. `--output json` adds a structured `analysis` object
+  alongside the raw `sample`; `--raw` prints the unprocessed sample instead. The
+  analysis is pure and unit-tested on synthetic samples.
 - `samples list` without `--incident` runs a **window scan**: the `incidents`
   query has no time-range filter, so `scan_samples_in_window` lists recent
   incidents (capped by `--limit`, default 20) and applies the window at the
