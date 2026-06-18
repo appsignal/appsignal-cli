@@ -76,6 +76,10 @@ src/
   Anything else is treated as internal and hidden behind a generic message
   unless `APPSIGNAL_CLI_DEBUG=1` is set. Add new user-facing messages as
   `CliError` variants or via `CliError::msg`, not as bare `anyhow!` strings.
+- The global `--verbose` / `-v` flag (recorded once at startup via
+  `output::set_verbose`) makes `api::graphql()` dump each request's URL, query,
+  and variables to **stderr** through `output::trace_graphql` before sending —
+  diagnostic only, never on stdout, so it does not affect `--output json`.
 
 ## Adding a new command
 

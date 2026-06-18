@@ -42,6 +42,10 @@ struct Cli {
     #[arg(long, global = true)]
     api_token: Option<String>,
 
+    /// Print each outgoing GraphQL request (URL, query, variables) to stderr
+    #[arg(long, short = 'v', global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -1341,6 +1345,7 @@ async fn run(cli: Cli) -> Result<()> {
     if let Some(token) = cli.api_token.as_deref() {
         config::set_api_token_override(token.to_string());
     }
+    output::set_verbose(cli.verbose);
 
     match version_check::check().await {
         version_check::VersionCheck::UpToDate => {}
@@ -2183,6 +2188,7 @@ mod tests {
     fn telemetry_command_maps_nested_app_resource_commands() {
         let cli = Cli {
             api_token: None,
+            verbose: false,
             output: Output::Human,
             command: Commands::Apps {
                 action: AppsAction::Resources {
@@ -2206,6 +2212,7 @@ mod tests {
     fn telemetry_command_maps_deeply_nested_log_trigger_commands() {
         let cli = Cli {
             api_token: None,
+            verbose: false,
             output: Output::Json,
             command: Commands::Logs {
                 action: LogsAction::Triggers {

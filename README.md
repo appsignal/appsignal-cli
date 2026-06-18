@@ -112,6 +112,16 @@ is sent as a `?token=` query parameter; nothing is written to disk. OAuth remain
 the default when no token is provided. `appsignal-cli auth status` shows which
 method is active.
 
+### Verbose output
+
+Pass the global `--verbose` (`-v`) flag to print each outgoing GraphQL request —
+its URL, query, and variables — to **stderr** before it is sent. This is handy
+for debugging and never pollutes `--output json` on stdout:
+
+```sh
+appsignal-cli --verbose incidents show --number 42 --app-id <app-id>
+```
+
 ## Quick start
 
 ```sh

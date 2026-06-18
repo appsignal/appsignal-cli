@@ -1777,6 +1777,10 @@ impl AppSignalClient {
         });
 
         let graphql_url = self.graphql_url();
+        // Load-bearing ordering: trace the bare URL here, BEFORE graphql_request
+        // appends `?token=` onto the RequestBuilder below. The token is never part
+        // of this `graphql_url` string, so --verbose cannot leak it. Do not reorder.
+        crate::output::trace_graphql(&graphql_url, query, &variables);
         let request = self.graphql_request(Method::POST, &graphql_url).json(&body);
 
         let resp = request.send().await.context(CliError::NetworkUnreachable)?;
