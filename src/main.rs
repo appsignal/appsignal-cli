@@ -263,6 +263,9 @@ enum IncidentsAction {
         /// Filter by action name (e.g. "UsersController#show")
         #[arg(long)]
         action: Option<String>,
+        /// Scope to a deploy marker id (see `apps resources deploy-markers`)
+        #[arg(long)]
+        marker: Option<String>,
     },
     /// List exception incidents (with text search support)
     ListExceptions {
@@ -1259,6 +1262,7 @@ async fn run(cli: Cli) -> Result<()> {
                 order,
                 namespaces,
                 action,
+                marker,
             } => {
                 commands::incidents::list(
                     app_id.as_deref(),
@@ -1271,6 +1275,7 @@ async fn run(cli: Cli) -> Result<()> {
                     order.as_deref(),
                     namespaces.as_deref(),
                     action.as_deref(),
+                    marker.as_deref(),
                     cli.output,
                 )
                 .await?

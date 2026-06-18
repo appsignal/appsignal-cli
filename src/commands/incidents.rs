@@ -37,6 +37,7 @@ pub async fn list(
     order: Option<&str>,
     namespaces: Option<&str>,
     action_name: Option<&str>,
+    marker: Option<&str>,
     format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
@@ -59,6 +60,7 @@ pub async fn list(
             order,
             ns.as_deref(),
             action_name,
+            marker,
         )
         .await?;
 

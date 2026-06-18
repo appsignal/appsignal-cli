@@ -1494,11 +1494,17 @@ impl AppSignalClient {
         order: Option<&str>,
         namespaces: Option<&[String]>,
         action_name: Option<&str>,
+        marker: Option<&str>,
     ) -> Result<Vec<Incident>> {
+        // NOTE: `marker` scopes incidents to a deploy marker. The arg is
+        // documented on the `incidents` field, but its scalar type is not
+        // verified against the live schema here; `String` (the marker id) is the
+        // best-supported guess and matches how app ids/slugs are typed. Confirm
+        // with a live smoke test before relying on it.
         let query = r#"
-            query AppIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $namespaces: [String], $actionName: String) {
+            query AppIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $namespaces: [String], $actionName: String, $marker: String) {
                 app(id: $appId) {
-                    incidents(limit: $limit, offset: $offset, state: $state, order: $order, namespaces: $namespaces, actionName: $actionName) {
+                    incidents(limit: $limit, offset: $offset, state: $state, order: $order, namespaces: $namespaces, actionName: $actionName, marker: $marker) {
                         __typename
                         ... on ExceptionIncident {
                             id number state severity description count
@@ -1548,6 +1554,9 @@ impl AppSignalClient {
         }
         if let Some(a) = action_name {
             vars["actionName"] = json!(a);
+        }
+        if let Some(m) = marker {
+            vars["marker"] = json!(m);
         }
 
         let data: AppIncidentsData = self.graphql(query, vars).await?;
@@ -3553,7 +3562,7 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let incidents = client
-            .list_incidents("app1", Some(10), None, None, None, None, None)
+            .list_incidents("app1", Some(10), None, None, None, None, None, None)
             .await
             .unwrap();
         assert_eq!(incidents.len(), 2);
@@ -3578,10 +3587,44 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let incidents = client
-            .list_incidents("app1", None, None, None, None, None, None)
+            .list_incidents("app1", None, None, None, None, None, None, None)
             .await
             .unwrap();
         assert!(incidents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_incidents_passes_marker_filter() {
+        let server = MockServer::start().await;
+        // The marker filter must reach the GraphQL request, both as a declared
+        // variable and as a populated value.
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("$marker: String"))
+            .and(body_string_contains("marker: $marker"))
+            .and(body_string_contains("deploy-42"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": { "incidents": [] }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        client
+            .list_incidents(
+                "app1",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("deploy-42"),
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

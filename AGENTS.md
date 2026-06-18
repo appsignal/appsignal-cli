@@ -297,6 +297,12 @@ Additional options for `incidents list`, `list-exceptions`, and `list-performanc
 | `--namespaces <ns>` | Filter by namespaces (comma-separated, e.g. "web,background") |
 | `--action <name>` | Filter by action name (e.g. "UsersController#show") |
 
+Additional option for `incidents list` only:
+
+| Flag | Description |
+|---|---|
+| `--marker <id>` | Scope to a deploy marker id (from `apps resources deploy-markers`); maps to the GraphQL `incidents(marker:)` argument |
+
 Additional option for `list-exceptions` and `list-performance`:
 
 | Flag | Description |
