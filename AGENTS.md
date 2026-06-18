@@ -223,6 +223,12 @@ see `api.rs::get_incident_sample` and `appsignal_url.rs`.
   breadcrumbs. `--output json` adds a structured `analysis` object alongside the
   raw `sample`; `--raw` prints the unprocessed sample instead. The analysis is
   pure and unit-tested on synthetic samples.
+- `samples list` without `--incident` runs a **window scan**: the `incidents`
+  query has no time-range filter, so `scan_samples_in_window` lists recent
+  incidents (capped by `--limit`, default 20) and applies the window at the
+  sample level. `--user` filters on the sample's user identity (see
+  `sample_analysis::sample_user`, which also reads `sessionData`); `--namespaces`
+  filters the incident list.
 
 ### Documented GraphQL queries from the AppSignal docs
 
@@ -337,7 +343,7 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli incidents update --number <N[,N...]> [--state S] [--severity S] [--assign IDs] [--assign-me] [--description D]` | Update incident state, severity, or assignees; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident (markdown supported) |
 | `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [app options]` | Show an analysed digest of one sample (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
-| `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [app options]` | List an incident's transaction samples, optionally within a time window |
+| `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [--namespaces <list>] [--user <id>] [app options]` | List an incident's samples, or scan a time window across incidents (no `--incident`; `--user`/`--namespaces` filter) |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time (1-second polling) |
 | `appsignal-cli logs search [filters] [--page-all]` | One-shot log search (supports auto-pagination and global `--output json`) |
 | `appsignal-cli logs views [app options]` | List saved log views (filter presets) |

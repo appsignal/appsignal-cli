@@ -189,8 +189,48 @@ fn build_overview(sample: &Sample, sample_type: &str, incident_number: i64) -> O
         duration_ms: sample.duration.map(round2),
         queue_ms: sample.queue_duration.map(round2),
         revision: sample.revision.clone(),
-        user: find_in_keyvalues(sample, &USER_KEYS),
+        user: sample_user(sample),
         request_id: find_in_keyvalues(sample, &REQUEST_ID_KEYS),
+    }
+}
+
+/// Best-effort identity of the user who triggered the sample, looked up across
+/// the curated `overview`/`attributes` key/values and then the `sessionData` /
+/// `customData` / `params` JSON. Used for the digest and for `--user` filtering.
+pub fn sample_user(sample: &Sample) -> Option<String> {
+    if let Some(value) = find_in_keyvalues(sample, &USER_KEYS) {
+        return Some(value);
+    }
+    for json in [&sample.session_data, &sample.custom_data, &sample.params] {
+        if let Some(value) = find_in_json(json.as_ref(), &USER_KEYS) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// Find the first key (case-insensitive) from `keys` in a JSON object and
+/// return its scalar value as a string.
+fn find_in_json(value: Option<&serde_json::Value>, keys: &[&str]) -> Option<String> {
+    let object = value?.as_object()?;
+    for key in keys {
+        for (k, v) in object {
+            if k.eq_ignore_ascii_case(key) {
+                if let Some(scalar) = json_scalar_to_string(v) {
+                    return Some(scalar);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn json_scalar_to_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
     }
 }
 
@@ -770,6 +810,14 @@ mod tests {
         assert_eq!(perf.slow_queries.len(), 1);
         assert!(perf.slow_queries[0].body.contains("SELECT"));
         assert_eq!(perf.slow_queries[0].duration_ms, 120.0);
+    }
+
+    #[test]
+    fn sample_user_falls_back_to_session_data_json() {
+        let mut sample = base_sample();
+        sample.overview = None;
+        sample.session_data = Some(serde_json::json!({ "current_user": "alice@example.com" }));
+        assert_eq!(sample_user(&sample).as_deref(), Some("alice@example.com"));
     }
 
     #[test]

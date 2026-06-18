@@ -30,7 +30,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents update --number <N[,N...]> [flags]` | Update state, severity, assignees, or description; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
 | `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [app options]` | Show an analysed digest of one sample behind an incident (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
-| `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [app options]` | List an incident's transaction samples, optionally within a time window |
+| `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--namespaces <list>] [--user <id>] [app options]` | List an incident's samples, or scan a time window across incidents (omit `--incident`; filter with `--user`/`--namespaces`) |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time |
 | `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
 | `appsignal-cli logs views [app options]` | List saved log views |

@@ -14,6 +14,7 @@ use serde::Serialize;
 use super::{authenticated_client, resolve_org};
 use crate::api::{
     AppSignalClient, BacktraceLine, IncidentSample, IncidentSamples, Sample, SampleQuery,
+    WindowSample,
 };
 use crate::appsignal_url::{self, SampleSelector};
 use crate::config::Config;
@@ -107,7 +108,18 @@ pub async fn show(
     output::print_with(response, format, |w| analysis.render_digest(w))
 }
 
-/// List the samples for an incident, optionally within a time window.
+/// Default number of recent incidents scanned in window mode.
+const DEFAULT_WINDOW_INCIDENT_SCAN: i64 = 20;
+
+/// A window scan's samples, for `--output json`.
+#[derive(Serialize)]
+struct WindowSamplesResponse<'a> {
+    count: usize,
+    samples: &'a [WindowSample],
+}
+
+/// List samples for one incident, or — when no incident is given — scan a time
+/// window across incidents.
 #[allow(clippy::too_many_arguments)]
 pub async fn list(
     reference: Option<&str>,
@@ -119,6 +131,8 @@ pub async fn list(
     start: Option<&str>,
     end: Option<&str>,
     limit: Option<i64>,
+    namespaces: Option<&str>,
+    user: Option<&str>,
     format: Output,
 ) -> Result<()> {
     let parsed = reference.map(appsignal_url::parse).transpose()?;
@@ -128,13 +142,7 @@ pub async fn list(
         .map(|p| p.app_id.clone())
         .or_else(|| app_id.map(str::to_string));
 
-    let incident_number = parsed
-        .as_ref()
-        .and_then(|p| p.incident_number)
-        .or(incident)
-        .context(CliError::msg(
-            "Listing samples needs an incident. Pass an incident URL, or use --incident <number>.",
-        ))?;
+    let incident_number = parsed.as_ref().and_then(|p| p.incident_number).or(incident);
 
     let mut config = Config::load()?;
     let client = authenticated_client(&mut config).await?;
@@ -148,11 +156,88 @@ pub async fn list(
     )
     .await?;
 
-    let result = client
-        .get_incident_samples(&resolved_app_id, incident_number, start, end, limit)
-        .await?;
+    match incident_number {
+        // Single-incident mode (Feature 1 behaviour). `--user` optionally filters.
+        Some(number) => {
+            let mut result = client
+                .get_incident_samples(&resolved_app_id, number, start, end, limit)
+                .await?;
+            if let Some(user) = user {
+                result.samples.retain(|s| sample_matches_user(s, user));
+            }
+            output::print_with(&result, format, |w| render_sample_list(w, &result))
+        }
+        // Window mode: scan incidents and collect samples in [start, end].
+        None => {
+            let (start, end) = match (start, end) {
+                (Some(start), Some(end)) => (start, end),
+                _ => anyhow::bail!(CliError::msg(
+                    "Listing samples needs either --incident, or both --start and --end to scan a \
+                     time window across incidents.",
+                )),
+            };
 
-    output::print_with(&result, format, |w| render_sample_list(w, &result))
+            let namespaces = parse_namespaces(namespaces);
+            let incident_limit = limit.unwrap_or(DEFAULT_WINDOW_INCIDENT_SCAN);
+
+            let mut samples = client
+                .scan_samples_in_window(
+                    &resolved_app_id,
+                    start,
+                    end,
+                    namespaces.as_deref(),
+                    incident_limit,
+                )
+                .await?;
+
+            if let Some(user) = user {
+                samples.retain(|w| sample_matches_user(&w.sample, user));
+            }
+            sort_window_samples(&mut samples);
+
+            let response = WindowSamplesResponse {
+                count: samples.len(),
+                samples: &samples,
+            };
+            output::print_with(response, format, |w| {
+                render_window_samples(w, &samples, start, end)
+            })
+        }
+    }
+}
+
+fn parse_namespaces(namespaces: Option<&str>) -> Option<Vec<String>> {
+    namespaces.and_then(|raw| {
+        let parts: Vec<String> = raw
+            .split(',')
+            .map(|part| part.trim().to_string())
+            .filter(|part| !part.is_empty())
+            .collect();
+        // An all-empty/all-comma value would otherwise become `Some([])`, which
+        // serialises as an empty namespace filter and silently returns nothing.
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts)
+        }
+    })
+}
+
+fn sample_matches_user(sample: &Sample, query: &str) -> bool {
+    sample_analysis::sample_user(sample)
+        .map(|user| user.to_lowercase().contains(&query.to_lowercase()))
+        .unwrap_or(false)
+}
+
+/// Sort window samples chronologically; ISO-8601 strings sort lexicographically,
+/// and samples with no timestamp sort last.
+fn sort_window_samples(samples: &mut [WindowSample]) {
+    samples.sort_by(|a, b| match (&a.sample.created_at, &b.sample.created_at) {
+        (Some(a), Some(b)) => a.cmp(b),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
 }
 
 /// Resolve the target app id without forcing an organization to be configured
@@ -300,6 +385,54 @@ fn render_sample_list(w: &mut dyn Write, result: &IncidentSamples) -> io::Result
     )
 }
 
+fn render_window_samples(
+    w: &mut dyn Write,
+    samples: &[WindowSample],
+    start: &str,
+    end: &str,
+) -> io::Result<()> {
+    if samples.is_empty() {
+        return writeln!(w, "No samples found between {} and {}.", start, end);
+    }
+
+    writeln!(
+        w,
+        "{:<34} {:<9} {:<6} {:<12} {:<24} ACTION",
+        "SAMPLE ID", "INCIDENT", "TYPE", "DURATION", "OCCURRED AT"
+    )?;
+    writeln!(w, "{}", "-".repeat(110))?;
+
+    for entry in samples {
+        let duration = entry
+            .sample
+            .duration
+            .map(|d| format!("{:.2} ms", d))
+            .unwrap_or_else(|| "-".to_string());
+        let occurred_at = entry.sample.created_at.as_deref().unwrap_or("-");
+        let action = entry.sample.action.as_deref().unwrap_or("-");
+        writeln!(
+            w,
+            "{:<34} {:<9} {:<6} {:<12} {:<24} {}",
+            entry.sample.id,
+            format!("#{}", entry.incident_number),
+            short_type(&entry.sample_type),
+            duration,
+            occurred_at,
+            truncate(action, 40),
+        )?;
+    }
+
+    writeln!(w, "{} sample(s) found in window.", samples.len())
+}
+
+fn short_type(sample_type: &str) -> &str {
+    match sample_type {
+        "performance" => "perf",
+        "error" => "err",
+        other => other,
+    }
+}
+
 fn truncate(value: &str, max: usize) -> String {
     if value.chars().count() <= max {
         return value.to_string();
@@ -400,5 +533,65 @@ mod tests {
         let mut buf = Vec::new();
         render_sample_list(&mut buf, &result).unwrap();
         assert!(String::from_utf8(buf).unwrap().contains("No samples found"));
+    }
+
+    #[test]
+    fn parse_namespaces_splits_and_trims() {
+        assert_eq!(
+            parse_namespaces(Some("web, background ,, ")),
+            Some(vec!["web".to_string(), "background".to_string()])
+        );
+        assert_eq!(parse_namespaces(None), None);
+        // All-empty input collapses to `None`, not `Some([])`.
+        assert_eq!(parse_namespaces(Some("")), None);
+        assert_eq!(parse_namespaces(Some(" , ,")), None);
+    }
+
+    #[test]
+    fn user_filter_matches_case_insensitive_substring() {
+        let mut sample = sample_with("Web::OrdersController#index");
+        sample.overview = Some(vec![crate::api::KeyStringValue {
+            key: "user_id".to_string(),
+            value: Some("User-42".to_string()),
+        }]);
+        assert!(sample_matches_user(&sample, "user-42"));
+        assert!(sample_matches_user(&sample, "42"));
+        assert!(!sample_matches_user(&sample, "user-99"));
+    }
+
+    #[test]
+    fn window_render_shows_incident_column_and_sorts() {
+        let mut a = sample_with("A#a");
+        a.created_at = Some("2026-05-19T10:00:00Z".to_string());
+        let mut b = sample_with("B#b");
+        b.created_at = Some("2026-05-19T09:00:00Z".to_string());
+
+        let mut samples = vec![
+            WindowSample {
+                incident_number: 1,
+                sample_type: "performance".to_string(),
+                sample: a,
+            },
+            WindowSample {
+                incident_number: 2,
+                sample_type: "error".to_string(),
+                sample: b,
+            },
+        ];
+        sort_window_samples(&mut samples);
+        assert_eq!(samples[0].incident_number, 2); // earlier timestamp first
+
+        let mut buf = Vec::new();
+        render_window_samples(
+            &mut buf,
+            &samples,
+            "2026-05-19T00:00:00Z",
+            "2026-05-20T00:00:00Z",
+        )
+        .unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("INCIDENT"));
+        assert!(out.contains("#1"));
+        assert!(out.contains("#2"));
     }
 }

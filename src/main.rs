@@ -486,13 +486,14 @@ enum SamplesAction {
         #[arg(long)]
         raw: bool,
     },
-    /// List the samples for an incident, optionally within a time window
+    /// List the samples for an incident, or scan a time window across incidents
     List {
         /// An AppSignal incident URL (supplies the app and incident)
         reference: Option<String>,
         #[command(flatten)]
         app: SamplesAppArgs,
-        /// Incident number (when not using a URL reference)
+        /// Incident number. Omit to scan multiple incidents in a time window
+        /// (requires --start and --end).
         #[arg(long)]
         incident: Option<i64>,
         /// Only include samples at or after this ISO-8601 timestamp
@@ -501,9 +502,16 @@ enum SamplesAction {
         /// Only include samples at or before this ISO-8601 timestamp
         #[arg(long)]
         end: Option<String>,
-        /// Maximum number of samples to return
+        /// With --incident: max samples. In window mode: max incidents to scan.
         #[arg(long)]
         limit: Option<i64>,
+        /// Window mode only: filter scanned incidents by namespace
+        /// (comma-separated, e.g. "web,background"). Ignored with --incident.
+        #[arg(long)]
+        namespaces: Option<String>,
+        /// Only keep samples whose user identity matches (id, email, or substring)
+        #[arg(long)]
+        user: Option<String>,
     },
 }
 
@@ -1529,6 +1537,8 @@ async fn run(cli: Cli) -> Result<()> {
                 start,
                 end,
                 limit,
+                namespaces,
+                user,
             } => {
                 commands::samples::list(
                     reference.as_deref(),
@@ -1540,6 +1550,8 @@ async fn run(cli: Cli) -> Result<()> {
                     start.as_deref(),
                     end.as_deref(),
                     limit,
+                    namespaces.as_deref(),
+                    user.as_deref(),
                     cli.output,
                 )
                 .await?

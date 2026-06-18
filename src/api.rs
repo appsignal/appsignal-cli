@@ -640,6 +640,16 @@ pub struct IncidentSamples {
     pub samples: Vec<Sample>,
 }
 
+/// A sample paired with the incident it belongs to, produced by a window scan
+/// across multiple incidents.
+#[derive(Debug, Serialize)]
+pub struct WindowSample {
+    pub incident_number: i64,
+    #[serde(rename = "type")]
+    pub sample_type: String,
+    pub sample: Sample,
+}
+
 #[derive(Debug, Deserialize)]
 struct AppIncidentSampleData {
     app: Option<AppIncidentSample>,
@@ -2194,6 +2204,57 @@ impl AppSignalClient {
             sample_type,
             samples: envelope.samples.unwrap_or_default(),
         })
+    }
+
+    /// Scan recent incidents for samples that fall within a time window.
+    ///
+    /// The GraphQL `incidents` query has no time-range filter, so the window is
+    /// applied at the sample level (`samples(start:, end:)`): the most recent
+    /// incidents (capped by `incident_limit`) are listed, then each performance
+    /// or exception incident's samples within `[start, end]` are collected.
+    /// Anomaly and log incidents carry no samples and are skipped.
+    pub async fn scan_samples_in_window(
+        &self,
+        app_id: &str,
+        start: &str,
+        end: &str,
+        namespaces: Option<&[String]>,
+        incident_limit: i64,
+    ) -> Result<Vec<WindowSample>> {
+        let incidents = self
+            .list_incidents(
+                app_id,
+                Some(incident_limit),
+                None,
+                None,
+                Some("LAST"),
+                namespaces,
+                None,
+            )
+            .await?;
+
+        let mut samples = Vec::new();
+        for incident in &incidents {
+            if !matches!(
+                incident,
+                Incident::ExceptionIncident { .. } | Incident::PerformanceIncident { .. }
+            ) {
+                continue;
+            }
+
+            let result = self
+                .get_incident_samples(app_id, incident.number(), Some(start), Some(end), None)
+                .await?;
+            for sample in result.samples {
+                samples.push(WindowSample {
+                    incident_number: result.incident_number,
+                    sample_type: result.sample_type.clone(),
+                    sample,
+                });
+            }
+        }
+
+        Ok(samples)
     }
 
     /// Update a single incident (state, severity, assignees, description).
@@ -4251,6 +4312,84 @@ mod tests {
 
         assert_eq!(result.sample_type, "performance");
         assert_eq!(result.samples.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_scan_samples_in_window_collects_across_incidents() {
+        let server = MockServer::start().await;
+
+        // The incident listing: one performance incident (has samples) and one
+        // anomaly incident (no samples, must be skipped).
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("AppIncidents"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incidents": [
+                            {
+                                "__typename": "PerformanceIncident",
+                                "id": "p1", "number": 7, "state": "OPEN",
+                                "severity": "WARNING", "description": "slow",
+                                "count": 3,
+                                "createdAt": "2026-05-19T00:00:00Z",
+                                "lastOccurredAt": "2026-05-19T12:00:00Z",
+                                "updatedAt": null,
+                                "actionNames": ["Web#index"], "namespace": "web",
+                                "mean": 10.0, "totalDuration": 30.0
+                            },
+                            {
+                                "__typename": "AnomalyIncident",
+                                "id": "a1", "number": 8, "state": "OPEN",
+                                "severity": "WARNING", "description": "anomaly",
+                                "count": 1,
+                                "createdAt": "2026-05-19T00:00:00Z",
+                                "lastOccurredAt": "2026-05-19T12:00:00Z",
+                                "updatedAt": null,
+                                "alertState": "OPEN",
+                                "trigger": null, "tags": []
+                            }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        // The per-incident samples query (only the performance incident reaches it).
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("IncidentSamples"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incident": {
+                            "__typename": "PerformanceIncident",
+                            "number": 7,
+                            "samples": [performance_sample_json()]
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let samples = client
+            .scan_samples_in_window(
+                "app1",
+                "2026-05-19T00:00:00Z",
+                "2026-05-20T00:00:00Z",
+                None,
+                20,
+            )
+            .await
+            .unwrap();
+
+        // Only the performance incident contributes a sample; the anomaly is skipped.
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].incident_number, 7);
+        assert_eq!(samples[0].sample_type, "performance");
     }
 
     #[tokio::test]

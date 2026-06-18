@@ -172,6 +172,12 @@ appsignal-cli samples show --incident 42 --app-id <app-id> --output json
 
 # List the samples for an incident within a time window
 appsignal-cli samples list --incident 42 --app-id <app-id> --start "2026-05-19T00:00:00Z" --end "2026-05-20T00:00:00Z"
+
+# Scan a time window across incidents (no --incident) — "what happened between T1 and T2"
+appsignal-cli samples list --app-id <app-id> --start "2026-05-19T13:00:00Z" --end "2026-05-19T14:00:00Z"
+
+# Narrow a window scan to namespaces and a specific user
+appsignal-cli samples list --app-id <app-id> --start "2026-05-19T13:00:00Z" --end "2026-05-19T14:00:00Z" --namespaces web --user alice@example.com
 ```
 
 By default `samples show` prints a **digest** — request overview, who hit it, a
@@ -276,9 +282,9 @@ appsignal-cli skill install --target claude
 | Command | Description |
 |---|---|
 | `samples show [URL\|id]` | Show an analysed digest of one sample — the latest, or `--sample-id <id>`, or `--at <ISO>` (closest to a timestamp); `--raw` for the unprocessed sample |
-| `samples list [URL]` | List an incident's samples, optionally narrowed with `--start`/`--end`/`--limit` |
+| `samples list [URL]` | List an incident's samples, or — with no `--incident` — scan a time window (`--start`/`--end`) across incidents, filterable by `--namespaces` and `--user` |
 
-Both accept an AppSignal incident or sample URL (or a bare sample id) as a positional argument, or the explicit `--incident <N>` plus the usual `--app-id`/`--app`/`--environment`/`--org` flags.
+Both accept an AppSignal incident or sample URL (or a bare sample id) as a positional argument, or the explicit `--incident <N>` plus the usual `--app-id`/`--app`/`--environment`/`--org` flags. In window mode `--limit` caps how many recent incidents are scanned (default 20).
 
 ### `logs`
 
