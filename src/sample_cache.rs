@@ -147,6 +147,18 @@ pub fn load_all(dir: &Path, app_id: Option<&str>) -> Result<Vec<CachedSample>> {
     Ok(entries)
 }
 
+/// The most recently cached sample with the given sample id, if present.
+/// Optionally scoped to one app id.
+pub fn find_by_id(
+    dir: &Path,
+    sample_id: &str,
+    app_id: Option<&str>,
+) -> Result<Option<CachedSample>> {
+    Ok(load_all(dir, app_id)?
+        .into_iter()
+        .find(|entry| entry.sample.id == sample_id))
+}
+
 /// Cached samples whose serialized contents contain `query` (case-insensitive).
 pub fn search(dir: &Path, query: &str, app_id: Option<&str>) -> Result<Vec<CachedSample>> {
     let needle = query.to_lowercase();
@@ -346,6 +358,34 @@ mod tests {
         let hits = search(dir.path(), "reports", None).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].sample.id, "s1");
+    }
+
+    #[test]
+    fn find_by_id_returns_matching_sample() {
+        let dir = tempfile::tempdir().unwrap();
+        store(
+            dir.path(),
+            "app1",
+            1,
+            "error",
+            &sample("s1", "A"),
+            "2026-05-19T10:00:00Z",
+        )
+        .unwrap();
+        store(
+            dir.path(),
+            "app1",
+            2,
+            "error",
+            &sample("s2", "B"),
+            "2026-05-19T11:00:00Z",
+        )
+        .unwrap();
+
+        let found = find_by_id(dir.path(), "s2", None).unwrap().unwrap();
+        assert_eq!(found.sample.id, "s2");
+        assert_eq!(found.incident_number, 2);
+        assert!(find_by_id(dir.path(), "missing", None).unwrap().is_none());
     }
 
     #[test]

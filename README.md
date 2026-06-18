@@ -213,6 +213,7 @@ appsignal-cli samples list --app-id <app-id> --start "2026-05-19T13:00:00Z" --en
 # Re-inspect samples you fetched earlier, offline — no API call
 appsignal-cli samples cache list
 appsignal-cli samples cache search "PG::QueryCanceled"
+appsignal-cli samples cache show <sample-id>   # full digest, straight from the cache
 
 # Skip caching for a single fetch, or clear the cache
 appsignal-cli samples show --incident 42 --app-id <app-id> --no-cache
@@ -379,6 +380,7 @@ appsignal-cli skill install --target claude
 |---|---|
 | `samples show [URL\|id]` | Show an analysed digest of one sample — the latest, or `--sample-id <id>`, or `--at <ISO>` (closest to a timestamp); `--raw` for the unprocessed sample |
 | `samples list [URL]` | List an incident's samples, or — with no `--incident` — scan a time window (`--start`/`--end`) across incidents, filterable by `--namespaces` and `--user` |
+| `samples cache show <id>` | Re-render a cached sample's digest offline (no API call); `--raw` for the unprocessed sample |
 | `samples cache list` | List recently cached samples (newest first); filter with `--app-id`, cap with `--limit` |
 | `samples cache search <query>` | Search cached samples by their contents (action, user, query bodies, exceptions, …) |
 | `samples cache clear` | Delete every cached sample |

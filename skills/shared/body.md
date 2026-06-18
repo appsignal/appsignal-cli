@@ -31,6 +31,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
 | `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [app options]` | Show an analysed digest of one sample behind an incident (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
 | `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--namespaces <list>] [--user <id>] [app options]` | List an incident's samples, or scan a time window across incidents (omit `--incident`; filter with `--user`/`--namespaces`) |
+| `appsignal-cli samples cache show <sample-id> [--raw]` | Re-render a cached sample's digest offline (no API call) |
 | `appsignal-cli samples cache list [--app-id <id>] [--limit <N>]` | List samples cached from earlier fetches (newest first), offline |
 | `appsignal-cli samples cache search <query> [--app-id <id>] [--limit <N>]` | Search cached samples by their contents (action, user, query bodies, exceptions) |
 | `appsignal-cli samples cache clear` | Delete every cached sample (use for privacy cleanup) |

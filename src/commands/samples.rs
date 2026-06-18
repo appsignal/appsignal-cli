@@ -298,6 +298,52 @@ pub fn cache_search(
     )
 }
 
+/// A cached sample re-rendered with its analysis, for `--output json`.
+#[derive(Serialize)]
+struct CacheShowResponse<'a> {
+    incident_number: i64,
+    #[serde(rename = "type")]
+    sample_type: &'a str,
+    cached_at: &'a str,
+    sample: &'a Sample,
+    analysis: &'a SampleAnalysis,
+}
+
+/// `samples cache show <sample-id>` — re-render a cached sample offline (no API
+/// call). Prints the analysed digest by default, or the raw sample with `--raw`.
+pub fn cache_show(sample_id: &str, app_id: Option<&str>, raw: bool, format: Output) -> Result<()> {
+    let dir = sample_cache::default_dir()
+        .context(CliError::msg("Could not determine the cache directory."))?;
+    let entry = sample_cache::find_by_id(&dir, sample_id, app_id)?.with_context(|| {
+        CliError::msg(format!(
+            "No cached sample {sample_id}. Run `samples cache list` to see what is cached."
+        ))
+    })?;
+
+    // `--raw` prints the unprocessed sample, mirroring `samples show --raw`.
+    if raw {
+        let incident_sample = IncidentSample {
+            incident_number: entry.incident_number,
+            sample_type: entry.sample_type,
+            sample: entry.sample,
+        };
+        return output::print_with(&incident_sample, format, |w| {
+            render_sample_detail(w, &incident_sample)
+        });
+    }
+
+    let analysis =
+        sample_analysis::analyze(&entry.sample, &entry.sample_type, entry.incident_number);
+    let response = CacheShowResponse {
+        incident_number: entry.incident_number,
+        sample_type: &entry.sample_type,
+        cached_at: &entry.cached_at,
+        sample: &entry.sample,
+        analysis: &analysis,
+    };
+    output::print_with(response, format, |w| analysis.render_digest(w))
+}
+
 /// `samples cache clear` — delete every cached sample.
 pub fn cache_clear(format: Output) -> Result<()> {
     let dir = sample_cache::default_dir()

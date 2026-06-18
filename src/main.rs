@@ -548,6 +548,17 @@ enum SamplesAction {
 
 #[derive(Subcommand)]
 enum SamplesCacheAction {
+    /// Re-render a cached sample offline (no API call)
+    Show {
+        /// The cached sample id (see `samples cache list`)
+        sample_id: String,
+        /// Only look at samples cached for this application ID
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Show the unprocessed sample instead of the analysed digest
+        #[arg(long)]
+        raw: bool,
+    },
     /// List recently cached samples (newest first)
     List {
         /// Only show samples cached for this application ID
@@ -1264,6 +1275,7 @@ impl_telemetry_command!(SamplesAction {
 });
 
 impl_telemetry_command!(SamplesCacheAction {
+    Self::Show { .. } => telemetry::TelemetryCommand::SamplesCacheShow,
     Self::List { .. } => telemetry::TelemetryCommand::SamplesCacheList,
     Self::Search { .. } => telemetry::TelemetryCommand::SamplesCacheSearch,
     Self::Clear => telemetry::TelemetryCommand::SamplesCacheClear,
@@ -1763,6 +1775,11 @@ async fn run(cli: Cli) -> Result<()> {
                 .await?
             }
             SamplesAction::Cache { action } => match action {
+                SamplesCacheAction::Show {
+                    sample_id,
+                    app_id,
+                    raw,
+                } => commands::samples::cache_show(&sample_id, app_id.as_deref(), raw, cli.output)?,
                 SamplesCacheAction::List { app_id, limit } => {
                     commands::samples::cache_list(app_id.as_deref(), limit, cli.output)?
                 }

@@ -249,12 +249,15 @@ see `api.rs::get_incident_sample` and `appsignal_url.rs`.
   filters the incident list.
 - Every fetched sample is also written to an on-disk cache (`sample_cache.rs`,
   one JSON file per sample under `dirs::cache_dir()/appsignal/samples/`) so
-  `samples cache list`/`search` can re-inspect them offline. Caching is
+  `samples cache list`/`search`/`show` can re-inspect them offline. Caching is
   best-effort (never fatal) and additive — it does not change `show`/`list`
   output. Opt out per call with `--no-cache` or globally with `APPSIGNAL_NO_CACHE`.
   `search` matches the case-insensitive query against each entry's full
   serialized JSON, so it covers action, user, query bodies, params, and
-  exceptions. Samples can hold sensitive data; `samples cache clear` wipes it.
+  exceptions. `samples cache show <id>` reuses `sample_analysis` to render the
+  full digest from the stored `Sample` with no API call — the cache keeps the
+  complete sample, not just a summary. Samples can hold sensitive data;
+  `samples cache clear` wipes it.
 
 ### Metrics
 
@@ -408,6 +411,7 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident (markdown supported) |
 | `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [--no-cache] [app options]` | Show an analysed digest of one sample (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
 | `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [--namespaces <list>] [--user <id>] [--no-cache] [app options]` | List an incident's samples, or scan a time window across incidents (no `--incident`; `--user`/`--namespaces` filter) |
+| `appsignal-cli samples cache show <sample-id> [--app-id <id>] [--raw]` | Re-render a cached sample's digest offline (no API call) |
 | `appsignal-cli samples cache list [--app-id <id>] [--limit <N>]` | List locally cached samples (newest first) |
 | `appsignal-cli samples cache search <query> [--app-id <id>] [--limit <N>]` | Search cached samples by their serialized contents |
 | `appsignal-cli samples cache clear` / `samples cache path` | Delete all cached samples / print the cache directory |
