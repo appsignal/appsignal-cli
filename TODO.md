@@ -23,6 +23,7 @@ Implemented in the CLI today:
 - Incident listing, incident detail, incident update, incident notes
 - Transaction samples behind incidents (fetch, digest, window/user scan)
 - Metric key discovery, raw timeseries, and historical datapoints
+- Performance action ranking and sample-derived slow-query / N+1 drill-down
 - Log search, log tail, log views, log sources
 - Trigger listing, creation, update, and archiving
 
@@ -134,6 +135,8 @@ Notes:
 
 ### `get_performance`
 - [~] `incidents list-performance`
+- [x] `performance actions` — ranks recent performance incidents by mean/total duration or throughput (client-side ranking over `performanceIncidents`)
+- [x] `performance queries` — slow queries + N+1 suspects from the latest sample of each slowest action
 
 Covered today:
 - app selection
@@ -142,13 +145,14 @@ Covered today:
 - `--state`
 - `--query`
 - pagination via `--limit` / `--offset`
+- action-level ranking and sample-derived slow-query drill-down via `performance`
 
 Still missing:
 - [ ] `start`
 - [ ] `end`
 - [ ] `revision`
-- [ ] OTel action ranking output
-- [ ] richer performance overview beyond incident listing
+- [ ] true per-SQL aggregate ranking (public API is action-level; `performance queries` is sample-derived)
+- [ ] richer performance overview beyond incident listing and sample drill-down
 
 ### `get_traces`
 - [ ] Not implemented

@@ -17,6 +17,8 @@ Use `appsignal-cli` to:
 - Search and tail application logs
 - List, inspect, update, and annotate incidents
 - Fetch the transaction samples behind an incident (by URL, id, or timestamp)
+- Discover metric keys and pull metric timeseries and historical datapoints
+- Rank slow performance actions and the queries behind them
 - Manage dashboards, anomaly detection triggers, log-derived metrics, and
   log-based triggers
 - Render command output as JSON for scripts and LLM agents
@@ -213,6 +215,28 @@ Metrics come from the public GraphQL API (`app.metrics.keys` /
 access or extra credentials are needed. `metrics timeseries` requires a window:
 either `--timeframe` (e.g. `R1H`, `R1D`) or both `--start` and `--end`.
 
+### Performance
+
+```sh
+# Rank recent performance actions by mean request duration (the slowest typical request)
+appsignal-cli performance actions --app-id <app-id>
+
+# Rank by total time spent or by throughput instead
+appsignal-cli performance actions --app-id <app-id> --sort total
+appsignal-cli performance actions --app-id <app-id> --sort count --namespaces web
+
+# Drill into the slowest actions and show the slow queries + N+1 suspects behind them
+appsignal-cli performance queries --app-id <app-id> --limit 5
+```
+
+`performance actions` ranks the recent performance incidents by `mean` (default),
+`total`, or `count`. `performance queries` takes the slowest actions, fetches the
+latest sample for each, and surfaces the slow database queries and N+1 suspects
+from those samples — useful for "why is this action slow?". Because the public
+API exposes performance data at the **action** level (not per-SQL), the query
+view is derived from the latest sampled request per action, not a full aggregate;
+the output says so.
+
 ### Logs
 
 ```sh
@@ -322,6 +346,15 @@ Both accept an AppSignal incident or sample URL (or a bare sample id) as a posit
 | `metrics history --start <ISO> --end <ISO>` | Per-action error and performance throughput over a window; scope with `--namespaces` |
 
 All `metrics` subcommands take the usual `--app-id`/`--app`/`--environment`/`--org` flags and are served by the public GraphQL API.
+
+### `performance`
+
+| Command | Description |
+|---|---|
+| `performance actions` | Rank recent performance incidents by `--sort mean\|total\|count` (default `mean`); scan depth via `--limit`, scope with `--namespaces`/`--action`/`--state` |
+| `performance queries` | Drill into the `--limit` slowest actions and list the slow queries and N+1 suspects from each one's latest sample |
+
+Both take the usual `--app-id`/`--app`/`--environment`/`--org` flags. `performance queries` is sample-derived (latest request per action), not a full per-query aggregate.
 
 ### `logs`
 

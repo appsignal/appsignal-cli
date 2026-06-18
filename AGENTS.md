@@ -27,6 +27,7 @@ src/
     incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show / update / add-note
     samples.rs         samples show / list (transaction samples behind an incident)
     metrics.rs         metrics list / timeseries / history (GraphQL metric keys, timeseries, time-detective datapoints)
+    performance.rs     performance actions / queries (rank slow performance incidents; drill into slow queries via samples)
     dashboards.rs      dashboards list / create / update
     triggers.rs        triggers list / create / update / archive (anomaly detection triggers)
     logs/
@@ -251,6 +252,24 @@ Metrics are **GraphQL, not REST** — `app.metrics.keys(...)`,
 - `metrics history` needs both `--start` and `--end`; `metrics timeseries` needs
   either `--timeframe` or both `--start`/`--end` (validated in `commands/metrics.rs`).
 
+### Performance ranking
+
+The `performance` command (see `commands/performance.rs`) is built entirely on
+existing API surface — it does **not** add new GraphQL queries:
+
+- `performance actions` calls `list_performance_incidents` (order `LAST`), then
+  ranks the returned set **client-side** by `mean`, `totalDuration`, or `count`
+  (the public API has no order-by-duration). `--limit` is the scan/rank depth.
+- The public `performanceIncidents` data is **action-level**, not per-SQL. To get
+  per-query timing, `performance queries` fetches each top action's latest sample
+  (`get_incident_sample`, `SampleQuery::Latest`) and reuses `sample_analysis` to
+  pull `slow_queries` / `n_plus_one_suspects` from the timeline. This is therefore
+  derived from the latest sampled request per action, not a full aggregate — the
+  human and JSON output both state this. A missing sample for an action is
+  reported per-row, not fatal.
+- New `Incident` accessors `namespace()`, `action_names()`, `mean()`, and
+  `total_duration()` expose the performance-specific fields for ranking.
+
 ### Documented GraphQL queries from the AppSignal docs
 
 Root query fields:
@@ -368,6 +387,8 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli metrics list [--name <fragment>] [--limit <N>] [app options]` | Discover the metric keys an app reports (name, type, fields, tags) |
 | `appsignal-cli metrics timeseries --metric <name> [--field F...] [--tag k=v...] [--timeframe T \| --start <ISO> --end <ISO>] [app options]` | Fetch a metric's values over time; requires `--timeframe` or both `--start`/`--end` |
 | `appsignal-cli metrics history --start <ISO> --end <ISO> [--namespaces <list>] [app options]` | Per-action error and performance throughput over a window (time-detective datapoints) |
+| `appsignal-cli performance actions [--sort mean\|total\|count] [--limit <N>] [--namespaces <list>] [--action <name>] [--state <s>] [app options]` | Rank recent performance incidents by mean/total duration or throughput |
+| `appsignal-cli performance queries [--limit <N>] [--namespaces <list>] [--action <name>] [--state <s>] [app options]` | Slow queries + N+1 suspects from the latest sample of each of the slowest actions |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time (1-second polling) |
 | `appsignal-cli logs search [filters] [--page-all]` | One-shot log search (supports auto-pagination and global `--output json`) |
 | `appsignal-cli logs views [app options]` | List saved log views (filter presets) |

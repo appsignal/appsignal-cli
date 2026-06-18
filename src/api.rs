@@ -447,6 +447,42 @@ impl Incident {
     pub fn assignee_ids(&self) -> Vec<String> {
         self.assignees().iter().map(|u| u.id.clone()).collect()
     }
+
+    /// Namespace for incident kinds that carry one (exception/performance).
+    pub fn namespace(&self) -> Option<&str> {
+        match self {
+            Incident::ExceptionIncident { namespace, .. }
+            | Incident::PerformanceIncident { namespace, .. } => namespace.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Action names for incident kinds that carry them (exception/performance).
+    pub fn action_names(&self) -> &[String] {
+        match self {
+            Incident::ExceptionIncident { action_names, .. }
+            | Incident::PerformanceIncident { action_names, .. } => {
+                action_names.as_deref().unwrap_or(&[])
+            }
+            _ => &[],
+        }
+    }
+
+    /// Mean request duration (ms) — performance incidents only.
+    pub fn mean(&self) -> Option<f64> {
+        match self {
+            Incident::PerformanceIncident { mean, .. } => *mean,
+            _ => None,
+        }
+    }
+
+    /// Total request duration (ms) across occurrences — performance incidents only.
+    pub fn total_duration(&self) -> Option<f64> {
+        match self {
+            Incident::PerformanceIncident { total_duration, .. } => *total_duration,
+            _ => None,
+        }
+    }
 }
 
 // -- Sample types --

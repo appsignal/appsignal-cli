@@ -81,6 +81,10 @@ pub enum TelemetryCommand {
     MetricsTimeseries,
     #[serde(rename = "metrics.history")]
     MetricsHistory,
+    #[serde(rename = "performance.actions")]
+    PerformanceActions,
+    #[serde(rename = "performance.queries")]
+    PerformanceQueries,
     #[serde(rename = "logs.tail")]
     LogsTail,
     #[serde(rename = "logs.search")]

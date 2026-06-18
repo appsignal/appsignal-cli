@@ -34,6 +34,8 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli metrics list [--name <fragment>] [--limit <N>] [app options]` | Discover the metric keys an app reports (name, type, fields, tags) |
 | `appsignal-cli metrics timeseries --metric <name> [--field F...] [--tag k=v...] [--timeframe T \| --start <ISO> --end <ISO>] [app options]` | Fetch a metric's values over time (needs `--timeframe` or both `--start`/`--end`) |
 | `appsignal-cli metrics history --start <ISO> --end <ISO> [--namespaces <list>] [app options]` | Per-action error and performance throughput over a window |
+| `appsignal-cli performance actions [--sort mean\|total\|count] [--limit <N>] [--namespaces <list>] [app options]` | Rank recent performance incidents by mean/total duration or throughput |
+| `appsignal-cli performance queries [--limit <N>] [--namespaces <list>] [app options]` | Slow queries + N+1 suspects from the latest sample of each slowest action (sample-derived, not a full aggregate) |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time |
 | `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
 | `appsignal-cli logs views [app options]` | List saved log views |

@@ -74,6 +74,11 @@ enum Commands {
         #[command(subcommand)]
         action: MetricsAction,
     },
+    /// Rank slow performance actions and the queries behind them
+    Performance {
+        #[command(subcommand)]
+        action: PerformanceAction,
+    },
     /// Stream, search, and inspect application logs
     Logs {
         #[command(subcommand)]
@@ -585,6 +590,54 @@ enum MetricsAction {
         /// Namespaces to include (comma-separated, e.g. "web,background")
         #[arg(long, value_delimiter = ',', default_value = "web")]
         namespaces: Vec<String>,
+    },
+}
+
+#[derive(Args)]
+struct PerformanceAppArgs {
+    /// Application ID (alternative to --app + --environment)
+    #[arg(long)]
+    app_id: Option<String>,
+    /// Application name — used with optional --environment to find the app
+    #[arg(long)]
+    app: Option<String>,
+    /// Environment filter (e.g. "production") — used with --app
+    #[arg(long)]
+    environment: Option<String>,
+    /// Organization slug (uses saved default if omitted)
+    #[arg(long)]
+    org: Option<String>,
+    /// Namespaces to include (comma-separated, e.g. "web,background")
+    #[arg(long, value_delimiter = ',')]
+    namespaces: Vec<String>,
+    /// Only consider this action name
+    #[arg(long)]
+    action: Option<String>,
+    /// Incident state filter (e.g. OPEN, CLOSED)
+    #[arg(long)]
+    state: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum PerformanceAction {
+    /// Rank recent performance incidents by mean/total duration or throughput
+    Actions {
+        #[command(flatten)]
+        app: PerformanceAppArgs,
+        /// Metric to rank by
+        #[arg(long, value_enum, default_value_t = commands::performance::PerfSort::Mean)]
+        sort: commands::performance::PerfSort,
+        /// Number of recent performance incidents to scan and rank
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+    },
+    /// Surface the slow queries and N+1 suspects behind the slowest actions
+    Queries {
+        #[command(flatten)]
+        app: PerformanceAppArgs,
+        /// Number of slowest actions to drill into (one sample fetched per action)
+        #[arg(long, default_value_t = 5)]
+        limit: i64,
     },
 }
 
@@ -1104,6 +1157,7 @@ impl_telemetry_command!(Commands {
     Self::Incidents { action } => action.telemetry_command(),
     Self::Samples { action } => action.telemetry_command(),
     Self::Metrics { action } => action.telemetry_command(),
+    Self::Performance { action } => action.telemetry_command(),
     Self::Logs { action } => action.telemetry_command(),
     Self::Dashboards { action } => action.telemetry_command(),
     Self::Triggers { action } => action.telemetry_command(),
@@ -1163,6 +1217,11 @@ impl_telemetry_command!(MetricsAction {
     Self::List { .. } => telemetry::TelemetryCommand::MetricsList,
     Self::Timeseries { .. } => telemetry::TelemetryCommand::MetricsTimeseries,
     Self::History { .. } => telemetry::TelemetryCommand::MetricsHistory
+});
+
+impl_telemetry_command!(PerformanceAction {
+    Self::Actions { .. } => telemetry::TelemetryCommand::PerformanceActions,
+    Self::Queries { .. } => telemetry::TelemetryCommand::PerformanceQueries
 });
 
 impl_telemetry_command!(LogsAction {
@@ -1688,6 +1747,37 @@ async fn run(cli: Cli) -> Result<()> {
                     &start,
                     &end,
                     &namespaces,
+                    cli.output,
+                )
+                .await?
+            }
+        },
+        Commands::Performance { action } => match action {
+            PerformanceAction::Actions { app, sort, limit } => {
+                commands::performance::actions(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &app.namespaces,
+                    app.action.as_deref(),
+                    app.state.as_deref(),
+                    sort,
+                    limit,
+                    cli.output,
+                )
+                .await?
+            }
+            PerformanceAction::Queries { app, limit } => {
+                commands::performance::queries(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &app.namespaces,
+                    app.action.as_deref(),
+                    app.state.as_deref(),
+                    limit,
                     cli.output,
                 )
                 .await?
