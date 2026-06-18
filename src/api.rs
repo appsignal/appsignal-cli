@@ -979,6 +979,161 @@ const EXCEPTION_SAMPLE_SELECTION: &str = r#"
     breadcrumbs { category action message metadata { key value } }
 "#;
 
+// -- Metric types --
+
+/// A metric key as returned by `app.metrics.keys`.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MetricKey {
+    pub name: String,
+    /// The metric type (`gauge`, `counter`, `measurement`, …). `type` is a
+    /// reserved word, so it's exposed as `kind`.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<KeyStringValue>>,
+    /// The field names available for this metric (e.g. `COUNTER`, `MEAN`, `P90`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<String>>,
+}
+
+/// One field selector inside a [`MetricTimeseriesInput`].
+#[derive(Debug, Serialize, Clone)]
+pub struct MetricFieldInput {
+    pub field: String,
+}
+
+/// A tag filter inside a [`MetricTimeseriesInput`].
+#[derive(Debug, Serialize, Clone)]
+pub struct MetricTagInput {
+    pub key: String,
+    pub value: String,
+}
+
+/// One entry in the `query: [MetricTimeseries!]!` argument of
+/// `app.metrics.timeseries`.
+#[derive(Debug, Serialize, Clone)]
+pub struct MetricTimeseriesInput {
+    pub name: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<MetricFieldInput>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<MetricTagInput>,
+}
+
+/// The result of `app.metrics.timeseries`.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MetricTimeseries {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<MetricTimeseriesKey>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<MetricTimeseriesPoint>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MetricTimeseriesKey {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<KeyStringValue>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MetricTimeseriesPoint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    /// Field name → value. Field names come back lowercased (`mean`, `p95`,
+    /// `counter`), matching the wire casing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<KeyStringValue>,
+}
+
+/// Error and performance datapoints for a historical window, from the
+/// `timeDetective*DataPoints` fields.
+#[derive(Debug, Serialize)]
+pub struct TimeDetective {
+    pub errors: Vec<ErrorDataPoint>,
+    pub performance: Vec<PerformanceDataPoint>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ErrorDataPoint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(rename = "actionName", skip_serializing_if = "Option::is_none")]
+    pub action_name: Option<String>,
+    #[serde(rename = "exceptionName", skip_serializing_if = "Option::is_none")]
+    pub exception_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct PerformanceDataPoint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(rename = "actionName", skip_serializing_if = "Option::is_none")]
+    pub action_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mean: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p90: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppMetricKeysData {
+    app: Option<AppMetricKeys>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppMetricKeys {
+    metrics: Option<MetricKeysHolder>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MetricKeysHolder {
+    keys: Option<Vec<MetricKey>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppMetricTimeseriesData {
+    app: Option<AppMetricTimeseries>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppMetricTimeseries {
+    metrics: Option<MetricTimeseriesHolder>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MetricTimeseriesHolder {
+    timeseries: Option<MetricTimeseries>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TimeDetectiveData {
+    app: Option<TimeDetectiveApp>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TimeDetectiveApp {
+    #[serde(rename = "timeDetectiveErrorDataPoints")]
+    errors: Option<Vec<ErrorDataPoint>>,
+    #[serde(rename = "timeDetectivePerformanceDataPoints")]
+    performance: Option<Vec<PerformanceDataPoint>>,
+}
+
 // -- Log types --
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -2255,6 +2410,144 @@ impl AppSignalClient {
         }
 
         Ok(samples)
+    }
+
+    /// Discover metric keys for an app via `app.metrics.keys`.
+    pub async fn list_metric_keys(
+        &self,
+        app_id: &str,
+        name: Option<&str>,
+        limit: Option<i64>,
+    ) -> Result<Vec<MetricKey>> {
+        let query = r#"
+            query MetricKeys($appId: String!, $name: String, $limit: Int) {
+                app(id: $appId) {
+                    metrics {
+                        keys(name: $name, limit: $limit) {
+                            name
+                            type
+                            digest
+                            tags { key value }
+                            fields
+                        }
+                    }
+                }
+            }
+        "#;
+
+        let mut vars = json!({ "appId": app_id });
+        if let Some(name) = name {
+            vars["name"] = json!(name);
+        }
+        if let Some(limit) = limit {
+            vars["limit"] = json!(limit);
+        }
+
+        let data: AppMetricKeysData = self.graphql(query, vars).await?;
+        Ok(data
+            .app
+            .and_then(|app| app.metrics)
+            .and_then(|metrics| metrics.keys)
+            .unwrap_or_default())
+    }
+
+    /// Fetch a metric's timeseries via `app.metrics.timeseries`.
+    ///
+    /// `start`/`end` are ISO-8601 strings bound to `DateTime` variables (the
+    /// usual gotcha). `timeframe` is a relative-window enum value (e.g. `R1H`);
+    /// because its GraphQL enum type name isn't part of the public contract we
+    /// rely on here, it is validated to be alphanumeric and interpolated as a
+    /// literal enum rather than passed as a typed variable.
+    pub async fn fetch_metric_timeseries(
+        &self,
+        app_id: &str,
+        query: &[MetricTimeseriesInput],
+        timeframe: Option<&str>,
+        start: Option<&str>,
+        end: Option<&str>,
+    ) -> Result<MetricTimeseries> {
+        let timeframe_arg = match timeframe {
+            Some(value) => {
+                if !value.chars().all(|c| c.is_ascii_alphanumeric()) {
+                    anyhow::bail!(CliError::msg(format!(
+                        "Invalid --timeframe '{}'. Expected a value like R1H or R7D.",
+                        value
+                    )));
+                }
+                format!(", timeframe: {value}")
+            }
+            None => String::new(),
+        };
+
+        let query_str = format!(
+            r#"
+            query MetricsTimeseries($appId: String!, $start: DateTime, $end: DateTime, $query: [MetricTimeseries!]!) {{
+                app(id: $appId) {{
+                    metrics {{
+                        timeseries(start: $start, end: $end, query: $query{timeframe_arg}) {{
+                            start
+                            end
+                            resolution
+                            keys {{ name digest tags {{ key value }} }}
+                            points {{ timestamp values {{ key value }} }}
+                        }}
+                    }}
+                }}
+            }}
+            "#
+        );
+
+        let mut vars = json!({ "appId": app_id, "query": query });
+        if let Some(start) = start {
+            vars["start"] = json!(start);
+        }
+        if let Some(end) = end {
+            vars["end"] = json!(end);
+        }
+
+        let data: AppMetricTimeseriesData = self.graphql(&query_str, vars).await?;
+        data.app
+            .and_then(|app| app.metrics)
+            .and_then(|metrics| metrics.timeseries)
+            .context(CliError::msg("No timeseries returned for this metric"))
+    }
+
+    /// Fetch error and performance datapoints for a historical window via the
+    /// `timeDetective*DataPoints` fields. `start`/`end`/`namespaces` are
+    /// non-null GraphQL arguments.
+    pub async fn fetch_time_detective(
+        &self,
+        app_id: &str,
+        start: &str,
+        end: &str,
+        namespaces: &[String],
+    ) -> Result<TimeDetective> {
+        let query = r#"
+            query TimeDetective($appId: String!, $start: DateTime!, $end: DateTime!, $namespaces: [String!]!) {
+                app(id: $appId) {
+                    timeDetectiveErrorDataPoints(start: $start, end: $end, namespaces: $namespaces) {
+                        namespace actionName exceptionName throughput
+                    }
+                    timeDetectivePerformanceDataPoints(start: $start, end: $end, namespaces: $namespaces) {
+                        namespace actionName throughput mean p90
+                    }
+                }
+            }
+        "#;
+
+        let vars = json!({
+            "appId": app_id,
+            "start": start,
+            "end": end,
+            "namespaces": namespaces,
+        });
+
+        let data: TimeDetectiveData = self.graphql(query, vars).await?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
+        Ok(TimeDetective {
+            errors: app.errors.unwrap_or_default(),
+            performance: app.performance.unwrap_or_default(),
+        })
     }
 
     /// Update a single incident (state, severity, assignees, description).
@@ -4390,6 +4683,133 @@ mod tests {
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].incident_number, 7);
         assert_eq!(samples[0].sample_type, "performance");
+    }
+
+    #[tokio::test]
+    async fn test_list_metric_keys() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("MetricKeys"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "metrics": {
+                            "keys": [
+                                {
+                                    "name": "database.query_count",
+                                    "type": "counter",
+                                    "digest": "abc",
+                                    "tags": [{ "key": "hostname", "value": "web-1" }],
+                                    "fields": ["COUNTER"]
+                                }
+                            ]
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let keys = client
+            .list_metric_keys("app1", Some("database"), Some(50))
+            .await
+            .unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].name, "database.query_count");
+        assert_eq!(keys[0].kind.as_deref(), Some("counter"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_metric_timeseries_declares_datetime_and_inlines_timeframe() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("$start: DateTime"))
+            .and(body_string_contains("$query: [MetricTimeseries!]!"))
+            .and(body_string_contains("timeframe: R1H"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "metrics": {
+                            "timeseries": {
+                                "start": "2026-05-19T00:00:00Z",
+                                "end": "2026-05-19T01:00:00Z",
+                                "resolution": "MINUTELY",
+                                "keys": [{ "name": "latency", "digest": "d", "tags": [] }],
+                                "points": [
+                                    { "timestamp": "2026-05-19T00:00:00Z", "values": [{ "key": "mean", "value": "12.5" }] }
+                                ]
+                            }
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let query = vec![MetricTimeseriesInput {
+            name: "latency".to_string(),
+            fields: vec![MetricFieldInput {
+                field: "MEAN".to_string(),
+            }],
+            tags: vec![],
+        }];
+        let series = client
+            .fetch_metric_timeseries("app1", &query, Some("R1H"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(series.points.len(), 1);
+        assert_eq!(series.points[0].values[0].key, "mean");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_metric_timeseries_rejects_unsafe_timeframe() {
+        let client = AppSignalClient::new("tok", None);
+        let err = client
+            .fetch_metric_timeseries("app1", &[], Some("R1H) evil"), None, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Invalid --timeframe"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_time_detective_declares_nonnull_datetime() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("$start: DateTime!"))
+            .and(body_string_contains("$namespaces: [String!]!"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "timeDetectiveErrorDataPoints": [
+                            { "namespace": "web", "actionName": "Web#index", "exceptionName": "RuntimeError", "throughput": 3.0 }
+                        ],
+                        "timeDetectivePerformanceDataPoints": [
+                            { "namespace": "web", "actionName": "Web#index", "throughput": 100.0, "mean": 12.5, "p90": 30.0 }
+                        ]
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let detective = client
+            .fetch_time_detective(
+                "app1",
+                "2026-05-19T00:00:00Z",
+                "2026-05-20T00:00:00Z",
+                &["web".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(detective.errors.len(), 1);
+        assert_eq!(detective.performance.len(), 1);
+        assert_eq!(detective.performance[0].p90, Some(30.0));
     }
 
     #[tokio::test]

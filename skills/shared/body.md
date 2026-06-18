@@ -31,6 +31,9 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
 | `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [app options]` | Show an analysed digest of one sample behind an incident (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
 | `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--namespaces <list>] [--user <id>] [app options]` | List an incident's samples, or scan a time window across incidents (omit `--incident`; filter with `--user`/`--namespaces`) |
+| `appsignal-cli metrics list [--name <fragment>] [--limit <N>] [app options]` | Discover the metric keys an app reports (name, type, fields, tags) |
+| `appsignal-cli metrics timeseries --metric <name> [--field F...] [--tag k=v...] [--timeframe T \| --start <ISO> --end <ISO>] [app options]` | Fetch a metric's values over time (needs `--timeframe` or both `--start`/`--end`) |
+| `appsignal-cli metrics history --start <ISO> --end <ISO> [--namespaces <list>] [app options]` | Per-action error and performance throughput over a window |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time |
 | `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
 | `appsignal-cli logs views [app options]` | List saved log views |

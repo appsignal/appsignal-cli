@@ -186,6 +186,33 @@ detection, and (for errors) the exception, backtrace, causes, and breadcrumbs.
 `--output json` returns both the raw `sample` and a structured `analysis`
 object; `--raw` prints the unprocessed sample instead of the digest.
 
+### Metrics
+
+```sh
+# Discover the metric keys reported by an app
+appsignal-cli metrics list --app-id <app-id>
+
+# Filter the key list by name fragment
+appsignal-cli metrics list --app-id <app-id> --name database
+
+# Pull a metric's values over a relative window
+appsignal-cli metrics timeseries --app-id <app-id> --metric database.query_count --timeframe R1H
+
+# Pull a metric over an explicit window, narrowed to a field and a tag
+appsignal-cli metrics timeseries --app-id <app-id> --metric latency \
+  --field p95 --tag hostname=web-1 \
+  --start "2026-05-19T13:00:00Z" --end "2026-05-19T14:00:00Z"
+
+# Error and performance throughput per action over a window ("what got slow / noisy")
+appsignal-cli metrics history --app-id <app-id> \
+  --start "2026-05-19T00:00:00Z" --end "2026-05-20T00:00:00Z" --namespaces web
+```
+
+Metrics come from the public GraphQL API (`app.metrics.keys` /
+`app.metrics.timeseries` and the `timeDetective*DataPoints` fields) — no REST
+access or extra credentials are needed. `metrics timeseries` requires a window:
+either `--timeframe` (e.g. `R1H`, `R1D`) or both `--start` and `--end`.
+
 ### Logs
 
 ```sh
@@ -285,6 +312,16 @@ appsignal-cli skill install --target claude
 | `samples list [URL]` | List an incident's samples, or — with no `--incident` — scan a time window (`--start`/`--end`) across incidents, filterable by `--namespaces` and `--user` |
 
 Both accept an AppSignal incident or sample URL (or a bare sample id) as a positional argument, or the explicit `--incident <N>` plus the usual `--app-id`/`--app`/`--environment`/`--org` flags. In window mode `--limit` caps how many recent incidents are scanned (default 20).
+
+### `metrics`
+
+| Command | Description |
+|---|---|
+| `metrics list` | Discover the metric keys reported by an app; filter with `--name <fragment>` and cap with `--limit` |
+| `metrics timeseries --metric <name>` | Fetch a metric's values over time; narrow with `--field` and `--tag key=value`; window with `--timeframe` (e.g. `R1H`) or `--start`/`--end` |
+| `metrics history --start <ISO> --end <ISO>` | Per-action error and performance throughput over a window; scope with `--namespaces` |
+
+All `metrics` subcommands take the usual `--app-id`/`--app`/`--environment`/`--org` flags and are served by the public GraphQL API.
 
 ### `logs`
 

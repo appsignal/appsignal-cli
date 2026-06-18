@@ -4,6 +4,7 @@ pub mod auth;
 pub mod dashboards;
 pub mod incidents;
 pub mod logs;
+pub mod metrics;
 pub mod project;
 pub mod samples;
 pub mod skill;

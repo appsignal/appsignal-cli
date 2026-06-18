@@ -26,6 +26,7 @@ src/
     project.rs         project init (create/update project-local .appsignal.toml)
     incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show / update / add-note
     samples.rs         samples show / list (transaction samples behind an incident)
+    metrics.rs         metrics list / timeseries / history (GraphQL metric keys, timeseries, time-detective datapoints)
     dashboards.rs      dashboards list / create / update
     triggers.rs        triggers list / create / update / archive (anomaly detection triggers)
     logs/
@@ -230,6 +231,26 @@ see `api.rs::get_incident_sample` and `appsignal_url.rs`.
   `sample_analysis::sample_user`, which also reads `sessionData`); `--namespaces`
   filters the incident list.
 
+### Metrics
+
+Metrics are **GraphQL, not REST** — `app.metrics.keys(...)`,
+`app.metrics.timeseries(...)`, and the app-level `timeDetectiveErrorDataPoints` /
+`timeDetectivePerformanceDataPoints` fields cover every `metrics` subcommand. See
+`api.rs::list_metric_keys`, `fetch_metric_timeseries`, and `fetch_time_detective`.
+
+- `metrics.timeseries(start:, end:)` declares its window variables **`DateTime`**,
+  same footgun as samples above. The `timeDetective*DataPoints(start:, end:)`
+  fields go further and require **`DateTime!`** (non-null). Both have regression
+  tests asserting the declaration.
+- The `timeframe` argument (e.g. `R1H`, `R1D`) is a GraphQL **enum**, not a
+  string. To avoid hard-coding its enum type name, `fetch_metric_timeseries`
+  validates the value is alphanumeric and inlines it as a literal
+  (`timeframe: R1H`) rather than passing it as a typed variable.
+- Timeseries response field names come back **lowercased** on the wire (`mean`,
+  `p95`, `counter`); deserialize accordingly.
+- `metrics history` needs both `--start` and `--end`; `metrics timeseries` needs
+  either `--timeframe` or both `--start`/`--end` (validated in `commands/metrics.rs`).
+
 ### Documented GraphQL queries from the AppSignal docs
 
 Root query fields:
@@ -247,7 +268,7 @@ Key fields on `App`:
 - `anomalyIncidents(state, limit, offset, order)` — anomaly incidents only (fewer filters than exceptions)
 - `logIncidents(state, limit, offset, order)`
 - `deployMarkers(limit, offset, start, end)`
-- `metrics { list(...) }`, `metrics { timeseries(...) }`
+- `metrics { keys(...) }`, `metrics { timeseries(...) }`; `timeDetectiveErrorDataPoints(...)`, `timeDetectivePerformanceDataPoints(...)`
 - `uptimeMonitors`
 
 See https://docs.appsignal.com/api/graphql/examples.html for full examples.
@@ -344,6 +365,9 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident (markdown supported) |
 | `appsignal-cli samples show [URL\|id] [--incident <N>] [--sample-id <id>] [--at <ISO>] [--raw] [app options]` | Show an analysed digest of one sample (latest, by id, or closest to a timestamp); `--raw` for the unprocessed sample |
 | `appsignal-cli samples list [URL] [--incident <N>] [--start <ISO>] [--end <ISO>] [--limit <N>] [--namespaces <list>] [--user <id>] [app options]` | List an incident's samples, or scan a time window across incidents (no `--incident`; `--user`/`--namespaces` filter) |
+| `appsignal-cli metrics list [--name <fragment>] [--limit <N>] [app options]` | Discover the metric keys an app reports (name, type, fields, tags) |
+| `appsignal-cli metrics timeseries --metric <name> [--field F...] [--tag k=v...] [--timeframe T \| --start <ISO> --end <ISO>] [app options]` | Fetch a metric's values over time; requires `--timeframe` or both `--start`/`--end` |
+| `appsignal-cli metrics history --start <ISO> --end <ISO> [--namespaces <list>] [app options]` | Per-action error and performance throughput over a window (time-detective datapoints) |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time (1-second polling) |
 | `appsignal-cli logs search [filters] [--page-all]` | One-shot log search (supports auto-pagination and global `--output json`) |
 | `appsignal-cli logs views [app options]` | List saved log views (filter presets) |

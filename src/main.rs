@@ -69,6 +69,11 @@ enum Commands {
         #[command(subcommand)]
         action: SamplesAction,
     },
+    /// Discover metric keys and pull raw metric timeseries
+    Metrics {
+        #[command(subcommand)]
+        action: MetricsAction,
+    },
     /// Stream, search, and inspect application logs
     Logs {
         #[command(subcommand)]
@@ -512,6 +517,74 @@ enum SamplesAction {
         /// Only keep samples whose user identity matches (id, email, or substring)
         #[arg(long)]
         user: Option<String>,
+    },
+}
+
+#[derive(Args)]
+struct MetricAppArgs {
+    /// Application ID (alternative to --app + --environment)
+    #[arg(long)]
+    app_id: Option<String>,
+    /// Application name — used with optional --environment to find the app
+    #[arg(long)]
+    app: Option<String>,
+    /// Environment filter (e.g. "production") — used with --app
+    #[arg(long)]
+    environment: Option<String>,
+    /// Organization slug (uses saved default if omitted)
+    #[arg(long)]
+    org: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum MetricsAction {
+    /// Discover metric keys for an app
+    List {
+        #[command(flatten)]
+        app: MetricAppArgs,
+        /// Filter metric keys by name (substring)
+        #[arg(long)]
+        name: Option<String>,
+        /// Maximum number of metric keys to return
+        #[arg(long)]
+        limit: Option<i64>,
+    },
+    /// Fetch a metric's timeseries over a window
+    Timeseries {
+        #[command(flatten)]
+        app: MetricAppArgs,
+        /// Metric name (see `metrics list`)
+        #[arg(long)]
+        metric: String,
+        /// Field(s) to fetch, e.g. COUNTER, MEAN, P90 (repeatable or comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        field: Vec<String>,
+        /// Tag filter as key=value (repeatable or comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tag: Vec<String>,
+        /// Relative window enum, e.g. R1H or R7D (alternative to --start/--end)
+        #[arg(long, conflicts_with_all = ["start", "end"])]
+        timeframe: Option<String>,
+        /// Window start (ISO-8601); use with --end
+        #[arg(long)]
+        start: Option<String>,
+        /// Window end (ISO-8601); use with --start
+        #[arg(long)]
+        end: Option<String>,
+    },
+    /// Error and performance datapoints over a historical window
+    History {
+        #[command(flatten)]
+        app: MetricAppArgs,
+        /// Window start (ISO-8601)
+        #[arg(long)]
+        start: String,
+        /// Window end (ISO-8601)
+        #[arg(long)]
+        end: String,
+        /// Namespaces to include (comma-separated, e.g. "web,background")
+        #[arg(long, value_delimiter = ',', default_value = "web")]
+        namespaces: Vec<String>,
     },
 }
 
@@ -1030,6 +1103,7 @@ impl_telemetry_command!(Commands {
     Self::Project { action } => action.telemetry_command(),
     Self::Incidents { action } => action.telemetry_command(),
     Self::Samples { action } => action.telemetry_command(),
+    Self::Metrics { action } => action.telemetry_command(),
     Self::Logs { action } => action.telemetry_command(),
     Self::Dashboards { action } => action.telemetry_command(),
     Self::Triggers { action } => action.telemetry_command(),
@@ -1083,6 +1157,12 @@ impl_telemetry_command!(IncidentsAction {
 impl_telemetry_command!(SamplesAction {
     Self::Show { .. } => telemetry::TelemetryCommand::SamplesShow,
     Self::List { .. } => telemetry::TelemetryCommand::SamplesList
+});
+
+impl_telemetry_command!(MetricsAction {
+    Self::List { .. } => telemetry::TelemetryCommand::MetricsList,
+    Self::Timeseries { .. } => telemetry::TelemetryCommand::MetricsTimeseries,
+    Self::History { .. } => telemetry::TelemetryCommand::MetricsHistory
 });
 
 impl_telemetry_command!(LogsAction {
@@ -1552,6 +1632,62 @@ async fn run(cli: Cli) -> Result<()> {
                     limit,
                     namespaces.as_deref(),
                     user.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+        },
+        Commands::Metrics { action } => match action {
+            MetricsAction::List { app, name, limit } => {
+                commands::metrics::list(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    name.as_deref(),
+                    limit,
+                    cli.output,
+                )
+                .await?
+            }
+            MetricsAction::Timeseries {
+                app,
+                metric,
+                field,
+                tag,
+                timeframe,
+                start,
+                end,
+            } => {
+                commands::metrics::timeseries(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &metric,
+                    &field,
+                    &tag,
+                    timeframe.as_deref(),
+                    start.as_deref(),
+                    end.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+            MetricsAction::History {
+                app,
+                start,
+                end,
+                namespaces,
+            } => {
+                commands::metrics::history(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &start,
+                    &end,
+                    &namespaces,
                     cli.output,
                 )
                 .await?
