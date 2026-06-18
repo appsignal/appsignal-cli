@@ -96,6 +96,44 @@ pub fn json_line<T: Serialize>(w: &mut dyn Write, value: &T) -> Result<()> {
     Ok(())
 }
 
+/// Whether `--verbose` was set; gates GraphQL request tracing.
+static VERBOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Record the global `--verbose` flag (called once at startup).
+pub fn set_verbose(on: bool) {
+    VERBOSE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether verbose tracing is enabled.
+pub fn is_verbose() -> bool {
+    VERBOSE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// When `--verbose` is set, dump an outgoing GraphQL request (URL, query, and
+/// variables) to stderr so it never mixes with `--output json` on stdout.
+pub fn trace_graphql(url: &str, query: &str, variables: &serde_json::Value) {
+    if !is_verbose() {
+        return;
+    }
+    trace_graphql_to(&mut io::stderr().lock(), url, query, variables);
+}
+
+/// Render a GraphQL trace to an arbitrary writer (testable core of
+/// [`trace_graphql`]).
+fn trace_graphql_to(w: &mut dyn Write, url: &str, query: &str, variables: &serde_json::Value) {
+    let _ = writeln!(w, "--- GraphQL request → {} ---", url);
+    let _ = writeln!(w, "{}", query.trim());
+    match serde_json::to_string_pretty(variables) {
+        Ok(vars) => {
+            let _ = writeln!(w, "variables: {}", vars);
+        }
+        Err(_) => {
+            let _ = writeln!(w, "variables: <unserializable>");
+        }
+    }
+    let _ = writeln!(w, "--- end GraphQL request ---");
+}
+
 #[derive(Serialize)]
 struct ErrorResponse<'a> {
     error: &'a str,
@@ -231,9 +269,26 @@ macro_rules! status {
 
 #[cfg(test)]
 mod tests {
-    use super::{print_error, render_boxed_lines, sanitize_error_message, Output};
+    use super::{
+        print_error, render_boxed_lines, sanitize_error_message, trace_graphql_to, Output,
+    };
     use crate::error::CliError;
     use anyhow::{anyhow, Context};
+
+    #[test]
+    fn trace_graphql_to_dumps_url_query_and_variables() {
+        let mut buf = Vec::new();
+        trace_graphql_to(
+            &mut buf,
+            "https://appsignal.com/graphql",
+            "  query Ping { __typename }  ",
+            &serde_json::json!({ "appId": "app-1" }),
+        );
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("https://appsignal.com/graphql"));
+        assert!(out.contains("query Ping { __typename }"));
+        assert!(out.contains("\"appId\": \"app-1\""));
+    }
 
     #[test]
     fn render_boxed_lines_wraps_content_in_ascii_box() {

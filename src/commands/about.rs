@@ -135,6 +135,10 @@ fn render_about(
 }
 
 fn auth_summary(config: &Config) -> String {
+    // Headless token auth takes precedence over stored OAuth credentials.
+    if crate::config::api_token().is_some() {
+        return "API token (--api-token / APPSIGNAL_API_TOKEN)".to_string();
+    }
     match config.auth_method() {
         Ok(AuthMethod::OAuth { expires_at, .. }) => {
             if config.oauth_token_expired() {
@@ -148,6 +152,10 @@ fn auth_summary(config: &Config) -> String {
                 "OAuth".to_string()
             }
         }
+        // In practice unreachable: header/env token auth is handled by the
+        // early return above, so `auth_method()` only resolves OAuth here. Kept
+        // for match exhaustiveness and as a defensive fallback.
+        Ok(AuthMethod::Token { .. }) => "API token".to_string(),
         Err(_) => "Not authenticated".to_string(),
     }
 }

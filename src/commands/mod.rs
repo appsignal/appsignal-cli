@@ -4,7 +4,10 @@ pub mod auth;
 pub mod dashboards;
 pub mod incidents;
 pub mod logs;
+pub mod metrics;
+pub mod performance;
 pub mod project;
+pub mod samples;
 pub mod skill;
 pub mod triggers;
 
@@ -41,6 +44,17 @@ pub fn resolve_org(explicit: Option<&str>, config: &Config) -> Result<String> {
 pub async fn authenticated_client(config: &mut Config) -> Result<AppSignalClient> {
     let endpoint = config.endpoint_base_url()?;
     let rest_endpoint = config.rest_endpoint_base_url()?;
+
+    // Headless token auth (additive): a personal API token from `--api-token` or
+    // `APPSIGNAL_API_TOKEN` takes precedence over stored OAuth credentials and
+    // skips the OAuth refresh path entirely.
+    if let Some(token) = crate::config::api_token() {
+        return Ok(AppSignalClient::with_auth_endpoints(
+            crate::config::AuthMethod::Token { token },
+            endpoint.as_deref(),
+            rest_endpoint.as_deref(),
+        ));
+    }
 
     // Auto-refresh expired OAuth tokens
     if config.oauth.is_some() && config.oauth_token_expired() {
