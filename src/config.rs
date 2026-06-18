@@ -17,6 +17,40 @@ pub enum AuthMethod {
         /// Seconds since UNIX epoch when the access token expires.
         expires_at: Option<i64>,
     },
+    /// A personal API token sent as a `?token=` query parameter. Used for
+    /// headless / CI authentication via `--api-token` or `APPSIGNAL_API_TOKEN`.
+    Token { token: String },
+}
+
+/// Environment variable holding a personal API token for headless auth.
+pub const API_TOKEN_ENV: &str = "APPSIGNAL_API_TOKEN";
+
+/// A `--api-token` value recorded once at startup. Takes precedence over the
+/// environment variable. Set via [`set_api_token_override`].
+static API_TOKEN_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Record the `--api-token` flag value. Idempotent; the first value set wins.
+pub fn set_api_token_override(token: String) {
+    let _ = API_TOKEN_OVERRIDE.set(token);
+}
+
+/// Resolve a personal API token from the `--api-token` override or the
+/// `APPSIGNAL_API_TOKEN` environment variable, if either is set and non-empty.
+pub fn api_token() -> Option<String> {
+    resolve_api_token(
+        API_TOKEN_OVERRIDE.get().map(String::as_str),
+        std::env::var(API_TOKEN_ENV).ok().as_deref(),
+    )
+}
+
+/// Pure token resolution: the flag override wins over the environment variable,
+/// and blank values are ignored.
+fn resolve_api_token(override_token: Option<&str>, env_token: Option<&str>) -> Option<String> {
+    override_token
+        .or(env_token)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -611,6 +645,29 @@ mod tests {
         let config = Config::default();
         let err = config.auth_method().unwrap_err();
         assert!(err.to_string().contains("Not authenticated"));
+    }
+
+    #[test]
+    fn resolve_api_token_prefers_override_then_env() {
+        assert_eq!(
+            resolve_api_token(Some("flag-token"), Some("env-token")),
+            Some("flag-token".to_string())
+        );
+        assert_eq!(
+            resolve_api_token(None, Some("env-token")),
+            Some("env-token".to_string())
+        );
+        assert_eq!(resolve_api_token(None, None), None);
+    }
+
+    #[test]
+    fn resolve_api_token_trims_and_ignores_blank() {
+        assert_eq!(
+            resolve_api_token(Some("  spaced  "), None),
+            Some("spaced".to_string())
+        );
+        assert_eq!(resolve_api_token(Some("   "), Some("env")), None);
+        assert_eq!(resolve_api_token(None, Some("")), None);
     }
 
     #[test]
