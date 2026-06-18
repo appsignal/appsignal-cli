@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
-use reqwest::{Client, Method, RequestBuilder};
+use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -14,6 +15,15 @@ const DEFAULT_BASE_URL: &str = "https://appsignal.com";
 const ACCOUNT_RESTRICTED_CODE: &str = "ACCOUNT_RESTRICTED";
 const OAUTH_SCOPE_MESSAGE: &str =
     "Your OAuth token does not have the required scope for this operation.";
+
+/// Maximum number of automatic retries for requests that provably were not
+/// processed (HTTP 429 / connection errors). See `send_with_retry`.
+const MAX_REQUEST_RETRIES: u32 = 3;
+/// Base delay for exponential backoff between retries.
+const RETRY_BACKOFF_BASE: Duration = Duration::from_millis(250);
+/// Upper bound on a single backoff/`Retry-After` wait, so a hostile or
+/// misconfigured header can't stall the CLI indefinitely.
+const RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 
 fn normalize_api_base_url(endpoint: Option<&str>) -> String {
     let endpoint = endpoint.unwrap_or(DEFAULT_BASE_URL);
@@ -41,6 +51,29 @@ fn join_api_url(base_url: &str, path: &str) -> String {
         }
         Err(_) => format!("{}{}", base_url.trim_end_matches('/'), path),
     }
+}
+
+/// Exponential backoff for retry attempt `n` (0-based), capped at
+/// `RETRY_MAX_DELAY`: 250ms, 500ms, 1s, ...
+fn backoff_delay(attempt: u32) -> Duration {
+    RETRY_BACKOFF_BASE
+        .saturating_mul(1u32 << attempt.min(16))
+        .min(RETRY_MAX_DELAY)
+}
+
+/// Parse a `Retry-After` header (delta-seconds form) into a delay, capped at
+/// `RETRY_MAX_DELAY`. The HTTP-date form is not honored (rare for 429s); we
+/// fall back to backoff in that case.
+fn retry_after_delay(resp: &Response) -> Option<Duration> {
+    let seconds: u64 = resp
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    Some(Duration::from_secs(seconds).min(RETRY_MAX_DELAY))
 }
 
 /// Client for the AppSignal API.
@@ -1276,6 +1309,41 @@ impl AppSignalClient {
     ///
     /// Authentication is applied using the stored OAuth access token via an
     /// `Authorization: Bearer <access_token>` header.
+    /// Send a request, retrying only when the server provably did not process
+    /// it: HTTP 429 (rate limited, honoring `Retry-After`) and connection
+    /// establishment errors. 5xx and timeouts are deliberately NOT retried —
+    /// `graphql()` also carries mutations (incident update, notes, triggers),
+    /// and retrying an ambiguous failure could double-apply one the server had
+    /// already processed.
+    async fn send_with_retry(&self, builder: RequestBuilder) -> reqwest::Result<Response> {
+        let mut attempt: u32 = 0;
+        loop {
+            // try_clone() is Some for every request we build (JSON or empty
+            // body); a streaming body would yield None, so fall back to a
+            // single, non-retried attempt.
+            let Some(attempt_req) = builder.try_clone() else {
+                return builder.send().await;
+            };
+
+            let result = attempt_req.send().await;
+            let retry_after = match &result {
+                Ok(resp) if resp.status() == StatusCode::TOO_MANY_REQUESTS => {
+                    Some(retry_after_delay(resp).unwrap_or_else(|| backoff_delay(attempt)))
+                }
+                Err(err) if err.is_connect() => Some(backoff_delay(attempt)),
+                _ => None,
+            };
+
+            match retry_after {
+                Some(delay) if attempt < MAX_REQUEST_RETRIES => {
+                    attempt += 1;
+                    tokio::time::sleep(delay).await;
+                }
+                _ => return result,
+            }
+        }
+    }
+
     async fn graphql<T: serde::de::DeserializeOwned>(
         &self,
         query: &str,
@@ -1289,7 +1357,10 @@ impl AppSignalClient {
         let graphql_url = self.graphql_url();
         let request = self.graphql_request(Method::POST, &graphql_url).json(&body);
 
-        let resp = request.send().await.context(CliError::NetworkUnreachable)?;
+        let resp = self
+            .send_with_retry(request)
+            .await
+            .context(CliError::NetworkUnreachable)?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -1318,8 +1389,7 @@ impl AppSignalClient {
     pub async fn current_org_slug(&self) -> Result<String> {
         let url = join_api_url(&self.base_url, "/oauth/token/info");
         let resp = self
-            .graphql_request(Method::GET, &url)
-            .send()
+            .send_with_retry(self.graphql_request(Method::GET, &url))
             .await
             .context(CliError::NetworkUnreachable)?;
 
@@ -2358,9 +2428,7 @@ impl AppSignalClient {
         });
 
         let resp = self
-            .rest_request(Method::POST, &rest_url)
-            .json(&body)
-            .send()
+            .send_with_retry(self.rest_request(Method::POST, &rest_url).json(&body))
             .await
             .context(CliError::NetworkUnreachable)?;
 
@@ -3051,6 +3119,79 @@ mod tests {
 
         let client = AppSignalClient::new("test-token", Some(&server.uri()));
         client.validate_token().await.unwrap();
+    }
+
+    #[test]
+    fn backoff_delay_grows_exponentially_and_caps() {
+        assert_eq!(backoff_delay(0), Duration::from_millis(250));
+        assert_eq!(backoff_delay(1), Duration::from_millis(500));
+        assert_eq!(backoff_delay(2), Duration::from_secs(1));
+        // Large attempts saturate at the cap without shift overflow.
+        assert_eq!(backoff_delay(40), RETRY_MAX_DELAY);
+    }
+
+    #[tokio::test]
+    async fn graphql_retries_after_rate_limit() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Return 429 on the first hit, then a valid response. `expect(2)`
+        // proves the client retried the rate-limited request.
+        struct RateLimitOnce {
+            hits: AtomicUsize,
+        }
+        impl wiremock::Respond for RateLimitOnce {
+            fn respond(&self, _req: &wiremock::Request) -> ResponseTemplate {
+                if self.hits.fetch_add(1, Ordering::SeqCst) == 0 {
+                    ResponseTemplate::new(429)
+                } else {
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({ "data": { "__typename": "Query" } }))
+                }
+            }
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(RateLimitOnce {
+                hits: AtomicUsize::new(0),
+            })
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::new("test-token", Some(&server.uri()));
+        client.validate_token().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn graphql_does_not_retry_server_errors() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // 500 is ambiguous for mutations, so it must NOT be retried: exactly
+        // one request, surfaced as an error.
+        struct CountedServerError {
+            hits: AtomicUsize,
+        }
+        impl wiremock::Respond for CountedServerError {
+            fn respond(&self, _req: &wiremock::Request) -> ResponseTemplate {
+                self.hits.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(500).set_body_string("boom")
+            }
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(CountedServerError {
+                hits: AtomicUsize::new(0),
+            })
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::new("test-token", Some(&server.uri()));
+        assert!(client.validate_token().await.is_err());
     }
 
     #[tokio::test]
