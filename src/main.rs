@@ -37,6 +37,11 @@ struct Cli {
     )]
     output: Output,
 
+    /// Authenticate with a personal API token instead of OAuth (for headless/CI
+    /// use). Overrides stored OAuth credentials. Also reads APPSIGNAL_API_TOKEN.
+    #[arg(long, global = true)]
+    api_token: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -1332,6 +1337,11 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    // Record a `--api-token` override before any command builds a client.
+    if let Some(token) = cli.api_token.as_deref() {
+        config::set_api_token_override(token.to_string());
+    }
+
     match version_check::check().await {
         version_check::VersionCheck::UpToDate => {}
         version_check::VersionCheck::UpgradeAvailable(latest_version) => {
@@ -2172,6 +2182,7 @@ mod tests {
     #[test]
     fn telemetry_command_maps_nested_app_resource_commands() {
         let cli = Cli {
+            api_token: None,
             output: Output::Human,
             command: Commands::Apps {
                 action: AppsAction::Resources {
@@ -2194,6 +2205,7 @@ mod tests {
     #[test]
     fn telemetry_command_maps_deeply_nested_log_trigger_commands() {
         let cli = Cli {
+            api_token: None,
             output: Output::Json,
             command: Commands::Logs {
                 action: LogsAction::Triggers {

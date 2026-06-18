@@ -1744,6 +1744,10 @@ impl AppSignalClient {
             AuthMethod::OAuth { access_token, .. } => {
                 with_appsignal_headers(self.http.request(method, url)).bearer_auth(access_token)
             }
+            // Personal API tokens authenticate via a `?token=` query parameter.
+            AuthMethod::Token { token } => {
+                with_appsignal_headers(self.http.request(method, url)).query(&[("token", token)])
+            }
         }
     }
 
@@ -1751,6 +1755,9 @@ impl AppSignalClient {
         match &self.auth {
             AuthMethod::OAuth { access_token, .. } => {
                 with_appsignal_headers(self.http.request(method, url).bearer_auth(access_token))
+            }
+            AuthMethod::Token { token } => {
+                with_appsignal_headers(self.http.request(method, url).query(&[("token", token)]))
             }
         }
     }
@@ -3342,7 +3349,7 @@ mod tests {
     use crate::client_headers::{
         CLIENT_NAME, CLIENT_NAME_HEADER, CLIENT_VERSION, CLIENT_VERSION_HEADER, USER_AGENT_VALUE,
     };
-    use wiremock::matchers::{body_string_contains, header, method, path};
+    use wiremock::matchers::{body_string_contains, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     // -- Helper to build test apps --
@@ -3851,6 +3858,32 @@ mod tests {
             .await;
 
         let client = AppSignalClient::new("test-token", Some(&server.uri()));
+        client.validate_token().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_token_auth_sends_token_query_param() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(query_param("token", "personal-api-token"))
+            .and(header("x-appsignal-client", CLIENT_NAME))
+            .and(body_string_contains("__typename"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "__typename": "Query"
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_auth_endpoints(
+            AuthMethod::Token {
+                token: "personal-api-token".to_string(),
+            },
+            Some(&server.uri()),
+            None,
+        );
         client.validate_token().await.unwrap();
     }
 

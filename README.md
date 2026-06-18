@@ -93,6 +93,25 @@ automatically.
 `project init` does not copy your stored global OAuth credentials into
 the local file. Authenticate afterward if you want project-specific credentials.
 
+### Headless / CI authentication
+
+For non-interactive environments where the OAuth browser flow is impractical,
+authenticate with a personal API token instead:
+
+```sh
+# Via environment variable (recommended for CI)
+export APPSIGNAL_API_TOKEN="your-personal-api-token"
+appsignal-cli apps list
+
+# Or per-invocation
+appsignal-cli --api-token "your-personal-api-token" incidents list --app-id <app-id>
+```
+
+A token supplied this way takes precedence over any stored OAuth credentials and
+is sent as a `?token=` query parameter; nothing is written to disk. OAuth remains
+the default when no token is provided. `appsignal-cli auth status` shows which
+method is active.
+
 ## Quick start
 
 ```sh

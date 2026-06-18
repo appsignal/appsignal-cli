@@ -141,14 +141,25 @@ It defaults to `https://appsignal.com/`, and the client derives `/graphql` or
 
 ### Authentication
 
-The CLI authenticates with **OAuth (PKCE)**. Access tokens are sent via an
-`Authorization: Bearer` header and obtained through the OAuth authorization
-code flow with PKCE.
+The CLI authenticates with **OAuth (PKCE)** by default. Access tokens are sent
+via an `Authorization: Bearer` header and obtained through the OAuth
+authorization code flow with PKCE.
 
 The `AppSignalClient` struct stores an `AuthMethod` enum that determines how
 each request is authenticated:
-- GraphQL with `AuthMethod::OAuth { access_token, .. }` → sets `Authorization: Bearer <token>`
-- REST v2 with `AuthMethod::OAuth { access_token, .. }` → sets `Authorization: Bearer <token>`
+- GraphQL/REST with `AuthMethod::OAuth { access_token, .. }` → sets `Authorization: Bearer <token>`
+- GraphQL/REST with `AuthMethod::Token { token }` → appends a `?token=<token>` query parameter
+
+**Headless token auth (additive).** A personal API token supplied via the global
+`--api-token` flag or the `APPSIGNAL_API_TOKEN` environment variable takes
+precedence over stored OAuth credentials and skips the OAuth refresh path
+entirely. The flag value is recorded once at startup in a `OnceLock`
+(`config::set_api_token_override`) so it reaches the single choke point,
+`commands::authenticated_client`, without threading through every command;
+`config::api_token()` resolves flag-then-env (see `config::resolve_api_token`).
+Token auth is never persisted to disk — it is purely per-invocation — and OAuth
+remains the default when no token is set. `auth status` and `about` report which
+method is active.
 
 ### Key schema facts (learned the hard way)
 

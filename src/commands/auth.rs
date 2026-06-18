@@ -141,7 +141,21 @@ pub fn status(format: Output) -> Result<()> {
         crate::status!("Using config: {}", path.display());
     }
 
-    let response = if let Some(ref oauth) = config.oauth {
+    // Headless token auth takes precedence over stored OAuth credentials.
+    let response = if let Some(token) = crate::config::api_token() {
+        let masked = mask_token(&token);
+        AuthStatusResponse {
+            authenticated: true,
+            method: Some("token"),
+            token: Some(masked.clone()),
+            expires_at: None,
+            expired: false,
+            message: format!(
+                "Authenticated via API token (token: {masked}, from --api-token or {}).",
+                crate::config::API_TOKEN_ENV
+            ),
+        }
+    } else if let Some(ref oauth) = config.oauth {
         let masked = mask_token(&oauth.access_token);
         let expiry = oauth.expires_at.map(|ts| {
             chrono::DateTime::from_timestamp(ts, 0)
