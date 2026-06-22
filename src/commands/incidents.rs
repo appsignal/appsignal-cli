@@ -2,6 +2,7 @@ use std::io::{self, Write};
 
 use anyhow::Result;
 use serde::Serialize;
+use tabled::Tabled;
 
 use super::{authenticated_client, resolve_org};
 use crate::api::{resolve_user_ids, Incident};
@@ -22,6 +23,74 @@ struct IncidentResponse<'a> {
 struct IncidentNoteResponse {
     incident_number: i64,
     message: String,
+}
+
+#[derive(Tabled)]
+struct ExceptionIncidentRow {
+    #[tabled(rename = "#")]
+    number: i64,
+    #[tabled(rename = "STATE")]
+    state: String,
+    #[tabled(rename = "SEVERITY")]
+    severity: String,
+    #[tabled(rename = "COUNT")]
+    count: i64,
+    #[tabled(rename = "LAST OCCURRED")]
+    last_occurred: String,
+    #[tabled(rename = "EXCEPTION")]
+    exception: String,
+}
+
+#[derive(Tabled)]
+struct PerformanceIncidentRow {
+    #[tabled(rename = "#")]
+    number: i64,
+    #[tabled(rename = "STATE")]
+    state: String,
+    #[tabled(rename = "SEVERITY")]
+    severity: String,
+    #[tabled(rename = "COUNT")]
+    count: i64,
+    #[tabled(rename = "LAST OCCURRED")]
+    last_occurred: String,
+    #[tabled(rename = "ACTION")]
+    action: String,
+}
+
+#[derive(Tabled)]
+struct IncidentRow {
+    #[tabled(rename = "#")]
+    number: i64,
+    #[tabled(rename = "TYPE")]
+    kind: String,
+    #[tabled(rename = "STATE")]
+    state: String,
+    #[tabled(rename = "SEVERITY")]
+    severity: String,
+    #[tabled(rename = "COUNT")]
+    count: i64,
+    #[tabled(rename = "LAST OCCURRED")]
+    last_occurred: String,
+    #[tabled(rename = "DESCRIPTION")]
+    description: String,
+}
+
+#[derive(Tabled)]
+struct AnomalyIncidentRow {
+    #[tabled(rename = "#")]
+    number: i64,
+    #[tabled(rename = "STATE")]
+    state: String,
+    #[tabled(rename = "SEVERITY")]
+    severity: String,
+    #[tabled(rename = "ALERT")]
+    alert: String,
+    #[tabled(rename = "COUNT")]
+    count: i64,
+    #[tabled(rename = "LAST OCCURRED")]
+    last_occurred: String,
+    #[tabled(rename = "TRIGGER")]
+    trigger: String,
 }
 
 /// List incidents for an application (all types).
@@ -395,30 +464,23 @@ fn render_exception_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Resu
         return writeln!(w, "No exception incidents found.");
     }
 
-    writeln!(
-        w,
-        "{:<8} {:<10} {:<10} {:<8} {:<22} EXCEPTION",
-        "#", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
-    )?;
-    writeln!(w, "{}", "-".repeat(100))?;
-
-    for incident in incidents {
+    let rows = incidents.iter().map(|incident| {
         let exception = if let Incident::ExceptionIncident { exception_name, .. } = incident {
             exception_name.as_deref().unwrap_or("-")
         } else {
             "-"
         };
-        writeln!(
-            w,
-            "{:<8} {:<10} {:<10} {:<8} {:<22} {}",
-            incident.number(),
-            incident.state(),
-            incident.severity(),
-            incident.count(),
-            incident.last_occurred_at(),
-            truncate(exception, 50),
-        )?;
-    }
+        ExceptionIncidentRow {
+            number: incident.number(),
+            state: incident.state().to_string(),
+            severity: incident.severity().to_string(),
+            count: incident.count(),
+            last_occurred: incident.last_occurred_at().to_string(),
+            exception: truncate(exception, 50),
+        }
+    });
+
+    output::table(w, rows)?;
 
     writeln!(w, "{} exception incident(s) found.", incidents.len())
 }
@@ -428,14 +490,7 @@ fn render_performance_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Re
         return writeln!(w, "No performance incidents found.");
     }
 
-    writeln!(
-        w,
-        "{:<8} {:<10} {:<10} {:<8} {:<22} ACTION",
-        "#", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
-    )?;
-    writeln!(w, "{}", "-".repeat(100))?;
-
-    for incident in incidents {
+    let rows = incidents.iter().map(|incident| {
         let action = if let Incident::PerformanceIncident { action_names, .. } = incident {
             action_names
                 .as_ref()
@@ -445,17 +500,17 @@ fn render_performance_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Re
         } else {
             "-"
         };
-        writeln!(
-            w,
-            "{:<8} {:<10} {:<10} {:<8} {:<22} {}",
-            incident.number(),
-            incident.state(),
-            incident.severity(),
-            incident.count(),
-            incident.last_occurred_at(),
-            truncate(action, 50),
-        )?;
-    }
+        PerformanceIncidentRow {
+            number: incident.number(),
+            state: incident.state().to_string(),
+            severity: incident.severity().to_string(),
+            count: incident.count(),
+            last_occurred: incident.last_occurred_at().to_string(),
+            action: truncate(action, 50),
+        }
+    });
+
+    output::table(w, rows)?;
 
     writeln!(w, "{} performance incident(s) found.", incidents.len())
 }
@@ -465,27 +520,17 @@ fn render_incident_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Resul
         return writeln!(w, "No incidents found.");
     }
 
-    writeln!(
-        w,
-        "{:<8} {:<12} {:<10} {:<10} {:<8} {:<22} DESCRIPTION",
-        "#", "TYPE", "STATE", "SEVERITY", "COUNT", "LAST OCCURRED"
-    )?;
-    writeln!(w, "{}", "-".repeat(100))?;
+    let rows = incidents.iter().map(|incident| IncidentRow {
+        number: incident.number(),
+        kind: incident.kind().to_string(),
+        state: incident.state().to_string(),
+        severity: incident.severity().to_string(),
+        count: incident.count(),
+        last_occurred: incident.last_occurred_at().to_string(),
+        description: truncate(incident.description(), 40),
+    });
 
-    for incident in incidents {
-        let desc = truncate(incident.description(), 40);
-        writeln!(
-            w,
-            "{:<8} {:<12} {:<10} {:<10} {:<8} {:<22} {}",
-            incident.number(),
-            incident.kind(),
-            incident.state(),
-            incident.severity(),
-            incident.count(),
-            incident.last_occurred_at(),
-            desc,
-        )?;
-    }
+    output::table(w, rows)?;
 
     writeln!(w, "{} incident(s) found.", incidents.len())
 }
@@ -495,14 +540,7 @@ fn render_anomaly_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Result
         return writeln!(w, "No anomaly incidents found.");
     }
 
-    writeln!(
-        w,
-        "{:<8} {:<10} {:<10} {:<10} {:<8} {:<22} TRIGGER",
-        "#", "STATE", "SEVERITY", "ALERT", "COUNT", "LAST OCCURRED"
-    )?;
-    writeln!(w, "{}", "-".repeat(100))?;
-
-    for incident in incidents {
+    let rows = incidents.iter().map(|incident| {
         let trigger_name = if let Incident::AnomalyIncident { trigger, .. } = incident {
             trigger.as_ref().map(|t| t.name.as_str()).unwrap_or("-")
         } else {
@@ -513,18 +551,18 @@ fn render_anomaly_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Result
         } else {
             "-"
         };
-        writeln!(
-            w,
-            "{:<8} {:<10} {:<10} {:<10} {:<8} {:<22} {}",
-            incident.number(),
-            incident.state(),
-            incident.severity(),
-            alert_state,
-            incident.count(),
-            incident.last_occurred_at(),
-            truncate(trigger_name, 40),
-        )?;
-    }
+        AnomalyIncidentRow {
+            number: incident.number(),
+            state: incident.state().to_string(),
+            severity: incident.severity().to_string(),
+            alert: alert_state.to_string(),
+            count: incident.count(),
+            last_occurred: incident.last_occurred_at().to_string(),
+            trigger: truncate(trigger_name, 40),
+        }
+    });
+
+    output::table(w, rows)?;
 
     writeln!(w, "{} anomaly incident(s) found.", incidents.len())
 }
@@ -676,5 +714,31 @@ mod tests {
     #[test]
     fn test_truncate_one_over() {
         assert_eq!(truncate("abcdef", 5), "ab...");
+    }
+
+    #[test]
+    fn render_incident_table_uses_shared_table_format() {
+        let incidents = vec![Incident::LogIncident {
+            id: "log-1".to_string(),
+            number: 42,
+            state: Some("OPEN".to_string()),
+            severity: None,
+            description: Some("Log matched".to_string()),
+            count: 3,
+            created_at: None,
+            last_occurred_at: Some("2026-06-22T10:00:00Z".to_string()),
+            updated_at: None,
+            assignees: None,
+        }];
+        let mut buf = Vec::new();
+
+        render_incident_table(&mut buf, &incidents).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        assert!(output.contains("+"));
+        assert!(output.contains("| # "));
+        assert!(output.contains("| TYPE"));
+        assert!(output.contains("42"));
+        assert!(output.contains("1 incident(s) found."));
     }
 }

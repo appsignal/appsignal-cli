@@ -29,6 +29,12 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents show --number <N> [app options]` | Show details for a single incident |
 | `appsignal-cli incidents update --number <N[,N...]> [flags]` | Update state, severity, assignees, or description; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
+| `appsignal-cli samples incident --number <N> [app options]` | List performance samples/traces for a performance incident |
+| `appsignal-cli samples list --namespace <ns> --action <name> [app options]` | List performance samples/traces for a known namespace/action |
+| `appsignal-cli samples errors --digest <digest> [app options]` | List error traces for an exception digest |
+| `appsignal-cli samples show --namespace <ns> --action <name> --trace-id <id> [app options]` | Show a sample/trace span tree or span details |
+| `appsignal-cli samples show-error --digest <digest> --trace-id <id> [app options]` | Show an error trace span tree or span details |
+| `appsignal-cli samples show-incident --number <N> --trace-id <id> [app options]` | Show a trace from a performance or exception incident without passing namespace/action/digest |
 | `appsignal-cli logs tail [filters]` | Stream log lines in real time |
 | `appsignal-cli logs search [filters] [--page-all]` | Search log lines once |
 | `appsignal-cli logs views [app options]` | List saved log views |
@@ -96,6 +102,21 @@ The same incident number still works if the URL ends with extra page sections su
 - `/lines`
 - `/traces/...`
 
+Performance sample/trace URLs:
+
+| URL pattern | CLI mapping |
+|---|---|
+| `.../sites/<site_id>/performance/incidents/<number>/samples` | `samples incident --app-id <site_id> --number <number>` |
+| `.../sites/<site_id>/performance/incidents/<number>/samples/<trace_id>` | `samples incident --app-id <site_id> --number <number>` first, then `samples show --app-id <site_id> --namespace <ns> --action <action> --trace-id <trace_id>` |
+| `.../sites/<site_id>/performance/traces/<namespace>/<action_name>/traces` | `samples list --app-id <site_id> --namespace <namespace> --action <action_name>` |
+| `.../sites/<site_id>/performance/traces/<namespace>/<action_name>/traces/<trace_id>` | `samples show --app-id <site_id> --namespace <namespace> --action <action_name> --trace-id <trace_id>` |
+
+Important namespace note:
+
+- `--environment` is the app environment used for app lookup, such as `production` or `development`.
+- `--namespace` is the AppSignal action namespace, usually `web`, `background`, `rake`, `runner`, or `graphql`.
+- If unsure, prefer `samples incident --number <N>` because it reads the correct namespace and action names from the performance incident.
+
 Logs URLs:
 
 | URL pattern | CLI mapping |
@@ -151,6 +172,96 @@ Useful `incidents update` flags:
 | `--assign <id,id>` | Assign users |
 | `--assign-me` | Assign the incident to the current CLI user |
 | `--description "..."` | Update description |
+
+## Performance Samples And Traces
+
+Use `samples` or `traces`; they are aliases. Prefer `samples` when following the UI terminology for sample-based performance or exception incidents. Prefer `traces` when thinking in OpenTelemetry terms. Both command names call the same REST tracing API.
+
+Recommended workflow from an incident:
+
+```bash
+appsignal-cli --output json samples incident --app-id <site_id> --number <incident_number>
+```
+
+This fetches the incident and lists matching traces. For performance incidents it reads the namespace and action names. For exception incidents it reads the incident digests and fetches error traces. This is the safest option because namespace/action and digest values must match exactly.
+
+If the incident has multiple actions, the command fetches samples for all actions. Use `--action` to narrow it:
+
+```bash
+appsignal-cli --output json samples incident --app-id <site_id> --number <incident_number> --action "UsersController#show"
+```
+
+Direct namespace/action workflow:
+
+```bash
+appsignal-cli --output json samples list --app-id <site_id> --namespace web --action "UsersController#show"
+```
+
+Use direct `samples list` when you already know the exact namespace/action, when investigating a slow action before starting from an incident, or when querying OpenTelemetry-style action traces.
+
+Direct exception digest workflow:
+
+```bash
+appsignal-cli --output json samples errors --app-id <site_id> --digest <digest>
+```
+
+Fetch all pages instead of the first page of results:
+
+```bash
+appsignal-cli --output json samples incident --app-id <site_id> --number <incident_number> --page-all
+```
+
+Sample/trace pagination is cursor-based by trace time, not offset-based. Without `--page-all`, the CLI fetches a single page controlled by `--limit` and capped at 100. With `--page-all`, it walks pages newest-first using the last trace timestamp as the next cursor and deduplicates boundary traces.
+
+Inspect a returned sample/trace:
+
+```bash
+appsignal-cli --output json samples show-incident --app-id <site_id> --number <incident_number> --trace-id <trace_id>
+```
+
+This is the preferred follow-up after `samples incident` because it uses the incident number to resolve performance namespace/action values or exception digests internally.
+
+Directly inspect a performance sample/trace when namespace and action are already known:
+
+```bash
+appsignal-cli --output json samples show --app-id <site_id> --namespace web --action "UsersController#show" --trace-id <trace_id>
+```
+
+Inspect a returned error trace:
+
+```bash
+appsignal-cli --output json samples show-error --app-id <site_id> --digest <digest> --trace-id <trace_id>
+```
+
+Inspect a specific span inside a trace:
+
+```bash
+appsignal-cli --output json samples show --app-id <site_id> --namespace web --action "UsersController#show" --trace-id <trace_id> --span-id <span_id>
+```
+
+Useful sample/trace flags:
+
+| Flag | Description |
+|---|---|
+| `--number <N>` | Performance or exception incident number for `samples incident` |
+| `--digest <digest>` | Exception digest for direct error trace lookup |
+| `--namespace <ns>` | Action namespace for direct list/show, such as `web` or `background` |
+| `--action <name>` | Action name; required for direct list/show, optional filter for incident lookup |
+| `--trace-id <id>` | Trace/sample ID returned by `samples list` or `samples incident` |
+| `--span-id <id>` | Span ID to inspect inside a trace |
+| `--start <ISO8601>` | Start time; defaults to 24 hours ago |
+| `--end <ISO8601>` | End time; defaults to now |
+| `--min-duration-ms <N>` | Only list samples/traces slower than this duration |
+| `--limit <N>` | Maximum samples/traces to return, capped at 100 |
+| `--page-all` | Automatically paginate to fetch all samples/traces; ignores `--limit` |
+| `--include-sensitive` | Include HTTP headers, request parameters, session data, and function parameters in span detail output |
+
+Troubleshooting sample lookup:
+
+- If `samples list` returns no traces, check whether `--namespace` is an AppSignal namespace (`web`, `background`, etc.) rather than an app environment (`production`, `development`).
+- Use `apps resources namespaces --app-id <site_id>` to list available namespaces.
+- Use `incidents list-performance --app-id <site_id> --query "ActionName"` to find the performance incident and exact namespace/action.
+- Prefer `samples incident --number <N>` when starting from a performance or exception incident URL or incident number.
 
 ## Output
 

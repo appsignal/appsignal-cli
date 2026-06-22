@@ -286,6 +286,7 @@ pub enum Incident {
         namespace: Option<String>,
         #[serde(rename = "firstBacktraceLine")]
         first_backtrace_line: Option<String>,
+        digests: Option<Vec<String>>,
         assignees: Option<Vec<User>>,
     },
     PerformanceIncident {
@@ -726,6 +727,51 @@ pub struct LogView {
     pub source_ids: Option<Vec<String>>,
     pub severities: Option<Vec<String>>,
     pub columns: Option<Vec<String>>,
+}
+
+// -- Trace types --
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TraceSummary {
+    pub span_id: Option<String>,
+    pub trace_id: String,
+    pub site_id: Option<String>,
+    pub namespace: Option<String>,
+    pub revision: Option<String>,
+    pub action_name: Option<String>,
+    pub time: Option<String>,
+    pub duration: Option<f64>,
+    #[serde(default)]
+    pub tags: serde_json::Map<String, Value>,
+    pub has_npo: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct TraceSpan {
+    pub span_id: String,
+    pub trace_id: String,
+    pub parent_span_id: Option<String>,
+    pub span_name: Option<String>,
+    pub span_kind: Option<String>,
+    pub duration: Option<f64>,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
+    pub status_code: Option<String>,
+    pub status_message: Option<String>,
+    pub service_name: Option<String>,
+    pub namespace: Option<String>,
+    pub revision: Option<String>,
+    pub action_name: Option<String>,
+    #[serde(default)]
+    pub span_attributes: serde_json::Map<String, Value>,
+    #[serde(default, rename = "events.name")]
+    pub event_names: Vec<String>,
+    #[serde(default, rename = "events.timestamp")]
+    pub event_timestamps: Vec<String>,
+    #[serde(default, rename = "events.attributes")]
+    pub event_attributes: Vec<serde_json::Map<String, Value>>,
+    #[serde(default)]
+    pub resource_attributes: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -1503,7 +1549,7 @@ impl AppSignalClient {
                         ... on ExceptionIncident {
                             id number state severity description count
                             createdAt lastOccurredAt updatedAt
-                            exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                            exceptionName exceptionMessage actionNames namespace firstBacktraceLine digests
                             assignees { id name }
                         }
                         ... on PerformanceIncident {
@@ -1575,7 +1621,7 @@ impl AppSignalClient {
                         __typename
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
-                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine digests
                             assignees { id name }
                     }
                 }
@@ -1747,7 +1793,7 @@ impl AppSignalClient {
                         ... on ExceptionIncident {
                             id number state severity description count
                             createdAt lastOccurredAt updatedAt
-                            exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                            exceptionName exceptionMessage actionNames namespace firstBacktraceLine digests
                             assignees { id name }
                         }
                         ... on PerformanceIncident {
@@ -1803,7 +1849,7 @@ impl AppSignalClient {
                     ... on ExceptionIncident {
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
-                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine digests
                             assignees { id name }
                     }
                     ... on PerformanceIncident {
@@ -1862,7 +1908,7 @@ impl AppSignalClient {
                     ... on ExceptionIncident {
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
-                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine digests
                         assignees { id name }
                     }
                     ... on PerformanceIncident {
@@ -1916,7 +1962,7 @@ impl AppSignalClient {
                     ... on ExceptionIncident {
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
-                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine
+                        exceptionName exceptionMessage actionNames namespace firstBacktraceLine digests
                             assignees { id name }
                     }
                     ... on PerformanceIncident {
@@ -2418,6 +2464,163 @@ impl AppSignalClient {
             .collect()
     }
 
+    // -- Trace methods --
+
+    /// Query performance trace summaries via the REST `POST /api/v2/tracing/traces/performance` endpoint.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_performance_traces(
+        &self,
+        app_id: &str,
+        namespace: &str,
+        action_name: &str,
+        start: &str,
+        end: &str,
+        min_duration_ms: Option<f64>,
+        limit: i64,
+        order: &str,
+        cursor_time: Option<&str>,
+    ) -> Result<Vec<TraceSummary>> {
+        let rest_url = self.rest_url("/api/v2/tracing/traces/performance");
+        let mut body = json!({
+            "site_ids": [app_id],
+            "namespace": namespace,
+            "action_name": action_name,
+            "from": start,
+            "to": end,
+            "pagination": {
+                "per_page": limit.clamp(1, 100),
+                "order": order.to_uppercase(),
+                "cursor": { "time": cursor_time }
+            }
+        });
+
+        if let Some(duration_ms) = min_duration_ms {
+            body["duration_ms"] = json!(duration_ms);
+        }
+
+        let resp = self
+            .rest_request(Method::POST, &rest_url)
+            .json(&body)
+            .send()
+            .await
+            .context(CliError::NetworkUnreachable)?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!(CliError::from_http(status, &text));
+        }
+
+        resp.json().await.context(CliError::UnexpectedResponse)
+    }
+
+    /// Fetch spans for a single performance trace via the REST `POST /api/v2/tracing/trace/performance` endpoint.
+    pub async fn get_performance_trace(
+        &self,
+        app_id: &str,
+        namespace: &str,
+        action_name: &str,
+        trace_id: &str,
+        start: &str,
+        end: &str,
+    ) -> Result<Vec<TraceSpan>> {
+        let rest_url = self.rest_url("/api/v2/tracing/trace/performance");
+        let body = json!({
+            "site_ids": [app_id],
+            "namespace": namespace,
+            "action_name": action_name,
+            "trace_id": trace_id,
+            "from": start,
+            "to": end,
+            "pagination": {
+                "per_page": 100,
+                "order": "DESC",
+                "cursor": { "time": null }
+            }
+        });
+
+        let resp = self
+            .rest_request(Method::POST, &rest_url)
+            .json(&body)
+            .send()
+            .await
+            .context(CliError::NetworkUnreachable)?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!(CliError::from_http(status, &text));
+        }
+
+        resp.json().await.context(CliError::UnexpectedResponse)
+    }
+
+    /// Query error trace summaries via the REST `POST /api/v2/tracing/traces/errors` endpoint.
+    pub async fn list_error_traces(
+        &self,
+        app_id: &str,
+        digest: &str,
+        limit: i64,
+        order: &str,
+        cursor_time: Option<&str>,
+    ) -> Result<Vec<TraceSummary>> {
+        let rest_url = self.rest_url("/api/v2/tracing/traces/errors");
+        let body = json!({
+            "site_ids": [app_id],
+            "digests": [digest],
+            "pagination": {
+                "per_page": limit.clamp(1, 100),
+                "order": order.to_uppercase(),
+                "cursor": { "time": cursor_time }
+            }
+        });
+
+        let resp = self
+            .rest_request(Method::POST, &rest_url)
+            .json(&body)
+            .send()
+            .await
+            .context(CliError::NetworkUnreachable)?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!(CliError::from_http(status, &text));
+        }
+
+        resp.json().await.context(CliError::UnexpectedResponse)
+    }
+
+    /// Fetch spans for a single error trace via the REST `POST /api/v2/tracing/trace/error` endpoint.
+    pub async fn get_error_trace(
+        &self,
+        app_id: &str,
+        digest: &str,
+        trace_id: &str,
+    ) -> Result<Vec<TraceSpan>> {
+        let rest_url = self.rest_url("/api/v2/tracing/trace/error");
+        let body = json!({
+            "site_ids": [app_id],
+            "trace_id": trace_id,
+            "digests": [digest]
+        });
+
+        let resp = self
+            .rest_request(Method::POST, &rest_url)
+            .json(&body)
+            .send()
+            .await
+            .context(CliError::NetworkUnreachable)?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!(CliError::from_http(status, &text));
+        }
+
+        resp.json().await.context(CliError::UnexpectedResponse)
+    }
+
     /// List all log views (saved filter presets) for an app.
     pub async fn list_log_views(&self, app_id: &str) -> Result<Vec<LogView>> {
         let gql = r#"
@@ -2645,6 +2848,7 @@ mod tests {
             action_names: Some(vec!["UsersController#show".to_string()]),
             namespace: Some("web".to_string()),
             first_backtrace_line: Some("app/models/user.rb:42".to_string()),
+            digests: Some(vec!["digest-1".to_string()]),
             assignees: Some(vec![User {
                 id: "u1".to_string(),
                 name: Some("Alice".to_string()),
@@ -4046,6 +4250,183 @@ mod tests {
 
         assert_eq!(trigger.id, "trig-9");
         assert_eq!(trigger.kind, "Advanced");
+    }
+
+    #[tokio::test]
+    async fn test_list_performance_traces_uses_rest_endpoint() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/tracing/traces/performance"))
+            .and(body_string_contains("\"site_ids\":[\"app1\"]"))
+            .and(body_string_contains("\"namespace\":\"web\""))
+            .and(body_string_contains(
+                "\"action_name\":\"PostsController#index\"",
+            ))
+            .and(body_string_contains("\"duration_ms\":300"))
+            .and(body_string_contains("\"order\":\"ASC\""))
+            .and(body_string_contains("\"time\":\"2025-07-23T08:30:00Z\""))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {
+                    "span_id": "span-root",
+                    "trace_id": "trace-1",
+                    "site_id": "app1",
+                    "namespace": "web",
+                    "revision": null,
+                    "action_name": "PostsController#index",
+                    "time": "2025-07-23T08:45:00Z",
+                    "duration": 515.58,
+                    "tags": { "hostname": "web-1" },
+                    "has_npo": true
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let traces = client
+            .list_performance_traces(
+                "app1",
+                "web",
+                "PostsController#index",
+                "2025-07-23T08:00:00Z",
+                "2025-07-23T09:00:00Z",
+                Some(300.0),
+                25,
+                "ASC",
+                Some("2025-07-23T08:30:00Z"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].trace_id, "trace-1");
+        assert_eq!(traces[0].duration, Some(515.58));
+    }
+
+    #[tokio::test]
+    async fn test_get_performance_trace_uses_rest_endpoint() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/tracing/trace/performance"))
+            .and(body_string_contains("\"trace_id\":\"trace-1\""))
+            .and(body_string_contains("\"per_page\":100"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {
+                    "span_id": "span-root",
+                    "trace_id": "trace-1",
+                    "parent_span_id": "",
+                    "span_name": "PostsController#index",
+                    "span_kind": "server",
+                    "duration": 515.58,
+                    "start_time": "2025-07-23T08:45:00.000Z",
+                    "end_time": "2025-07-23T08:45:00.515Z",
+                    "status_code": "OK",
+                    "status_message": "",
+                    "namespace": "web",
+                    "action_name": "PostsController#index",
+                    "span_attributes": { "appsignal.category": "request" },
+                    "events.name": [],
+                    "events.timestamp": [],
+                    "events.attributes": [],
+                    "resource_attributes": {}
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let spans = client
+            .get_performance_trace(
+                "app1",
+                "web",
+                "PostsController#index",
+                "trace-1",
+                "2025-07-23T08:00:00Z",
+                "2025-07-23T09:00:00Z",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].span_id, "span-root");
+        assert_eq!(spans[0].event_names.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_error_traces_uses_rest_endpoint() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/tracing/traces/errors"))
+            .and(body_string_contains("\"site_ids\":[\"app1\"]"))
+            .and(body_string_contains("\"digests\":[\"digest-1\"]"))
+            .and(body_string_contains("\"per_page\":25"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {
+                    "span_id": "span-root",
+                    "trace_id": "trace-1",
+                    "site_id": "app1",
+                    "namespace": "web",
+                    "revision": null,
+                    "action_name": "PostsController#index",
+                    "time": "2025-07-23T08:45:00Z",
+                    "duration": 16.0,
+                    "tags": {},
+                    "has_npo": false
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let traces = client
+            .list_error_traces("app1", "digest-1", 25, "DESC", None)
+            .await
+            .unwrap();
+
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].trace_id, "trace-1");
+    }
+
+    #[tokio::test]
+    async fn test_get_error_trace_uses_rest_endpoint() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/tracing/trace/error"))
+            .and(body_string_contains("\"trace_id\":\"trace-1\""))
+            .and(body_string_contains("\"digests\":[\"digest-1\"]"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {
+                    "span_id": "span-root",
+                    "trace_id": "trace-1",
+                    "parent_span_id": "",
+                    "span_name": "PostsController#index",
+                    "span_kind": "server",
+                    "duration": 16.0,
+                    "start_time": "2025-07-23T08:45:00.000Z",
+                    "end_time": "2025-07-23T08:45:00.016Z",
+                    "status_code": "error",
+                    "status_message": "",
+                    "namespace": "web",
+                    "action_name": "PostsController#index",
+                    "span_attributes": {},
+                    "events.name": ["exception"],
+                    "events.timestamp": ["2025-07-23T08:45:00.016Z"],
+                    "events.attributes": [{ "exception.type": "RuntimeError" }],
+                    "resource_attributes": {}
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let spans = client
+            .get_error_trace("app1", "digest-1", "trace-1")
+            .await
+            .unwrap();
+
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].status_code.as_deref(), Some("error"));
+        assert_eq!(spans[0].event_names, vec!["exception"]);
     }
 
     #[tokio::test]

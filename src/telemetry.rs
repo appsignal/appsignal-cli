@@ -95,6 +95,18 @@ pub enum TelemetryCommand {
     LogsTriggersUpdate,
     #[serde(rename = "logs.triggers.delete")]
     LogsTriggersDelete,
+    #[serde(rename = "traces.list")]
+    TracesList,
+    #[serde(rename = "traces.incident")]
+    TracesIncident,
+    #[serde(rename = "traces.errors")]
+    TracesErrors,
+    #[serde(rename = "traces.show")]
+    TracesShow,
+    #[serde(rename = "traces.show-error")]
+    TracesShowError,
+    #[serde(rename = "traces.show-incident")]
+    TracesShowIncident,
     #[serde(rename = "triggers.list")]
     TriggersList,
     #[serde(rename = "triggers.create")]

@@ -101,7 +101,7 @@ Relevant REST endpoints:
 - `POST /api/v2/tracing/traces/errors`
 - `POST /api/v2/tracing/trace/error`
 
-These could support new CLI commands later, but they do not directly replace the current `incidents list-performance` behavior.
+The CLI now uses the performance and error trace endpoints for `samples` / `traces` commands. These endpoints do not directly replace the current `incidents list-performance` behavior.
 
 ### Deploy stats exist, but not deploy marker listing
 
