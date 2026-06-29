@@ -491,9 +491,9 @@ fn render_log_views(w: &mut dyn Write, views: &[LogView]) -> io::Result<()> {
         writeln!(
             w,
             "{:<28} {:<40} {:<20} {}",
-            truncate(&v.id, 26),
-            truncate(&v.name, 38),
-            truncate(query_str, 18),
+            output::truncate(&v.id, 26),
+            output::truncate(&v.name, 38),
+            output::truncate(query_str, 18),
             sevs,
         )?;
     }
@@ -513,22 +513,14 @@ fn render_log_sources(w: &mut dyn Write, sources: &[crate::api::LogSource]) -> i
         writeln!(
             w,
             "{:<28} {:<30} {:<12} {}",
-            truncate(&s.id, 26),
-            truncate(&s.name, 28),
+            output::truncate(&s.id, 26),
+            output::truncate(&s.name, 28),
             s.kind.as_deref().unwrap_or("-"),
             s.fmt.as_deref().unwrap_or("-"),
         )?;
     }
 
     writeln!(w, "{} log source(s) found.", sources.len())
-}
-
-pub(crate) fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max.saturating_sub(3)])
-    }
 }
 
 #[cfg(test)]
@@ -539,16 +531,6 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, Request, ResponseTemplate};
-
-    #[test]
-    fn test_truncate_short() {
-        assert_eq!(truncate("hello", 10), "hello");
-    }
-
-    #[test]
-    fn test_truncate_long() {
-        assert_eq!(truncate("hello world", 8), "hello...");
-    }
 
     #[test]
     fn test_print_log_line_basic() {

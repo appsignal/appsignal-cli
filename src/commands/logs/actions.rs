@@ -12,13 +12,12 @@ use anyhow::Result;
 use serde::Serialize;
 
 use super::super::{authenticated_client, resolve_org};
-use super::truncate;
 use crate::api::{
     AppSignalClient, LogLineAction, LogLineActionKind, LogLineActionTriggerInput,
     LogLineMetricInput, LogSource, Patch,
 };
 use crate::config::Config;
-use crate::output::{self, Output};
+use crate::output::{self, truncate, Output};
 
 // -- CLI input bundles --
 

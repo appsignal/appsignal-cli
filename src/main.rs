@@ -9,7 +9,7 @@ mod telemetry;
 mod version_check;
 
 use anyhow::{bail, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand};
 
 use crate::api::AppResourceSection;
 use crate::commands::skill::InstallTarget;
@@ -66,6 +66,12 @@ enum Commands {
     Logs {
         #[command(subcommand)]
         action: LogsAction,
+    },
+    /// Fetch and inspect performance samples/traces
+    #[command(visible_aliases = ["samples", "sample"])]
+    Traces {
+        #[command(subcommand)]
+        action: TracesAction,
     },
     /// Create and update dashboards
     Dashboards {
@@ -179,6 +185,7 @@ enum AppsAction {
 }
 
 #[derive(Args)]
+#[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
 struct AppResourceArgs {
     /// Application ID (alternative to --app + --environment)
     #[arg(long)]
@@ -232,6 +239,7 @@ enum ProjectAction {
 #[derive(Subcommand)]
 enum IncidentsAction {
     /// List incidents for an application (all types)
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     List {
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
@@ -265,6 +273,7 @@ enum IncidentsAction {
         action: Option<String>,
     },
     /// List exception incidents (with text search support)
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     ListExceptions {
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
@@ -301,6 +310,7 @@ enum IncidentsAction {
         query: Option<String>,
     },
     /// List performance incidents (with text search support)
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     ListPerformance {
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
@@ -337,6 +347,7 @@ enum IncidentsAction {
         query: Option<String>,
     },
     /// List anomaly detection incidents
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     ListAnomalies {
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
@@ -364,6 +375,7 @@ enum IncidentsAction {
         order: Option<String>,
     },
     /// Show details for a specific incident by number
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     Show {
         /// Incident number
         #[arg(long)]
@@ -382,6 +394,7 @@ enum IncidentsAction {
         org: Option<String>,
     },
     /// Update an incident (state, severity, assignees)
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     Update {
         /// Incident number. Repeat or pass a comma-separated list for bulk state changes.
         #[arg(long, value_delimiter = ',', num_args = 1.., required = true)]
@@ -418,6 +431,7 @@ enum IncidentsAction {
         description: Option<String>,
     },
     /// Add a note to an incident
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     AddNote {
         /// Incident number
         #[arg(long)]
@@ -443,6 +457,7 @@ enum IncidentsAction {
 #[derive(Subcommand)]
 enum LogsAction {
     /// Tail (stream) log lines in real time, with optional filters
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     Tail {
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
@@ -472,6 +487,7 @@ enum LogsAction {
         view: Option<String>,
     },
     /// Search log lines (one-shot query). Use --output json or --format json for machine-readable output.
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     Search {
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
@@ -516,6 +532,7 @@ enum LogsAction {
         page_all: bool,
     },
     /// List saved log views (filter presets) for an app
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     Views {
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
@@ -531,6 +548,7 @@ enum LogsAction {
         org: Option<String>,
     },
     /// List log sources for an app
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     Sources {
         /// Application ID (alternative to --app + --environment)
         #[arg(long)]
@@ -564,6 +582,160 @@ enum LogsAction {
 }
 
 #[derive(Args)]
+#[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
+struct TraceAppArgs {
+    /// Application ID (alternative to --app + --environment)
+    #[arg(long)]
+    app_id: Option<String>,
+    /// Application name — used with optional --environment to find the app
+    #[arg(long)]
+    app: Option<String>,
+    /// Environment filter (e.g. "production") — used with --app
+    #[arg(long)]
+    environment: Option<String>,
+    /// Organization slug (uses saved default if omitted)
+    #[arg(long)]
+    org: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum TracesAction {
+    /// List performance samples/traces for an action
+    List {
+        #[command(flatten)]
+        app: TraceAppArgs,
+        /// Namespace to search in (e.g. web, background, graphql)
+        #[arg(long)]
+        namespace: String,
+        /// Action name to fetch traces for (e.g. UsersController#show)
+        #[arg(long = "action")]
+        action_name: String,
+        /// Start time (ISO 8601, defaults to 24 hours ago)
+        #[arg(long)]
+        start: Option<String>,
+        /// End time (ISO 8601, defaults to now)
+        #[arg(long)]
+        end: Option<String>,
+        /// Minimum trace duration in milliseconds
+        #[arg(long)]
+        min_duration_ms: Option<f64>,
+        /// Maximum number of samples/traces to return (1-100, default 25)
+        #[arg(long, default_value = "25")]
+        limit: Option<i64>,
+        /// Automatically paginate to fetch all samples/traces; ignores --limit
+        #[arg(long)]
+        page_all: bool,
+    },
+    /// List performance samples/traces for an incident
+    Incident {
+        #[command(flatten)]
+        app: TraceAppArgs,
+        /// Performance incident number
+        #[arg(long)]
+        number: i64,
+        /// Restrict lookup to one action if the incident has multiple actions
+        #[arg(long = "action")]
+        action_name: Option<String>,
+        /// Start time (ISO 8601, defaults to 24 hours ago)
+        #[arg(long)]
+        start: Option<String>,
+        /// End time (ISO 8601, defaults to now)
+        #[arg(long)]
+        end: Option<String>,
+        /// Minimum trace duration in milliseconds
+        #[arg(long)]
+        min_duration_ms: Option<f64>,
+        /// Maximum number of samples/traces to return per action (1-100, default 25)
+        #[arg(long, default_value = "25")]
+        limit: Option<i64>,
+        /// Automatically paginate to fetch all samples/traces for each action; ignores --limit
+        #[arg(long)]
+        page_all: bool,
+    },
+    /// List error traces for an exception digest
+    Errors {
+        #[command(flatten)]
+        app: TraceAppArgs,
+        /// Exception incident digest
+        #[arg(long)]
+        digest: String,
+        /// Maximum number of error traces to return (1-100, default 25)
+        #[arg(long, default_value = "25")]
+        limit: Option<i64>,
+        /// Automatically paginate to fetch all error traces; ignores --limit
+        #[arg(long)]
+        page_all: bool,
+    },
+    /// Show a performance sample/trace span tree, or one span with --span-id
+    Show {
+        #[command(flatten)]
+        app: TraceAppArgs,
+        /// Namespace to search in (e.g. web, background, graphql)
+        #[arg(long)]
+        namespace: String,
+        /// Action name for the trace (e.g. UsersController#show)
+        #[arg(long = "action")]
+        action_name: String,
+        /// Trace ID returned by `traces list` or `samples list`
+        #[arg(long)]
+        trace_id: String,
+        /// Span ID to inspect within the trace
+        #[arg(long)]
+        span_id: Option<String>,
+        /// Include HTTP headers, request parameters, session data, and function parameters
+        #[arg(long)]
+        include_sensitive: bool,
+        /// Start time (ISO 8601, defaults to 24 hours ago)
+        #[arg(long)]
+        start: Option<String>,
+        /// End time (ISO 8601, defaults to now)
+        #[arg(long)]
+        end: Option<String>,
+    },
+    /// Show an error trace span tree, or one span with --span-id
+    ShowError {
+        #[command(flatten)]
+        app: TraceAppArgs,
+        /// Exception incident digest
+        #[arg(long)]
+        digest: String,
+        /// Trace ID returned by `samples errors` or `samples incident` for an exception incident
+        #[arg(long)]
+        trace_id: String,
+        /// Span ID to inspect within the trace
+        #[arg(long)]
+        span_id: Option<String>,
+        /// Include HTTP headers, request parameters, session data, and function parameters
+        #[arg(long)]
+        include_sensitive: bool,
+    },
+    /// Show a trace from a performance or exception incident without passing namespace/action/digest
+    ShowIncident {
+        #[command(flatten)]
+        app: TraceAppArgs,
+        /// Performance or exception incident number
+        #[arg(long)]
+        number: i64,
+        /// Trace ID returned by `samples incident`
+        #[arg(long)]
+        trace_id: String,
+        /// Span ID to inspect within the trace
+        #[arg(long)]
+        span_id: Option<String>,
+        /// Include HTTP headers, request parameters, session data, and function parameters
+        #[arg(long)]
+        include_sensitive: bool,
+        /// Start time for performance trace lookup (ISO 8601, defaults to 24 hours ago)
+        #[arg(long)]
+        start: Option<String>,
+        /// End time for performance trace lookup (ISO 8601, defaults to now)
+        #[arg(long)]
+        end: Option<String>,
+    },
+}
+
+#[derive(Args)]
+#[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
 struct LogActionAppArgs {
     /// Application ID (required unless --app is used)
     #[arg(long)]
@@ -767,6 +939,7 @@ enum LogTriggerAction {
 }
 
 #[derive(Args)]
+#[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
 struct TriggerAppArgs {
     /// Application ID (alternative to --app + --environment)
     #[arg(long)]
@@ -783,6 +956,7 @@ struct TriggerAppArgs {
 }
 
 #[derive(Args)]
+#[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
 struct DashboardAppArgs {
     /// Application ID (alternative to --app + --environment)
     #[arg(long)]
@@ -955,6 +1129,7 @@ impl_telemetry_command!(Commands {
     Self::Project { action } => action.telemetry_command(),
     Self::Incidents { action } => action.telemetry_command(),
     Self::Logs { action } => action.telemetry_command(),
+    Self::Traces { action } => action.telemetry_command(),
     Self::Dashboards { action } => action.telemetry_command(),
     Self::Triggers { action } => action.telemetry_command(),
     Self::Skill { action } => action.telemetry_command()
@@ -1011,6 +1186,15 @@ impl_telemetry_command!(LogsAction {
     Self::Sources { .. } => telemetry::TelemetryCommand::LogsSources,
     Self::Metrics { action } => action.telemetry_command(),
     Self::Triggers { action } => action.telemetry_command()
+});
+
+impl_telemetry_command!(TracesAction {
+    Self::List { .. } => telemetry::TelemetryCommand::TracesList,
+    Self::Incident { .. } => telemetry::TelemetryCommand::TracesIncident,
+    Self::Errors { .. } => telemetry::TelemetryCommand::TracesErrors,
+    Self::Show { .. } => telemetry::TelemetryCommand::TracesShow,
+    Self::ShowError { .. } => telemetry::TelemetryCommand::TracesShowError,
+    Self::ShowIncident { .. } => telemetry::TelemetryCommand::TracesShowIncident
 });
 
 impl_telemetry_command!(LogMetricAction {
@@ -1642,6 +1826,148 @@ async fn run(cli: Cli) -> Result<()> {
                 }
             },
         },
+        Commands::Traces { action } => match action {
+            TracesAction::List {
+                app,
+                namespace,
+                action_name,
+                start,
+                end,
+                min_duration_ms,
+                limit,
+                page_all,
+            } => {
+                commands::traces::list(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &namespace,
+                    &action_name,
+                    start.as_deref(),
+                    end.as_deref(),
+                    min_duration_ms,
+                    limit,
+                    page_all,
+                    cli.output,
+                )
+                .await?
+            }
+            TracesAction::Incident {
+                app,
+                number,
+                action_name,
+                start,
+                end,
+                min_duration_ms,
+                limit,
+                page_all,
+            } => {
+                commands::traces::incident(
+                    number,
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    action_name.as_deref(),
+                    start.as_deref(),
+                    end.as_deref(),
+                    min_duration_ms,
+                    limit,
+                    page_all,
+                    cli.output,
+                )
+                .await?
+            }
+            TracesAction::Errors {
+                app,
+                digest,
+                limit,
+                page_all,
+            } => {
+                commands::traces::errors(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &digest,
+                    limit,
+                    page_all,
+                    cli.output,
+                )
+                .await?
+            }
+            TracesAction::Show {
+                app,
+                namespace,
+                action_name,
+                trace_id,
+                span_id,
+                include_sensitive,
+                start,
+                end,
+            } => {
+                commands::traces::show(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &namespace,
+                    &action_name,
+                    &trace_id,
+                    span_id.as_deref(),
+                    include_sensitive,
+                    start.as_deref(),
+                    end.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+            TracesAction::ShowError {
+                app,
+                digest,
+                trace_id,
+                span_id,
+                include_sensitive,
+            } => {
+                commands::traces::show_error(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &digest,
+                    &trace_id,
+                    span_id.as_deref(),
+                    include_sensitive,
+                    cli.output,
+                )
+                .await?
+            }
+            TracesAction::ShowIncident {
+                app,
+                number,
+                trace_id,
+                span_id,
+                include_sensitive,
+                start,
+                end,
+            } => {
+                commands::traces::show_incident(
+                    number,
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    &trace_id,
+                    span_id.as_deref(),
+                    include_sensitive,
+                    start.as_deref(),
+                    end.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+        },
         Commands::Triggers { action } => match action {
             TriggerAction::List {
                 app,
@@ -1768,6 +2094,240 @@ mod tests {
             cli.telemetry_command(),
             telemetry::TelemetryCommand::AppsResourcesDeployMarkers
         );
+    }
+
+    #[test]
+    fn samples_alias_maps_to_traces_command() {
+        let cli = Cli::try_parse_from([
+            "appsignal-cli",
+            "samples",
+            "list",
+            "--app-id",
+            "app-1",
+            "--namespace",
+            "web",
+            "--action",
+            "PostsController#index",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.telemetry_command(),
+            telemetry::TelemetryCommand::TracesList
+        );
+        match cli.command {
+            Commands::Traces {
+                action:
+                    TracesAction::List {
+                        app,
+                        namespace,
+                        action_name,
+                        ..
+                    },
+            } => {
+                assert_eq!(app.app_id.as_deref(), Some("app-1"));
+                assert_eq!(namespace, "web");
+                assert_eq!(action_name, "PostsController#index");
+            }
+            _ => panic!("samples alias did not parse as traces list"),
+        }
+    }
+
+    #[test]
+    fn incidents_show_requires_app_reference() {
+        let err =
+            match Cli::try_parse_from(["appsignal-cli", "incidents", "show", "--number", "42"]) {
+                Ok(_) => panic!("incidents show unexpectedly parsed without an app reference"),
+                Err(err) => err,
+            };
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        let message = err.to_string();
+        assert!(message.contains("--app-id"));
+        assert!(message.contains("--app"));
+    }
+
+    #[test]
+    fn samples_list_requires_app_reference() {
+        let err = match Cli::try_parse_from([
+            "appsignal-cli",
+            "samples",
+            "list",
+            "--namespace",
+            "web",
+            "--action",
+            "PostsController#index",
+        ]) {
+            Ok(_) => panic!("samples list unexpectedly parsed without an app reference"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        let message = err.to_string();
+        assert!(message.contains("--app-id"));
+        assert!(message.contains("--app"));
+    }
+
+    #[test]
+    fn samples_list_page_all_parses() {
+        let cli = Cli::try_parse_from([
+            "appsignal-cli",
+            "samples",
+            "list",
+            "--app-id",
+            "app-1",
+            "--namespace",
+            "web",
+            "--action",
+            "PostsController#index",
+            "--page-all",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Traces {
+                action: TracesAction::List { page_all, .. },
+            } => assert!(page_all),
+            _ => panic!("samples list did not parse as traces list"),
+        }
+    }
+
+    #[test]
+    fn samples_incident_command_parses() {
+        let cli = Cli::try_parse_from([
+            "appsignal-cli",
+            "samples",
+            "incident",
+            "--app-id",
+            "app-1",
+            "--number",
+            "42",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.telemetry_command(),
+            telemetry::TelemetryCommand::TracesIncident
+        );
+        match cli.command {
+            Commands::Traces {
+                action: TracesAction::Incident { app, number, .. },
+            } => {
+                assert_eq!(app.app_id.as_deref(), Some("app-1"));
+                assert_eq!(number, 42);
+            }
+            _ => panic!("samples incident did not parse as traces incident"),
+        }
+    }
+
+    #[test]
+    fn samples_errors_command_parses() {
+        let cli = Cli::try_parse_from([
+            "appsignal-cli",
+            "samples",
+            "errors",
+            "--app-id",
+            "app-1",
+            "--digest",
+            "digest-1",
+            "--page-all",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.telemetry_command(),
+            telemetry::TelemetryCommand::TracesErrors
+        );
+        match cli.command {
+            Commands::Traces {
+                action:
+                    TracesAction::Errors {
+                        app,
+                        digest,
+                        page_all,
+                        ..
+                    },
+            } => {
+                assert_eq!(app.app_id.as_deref(), Some("app-1"));
+                assert_eq!(digest, "digest-1");
+                assert!(page_all);
+            }
+            _ => panic!("samples errors did not parse as traces errors"),
+        }
+    }
+
+    #[test]
+    fn samples_show_error_command_parses() {
+        let cli = Cli::try_parse_from([
+            "appsignal-cli",
+            "samples",
+            "show-error",
+            "--app-id",
+            "app-1",
+            "--digest",
+            "digest-1",
+            "--trace-id",
+            "trace-1",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.telemetry_command(),
+            telemetry::TelemetryCommand::TracesShowError
+        );
+        match cli.command {
+            Commands::Traces {
+                action:
+                    TracesAction::ShowError {
+                        app,
+                        digest,
+                        trace_id,
+                        ..
+                    },
+            } => {
+                assert_eq!(app.app_id.as_deref(), Some("app-1"));
+                assert_eq!(digest, "digest-1");
+                assert_eq!(trace_id, "trace-1");
+            }
+            _ => panic!("samples show-error did not parse as traces show-error"),
+        }
+    }
+
+    #[test]
+    fn samples_show_incident_command_parses() {
+        let cli = Cli::try_parse_from([
+            "appsignal-cli",
+            "samples",
+            "show-incident",
+            "--app-id",
+            "app-1",
+            "--number",
+            "42",
+            "--trace-id",
+            "trace-1",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.telemetry_command(),
+            telemetry::TelemetryCommand::TracesShowIncident
+        );
+        match cli.command {
+            Commands::Traces {
+                action:
+                    TracesAction::ShowIncident {
+                        app,
+                        number,
+                        trace_id,
+                        ..
+                    },
+            } => {
+                assert_eq!(app.app_id.as_deref(), Some("app-1"));
+                assert_eq!(number, 42);
+                assert_eq!(trace_id, "trace-1");
+            }
+            _ => panic!("samples show-incident did not parse as traces show-incident"),
+        }
     }
 
     #[test]

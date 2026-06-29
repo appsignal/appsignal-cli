@@ -89,6 +89,21 @@ pub fn table<T: Tabled>(w: &mut dyn Write, rows: impl IntoIterator<Item = T>) ->
     writeln!(w, "{}", Table::new(rows))
 }
 
+pub fn truncate(value: &str, max: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max {
+        value.to_string()
+    } else {
+        format!(
+            "{}...",
+            value
+                .chars()
+                .take(max.saturating_sub(3))
+                .collect::<String>()
+        )
+    }
+}
+
 /// Write a single JSON value followed by a newline.
 pub fn json_line<T: Serialize>(w: &mut dyn Write, value: &T) -> Result<()> {
     serde_json::to_writer(&mut *w, value)?;
@@ -231,7 +246,7 @@ macro_rules! status {
 
 #[cfg(test)]
 mod tests {
-    use super::{print_error, render_boxed_lines, sanitize_error_message, Output};
+    use super::{print_error, render_boxed_lines, sanitize_error_message, truncate, Output};
     use crate::error::CliError;
     use anyhow::{anyhow, Context};
 
@@ -245,6 +260,25 @@ mod tests {
         assert!(rendered.contains("Current: 0.2.1"));
         assert!(rendered.contains("Latest:  1.0.0"));
         assert!(rendered.ends_with('+'));
+    }
+
+    #[test]
+    fn truncate_keeps_short_strings_unchanged() {
+        assert_eq!(truncate("hello", 10), "hello");
+        assert_eq!(truncate("hello", 5), "hello");
+        assert_eq!(truncate("", 10), "");
+    }
+
+    #[test]
+    fn truncate_adds_ellipsis_to_long_strings() {
+        assert_eq!(truncate("hello world", 8), "hello...");
+        assert_eq!(truncate("hello", 3), "...");
+        assert_eq!(truncate("abcdef", 5), "ab...");
+    }
+
+    #[test]
+    fn truncate_does_not_split_utf8_characters() {
+        assert_eq!(truncate("héllo world", 8), "héllo...");
     }
 
     #[test]

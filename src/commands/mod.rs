@@ -6,6 +6,7 @@ pub mod incidents;
 pub mod logs;
 pub mod project;
 pub mod skill;
+pub mod traces;
 pub mod triggers;
 
 use crate::api::AppSignalClient;

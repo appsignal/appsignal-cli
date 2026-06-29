@@ -150,13 +150,18 @@ Still missing:
 - [ ] richer performance overview beyond incident listing
 
 ### `get_traces`
-- [ ] Not implemented
+- [~] `samples` / `traces`
 
-Missing CLI capabilities:
-- [ ] list traces for a performance action
-- [ ] inspect a trace tree by trace ID
-- [ ] inspect a span by span ID
-- [ ] list traces for an exception digest
+Covered today:
+- [x] list samples/traces for a performance action with `samples list`
+- [x] fetch samples/traces from a performance incident with `samples incident`
+- [x] fetch error traces from an exception incident with `samples incident`
+- [x] list error traces for an exception digest with `samples errors`
+- [x] inspect a trace tree by trace ID with `samples show`
+- [x] inspect a span by span ID with `samples show --span-id`
+- [x] inspect an error trace tree or span with `samples show-error`
+- [x] inspect performance or exception traces from an incident number with `samples show-incident`
+- [x] cursor pagination with `--page-all`
 
 ---
 
@@ -307,9 +312,8 @@ Likely implementation work:
 3. Add log filter CLI support if product requirements justify it
 
 ### Phase 4: Traces And Full Performance Parity
-1. Add trace listing and inspection
-2. Add richer performance overview behavior
-3. Add exception/performance timeframe and deploy filters if an API path exists
+1. Add richer performance overview behavior
+2. Add exception/performance timeframe and deploy filters if an API path exists
 
 ---
 
@@ -317,5 +321,5 @@ Likely implementation work:
 
 - The public GraphQL API already covers more than the previous TODO suggested; this file was stale.
 - Metrics likely require REST support in the CLI in addition to the existing GraphQL client.
-- Trigger, dashboard, trace, and log rule parity depends on whether the public API exposes the needed queries and mutations.
+- Trigger, dashboard, and log rule parity depends on whether the public API exposes the needed queries and mutations.
 - Anomaly state handling may differ from exception/performance incident state enums, so state support should be verified before designing CLI flags.

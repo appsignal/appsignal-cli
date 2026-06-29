@@ -282,12 +282,12 @@ fn render_trigger_table(w: &mut dyn Write, triggers: &[Trigger]) -> io::Result<(
     }
 
     let rows = triggers.iter().map(|trigger| TriggerRow {
-        id: truncate(&trigger.id, 22),
-        name: truncate(&trigger.name, 28),
-        metric: truncate(&trigger.metric_name, 24),
+        id: output::truncate(&trigger.id, 22),
+        name: output::truncate(&trigger.name, 28),
+        metric: output::truncate(&trigger.metric_name, 24),
         field: trigger.field.clone(),
-        kind: truncate(&trigger.kind, 22),
-        description: truncate(trigger.description.as_deref().unwrap_or("-"), 36),
+        kind: output::truncate(&trigger.kind, 22),
+        description: output::truncate(trigger.description.as_deref().unwrap_or("-"), 36),
         threshold: threshold_summary(trigger),
         warmup: format!("{}m", trigger.warmup_duration),
         cooldown: format!("{}m", trigger.cooldown_duration),
@@ -460,16 +460,6 @@ fn notifiers_summary(trigger: &Trigger) -> String {
         })
         .filter(|summary| !summary.is_empty())
         .unwrap_or_else(|| "-".to_string())
-}
-
-fn truncate(value: &str, max: usize) -> String {
-    if value.len() <= max {
-        value.to_string()
-    } else if max <= 3 {
-        "...".to_string()
-    } else {
-        format!("{}...", &value[..max - 3])
-    }
 }
 
 #[cfg(test)]
