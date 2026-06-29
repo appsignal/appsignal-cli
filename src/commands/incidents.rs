@@ -476,7 +476,7 @@ fn render_exception_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Resu
             severity: incident.severity().to_string(),
             count: incident.count(),
             last_occurred: incident.last_occurred_at().to_string(),
-            exception: truncate(exception, 50),
+            exception: output::truncate(exception, 50),
         }
     });
 
@@ -506,7 +506,7 @@ fn render_performance_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Re
             severity: incident.severity().to_string(),
             count: incident.count(),
             last_occurred: incident.last_occurred_at().to_string(),
-            action: truncate(action, 50),
+            action: output::truncate(action, 50),
         }
     });
 
@@ -527,7 +527,7 @@ fn render_incident_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Resul
         severity: incident.severity().to_string(),
         count: incident.count(),
         last_occurred: incident.last_occurred_at().to_string(),
-        description: truncate(incident.description(), 40),
+        description: output::truncate(incident.description(), 40),
     });
 
     output::table(w, rows)?;
@@ -558,7 +558,7 @@ fn render_anomaly_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Result
             alert: alert_state.to_string(),
             count: incident.count(),
             last_occurred: incident.last_occurred_at().to_string(),
-            trigger: truncate(trigger_name, 40),
+            trigger: output::truncate(trigger_name, 40),
         }
     });
 
@@ -673,48 +673,9 @@ fn render_incident_detail(w: &mut dyn Write, incident: &Incident) -> io::Result<
     Ok(())
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max.saturating_sub(3)])
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_truncate_short_string() {
-        assert_eq!(truncate("hello", 10), "hello");
-    }
-
-    #[test]
-    fn test_truncate_exact_length() {
-        assert_eq!(truncate("hello", 5), "hello");
-    }
-
-    #[test]
-    fn test_truncate_long_string() {
-        assert_eq!(truncate("hello world", 8), "hello...");
-    }
-
-    #[test]
-    fn test_truncate_empty_string() {
-        assert_eq!(truncate("", 10), "");
-    }
-
-    #[test]
-    fn test_truncate_with_small_max() {
-        // max=3 means 0 chars + "..." = "..."
-        assert_eq!(truncate("hello", 3), "...");
-    }
-
-    #[test]
-    fn test_truncate_one_over() {
-        assert_eq!(truncate("abcdef", 5), "ab...");
-    }
 
     #[test]
     fn render_incident_table_uses_shared_table_format() {

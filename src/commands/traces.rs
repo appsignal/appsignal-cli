@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use chrono::{Duration, Utc};
 use serde::Serialize;
 use serde_json::Value;
+use tabled::Tabled;
 
 use super::{authenticated_client, resolve_org};
 use crate::api::{AppSignalClient, Incident, TraceSpan, TraceSummary};
@@ -46,6 +47,18 @@ struct TraceShowResponse<'a> {
     spans: &'a [TraceSpan],
     #[serde(skip_serializing_if = "Option::is_none")]
     span: Option<&'a TraceSpan>,
+}
+
+#[derive(Tabled)]
+struct TraceRow {
+    #[tabled(rename = "TRACE ID")]
+    trace_id: String,
+    #[tabled(rename = "DURATION")]
+    duration: String,
+    #[tabled(rename = "TIME")]
+    time: String,
+    #[tabled(rename = "ACTION")]
+    action: String,
 }
 
 /// List performance sample traces for a namespace/action.
@@ -266,21 +279,7 @@ pub async fn show_error(
     let spans = client
         .get_error_trace(&resolved_app_id, digest, trace_id)
         .await?;
-    let span = if let Some(span_id) = span_id {
-        Some(
-            spans
-                .iter()
-                .find(|span| span.span_id == span_id)
-                .with_context(|| {
-                    CliError::msg(format!(
-                        "Span {} not found in trace {}. Rerun without `--span-id` to see available span IDs.",
-                        span_id, trace_id
-                    ))
-                })?,
-        )
-    } else {
-        None
-    };
+    let span = find_span(&spans, trace_id, span_id)?;
 
     output::print_with(
         TraceShowResponse {
@@ -353,21 +352,7 @@ pub async fn show_incident(
         }
     };
 
-    let span = if let Some(span_id) = span_id {
-        Some(
-            spans
-                .iter()
-                .find(|span| span.span_id == span_id)
-                .with_context(|| {
-                    CliError::msg(format!(
-                        "Span {} not found in trace {}. Rerun without `--span-id` to see available span IDs.",
-                        span_id, trace_id
-                    ))
-                })?,
-        )
-    } else {
-        None
-    };
+    let span = find_span(&spans, trace_id, span_id)?;
 
     output::print_with(
         TraceShowResponse {
@@ -423,21 +408,7 @@ pub async fn show(
         )
         .await?;
 
-    let span = if let Some(span_id) = span_id {
-        Some(
-            spans
-                .iter()
-                .find(|span| span.span_id == span_id)
-                .with_context(|| {
-                    CliError::msg(format!(
-                        "Span {} not found in trace {}. Rerun without `--span-id` to see available span IDs.",
-                        span_id, trace_id
-                    ))
-                })?,
-        )
-    } else {
-        None
-    };
+    let span = find_span(&spans, trace_id, span_id)?;
 
     output::print_with(
         TraceShowResponse {
@@ -590,6 +561,23 @@ fn is_not_found_error(error: &anyhow::Error) -> bool {
         error.downcast_ref::<CliError>(),
         Some(CliError::NotFound { .. })
     )
+}
+
+fn find_span<'a>(
+    spans: &'a [TraceSpan],
+    trace_id: &str,
+    span_id: Option<&str>,
+) -> Result<Option<&'a TraceSpan>> {
+    span_id
+        .map(|span_id| {
+            spans.iter().find(|span| span.span_id == span_id).with_context(|| {
+                CliError::msg(format!(
+                    "Span {} not found in trace {}. Rerun without `--span-id` to see available span IDs.",
+                    span_id, trace_id
+                ))
+            })
+        })
+        .transpose()
 }
 
 async fn fetch_all_trace_pages(
@@ -917,25 +905,14 @@ fn render_error_trace_list(
 }
 
 fn render_trace_rows(w: &mut dyn Write, traces: &[TraceSummary]) -> io::Result<()> {
-    writeln!(
-        w,
-        "{:<60} {:>12} {:<22} ACTION",
-        "TRACE ID", "DURATION", "TIME"
-    )?;
-    writeln!(w, "{}", "-".repeat(100))?;
+    let rows = traces.iter().map(|trace| TraceRow {
+        trace_id: trace.trace_id.clone(),
+        duration: format_duration(trace.duration),
+        time: trace.time.as_deref().unwrap_or("-").to_string(),
+        action: output::truncate(trace.action_name.as_deref().unwrap_or("-"), 40),
+    });
 
-    for trace in traces {
-        writeln!(
-            w,
-            "{:<60} {:>12} {:<22} {}",
-            trace.trace_id,
-            format_duration(trace.duration),
-            trace.time.as_deref().unwrap_or("-"),
-            truncate(trace.action_name.as_deref().unwrap_or("-"), 40),
-        )?;
-    }
-
-    Ok(())
+    output::table(w, rows)
 }
 
 fn render_trace_tree(w: &mut dyn Write, trace_id: &str, spans: &[TraceSpan]) -> io::Result<()> {
@@ -1100,7 +1077,7 @@ fn render_attribute_section(
         } else {
             key
         };
-        writeln!(w, "{}: {}", key, truncate(value, 500))?;
+        writeln!(w, "{}: {}", key, output::truncate(value, 500))?;
     }
     Ok(())
 }
@@ -1123,7 +1100,7 @@ fn render_events(w: &mut dyn Write, span: &TraceSpan) -> io::Result<()> {
             let mut attributes = map_to_pairs(attributes);
             attributes.retain(|(key, _)| key != "appsignal.stacktrace_id");
             for (key, value) in attributes {
-                writeln!(w, "{}: {}", key, truncate(&value, 500))?;
+                writeln!(w, "{}: {}", key, output::truncate(&value, 500))?;
             }
         }
     }
@@ -1208,14 +1185,6 @@ fn format_duration(duration: Option<f64>) -> String {
     match duration {
         Some(duration) if duration.is_finite() => format!("{duration:.1}ms"),
         _ => "-".to_string(),
-    }
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max.saturating_sub(3)])
     }
 }
 

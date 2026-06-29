@@ -626,7 +626,7 @@ enum TracesAction {
         #[arg(long)]
         page_all: bool,
     },
-    /// List performance samples/traces for a performance incident
+    /// List performance samples/traces for an incident
     Incident {
         #[command(flatten)]
         app: TraceAppArgs,
