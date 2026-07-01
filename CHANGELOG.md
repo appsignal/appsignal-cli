@@ -1,5 +1,17 @@
 # AppSignal CLI changelog
 
+## 2.0.1
+
+_Published on 2026-07-01._
+
+### Added
+
+- Added `traces` commands, also available as `samples`, for listing performance samples/traces and error traces, then inspecting their span trees through the AppSignal REST tracing API. Traces can also be fetched and inspected directly from performance and exception incident numbers, and `--page-all` can fetch beyond the first page of trace results. (patch [7917561](https://github.com/appsignal/appsignal-cli/commit/7917561386b6a5aaed4d4c356e11b856f38cf6a1))
+
+### Changed
+
+- Incident list commands now render with the same table formatting as other list commands, making human-readable output easier to scan. (patch [7917561](https://github.com/appsignal/appsignal-cli/commit/7917561386b6a5aaed4d4c356e11b856f38cf6a1))
+
 ## 2.0.0
 
 _Published on 2026-06-17._
