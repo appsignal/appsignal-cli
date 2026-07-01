@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PACKAGE_NAME: "CLI"
-      CHANGELOG_CATEGORY: "CLI"
+      CHANGELOG_CATEGORY: "Tools (API, MCP, CLI)"
       CHANGELOG_LINK: "https://github.com/appsignal/appsignal-cli/blob/main/CHANGELOG.md"
     steps:
       - name: Checkout repository at tag
