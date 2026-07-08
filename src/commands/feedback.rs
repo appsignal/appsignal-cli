@@ -156,7 +156,6 @@ async fn submit_feedback(
 
     let response = request
         .json(&json!({
-            "source": "appsignal-cli",
             "feedback": feedback,
             "email": email,
             "cli_version": CLIENT_VERSION,
@@ -270,7 +269,6 @@ mod tests {
             .and(path("/api/cli/feedback"))
             .and(header("authorization", "Bearer oauth-token"))
             .and(body_json(json!({
-                "source": "appsignal-cli",
                 "feedback": "Please add metrics support",
                 "email": "ada@example.com",
                 "cli_version": CLIENT_VERSION,
