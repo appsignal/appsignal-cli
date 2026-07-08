@@ -276,6 +276,27 @@ appsignal-cli skill install --target claude
 | `triggers update --id <id>` | Update a trigger by creating a new version |
 | `triggers archive --id <id>` | Archive a trigger |
 
+### `feedback`
+
+| Command | Description |
+|---|---|
+| `feedback [MESSAGE] [--email <email>] [--no-email]` | Send feedback about missing endpoints, missing features, or broken CLI behavior |
+
+If `MESSAGE` is omitted, `feedback` reads the feedback body from stdin. The optional email is saved to the active `.appsignal.toml` or global config for next time.
+
+Examples:
+
+```bash
+appsignal-cli feedback "Please add support for uptime monitor endpoints" --email ada@example.com
+```
+
+```bash
+appsignal-cli --output json feedback --email ada@example.com <<'EOF'
+The logs search command needs a way to export all fields without truncation.
+This is important for LLM workflows that analyze structured log attributes.
+EOF
+```
+
 #### Trigger naming options
 
 | Flag | Description |

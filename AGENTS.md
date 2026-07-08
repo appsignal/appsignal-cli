@@ -17,6 +17,7 @@ src/
     apps.rs            apps list / info / find / set-org / show-org
     incidents.rs       incidents list / list-exceptions / list-performance / list-anomalies / show
     logs.rs            logs tail / search / views / sources
+    feedback.rs        feedback (posts CLI feedback to /api/cli/feedback)
     skill.rs           skill install (writes bundled AppSignal skills for OpenCode, Codex, or Claude)
 ```
 
@@ -262,6 +263,7 @@ the updated credentials. If refresh fails, the user is prompted to re-authentica
 | `appsignal-cli logs search [filters] [--page-all]` | One-shot log search (supports auto-pagination and global `--output json`) |
 | `appsignal-cli logs views [app options]` | List saved log views (filter presets) |
 | `appsignal-cli logs sources [app options]` | List log sources for an app |
+| `appsignal-cli feedback [MESSAGE] [--email <email>] [--no-email]` | Send CLI feedback about missing endpoints, missing features, or broken behavior; reads stdin when `MESSAGE` is omitted and stores `--email` in the active config |
 | `appsignal-cli skill install [--target TARGET] [--dir PATH] [--force]` | Install the bundled AppSignal LLM skill for OpenCode, Codex, or Claude |
 | `appsignal-cli skill update [--target TARGET] [--dir PATH]` | Update an installed AppSignal LLM skill to the bundled version |
 | `appsignal-cli skill status [--target TARGET] [--dir PATH]` | Show whether installed AppSignal LLM skills are current, outdated, missing, or unversioned; defaults to all supported targets |

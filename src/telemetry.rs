@@ -115,6 +115,8 @@ pub enum TelemetryCommand {
     TriggersUpdate,
     #[serde(rename = "triggers.archive")]
     TriggersArchive,
+    #[serde(rename = "feedback")]
+    Feedback,
     #[serde(rename = "skill.install")]
     SkillInstall,
     #[serde(rename = "skill.update")]

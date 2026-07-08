@@ -2,6 +2,7 @@ pub mod about;
 pub mod apps;
 pub mod auth;
 pub mod dashboards;
+pub mod feedback;
 pub mod incidents;
 pub mod logs;
 pub mod project;
@@ -43,16 +44,24 @@ pub async fn authenticated_client(config: &mut Config) -> Result<AppSignalClient
     let endpoint = config.endpoint_base_url()?;
     let rest_endpoint = config.rest_endpoint_base_url()?;
 
-    // Auto-refresh expired OAuth tokens
+    refresh_oauth_if_needed(config, endpoint.as_deref()).await?;
+
+    let auth = config.auth_method()?;
+    Ok(AppSignalClient::with_auth_endpoints(
+        auth,
+        endpoint.as_deref(),
+        rest_endpoint.as_deref(),
+    ))
+}
+
+/// Refresh expired OAuth credentials in the current config, if possible.
+pub async fn refresh_oauth_if_needed(config: &mut Config, endpoint: Option<&str>) -> Result<()> {
     if config.oauth.is_some() && config.oauth_token_expired() {
         let oauth = config.oauth.as_ref().unwrap();
         if let Some(ref refresh_token) = oauth.refresh_token {
-            let new_creds = oauth::refresh_access_token(
-                endpoint.as_deref(),
-                config.oauth_client_id(),
-                refresh_token,
-            )
-            .await?;
+            let new_creds =
+                oauth::refresh_access_token(endpoint, config.oauth_client_id(), refresh_token)
+                    .await?;
             config.oauth = Some(new_creds);
             config.save()?;
         } else {
@@ -63,12 +72,7 @@ pub async fn authenticated_client(config: &mut Config) -> Result<AppSignalClient
         }
     }
 
-    let auth = config.auth_method()?;
-    Ok(AppSignalClient::with_auth_endpoints(
-        auth,
-        endpoint.as_deref(),
-        rest_endpoint.as_deref(),
-    ))
+    Ok(())
 }
 
 #[cfg(test)]
