@@ -346,6 +346,34 @@ pub enum Incident {
     },
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ExceptionIncidentSample {
+    pub exception: ExceptionIncidentSampleException,
+    #[serde(default, rename = "errorCauses")]
+    pub error_causes: Vec<ExceptionIncidentErrorCause>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ExceptionIncidentSampleException {
+    pub name: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ExceptionIncidentErrorCause {
+    pub name: String,
+    pub message: Option<String>,
+    #[serde(rename = "firstLine")]
+    pub first_line: Option<ExceptionIncidentErrorCauseLine>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ExceptionIncidentErrorCauseLine {
+    pub original: Option<String>,
+    pub path: Option<String>,
+    pub line: Option<String>,
+}
+
 impl Incident {
     pub fn id(&self) -> &str {
         match self {
@@ -468,6 +496,21 @@ struct AppIncidentData {
 #[derive(Debug, Deserialize)]
 struct AppSingleIncident {
     incident: Option<Incident>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppExceptionIncidentSampleData {
+    app: Option<AppExceptionIncidentSample>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppExceptionIncidentSample {
+    incident: Option<AppExceptionIncidentSampleIncident>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppExceptionIncidentSampleIncident {
+    sample: Option<ExceptionIncidentSample>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1829,6 +1872,43 @@ impl AppSignalClient {
         let app = data.app.context(CliError::msg("Application not found"))?;
         app.incident
             .with_context(|| CliError::msg(format!("Incident #{} not found", incident_number)))
+    }
+
+    /// Fetch the latest exception sample fields used to enrich exception incident details.
+    pub async fn get_exception_incident_sample(
+        &self,
+        app_id: &str,
+        incident_number: i64,
+    ) -> Result<Option<ExceptionIncidentSample>> {
+        let query = r#"
+            query AppExceptionIncidentSample($appId: String!, $incidentNumber: Int!) {
+                app(id: $appId) {
+                    incident(incidentNumber: $incidentNumber) {
+                        ... on ExceptionIncident {
+                            sample {
+                                exception { name message }
+                                errorCauses {
+                                    name
+                                    message
+                                    firstLine { original path line }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        "#;
+
+        let data: AppExceptionIncidentSampleData = self
+            .graphql(
+                query,
+                json!({ "appId": app_id, "incidentNumber": incident_number }),
+            )
+            .await?;
+        Ok(data
+            .app
+            .and_then(|app| app.incident)
+            .and_then(|incident| incident.sample))
     }
 
     /// Update a single incident (state, severity, assignees, description).
@@ -3839,6 +3919,64 @@ mod tests {
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let err = client.get_incident("app1", 999).await.unwrap_err();
         assert!(err.to_string().contains("999"));
+    }
+
+    #[tokio::test]
+    async fn test_get_exception_incident_sample() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incident": {
+                            "sample": {
+                                "exception": {
+                                    "name": "NoMethodError",
+                                    "message": "fresher sample message"
+                                },
+                                "errorCauses": [
+                                    {
+                                        "name": "ArgumentError",
+                                        "message": "argument out of range",
+                                        "firstLine": {
+                                            "original": null,
+                                            "path": "app/models/report.rb",
+                                            "line": "42"
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let sample = client
+            .get_exception_incident_sample("app1", 42)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(sample.exception.name.as_deref(), Some("NoMethodError"));
+        assert_eq!(
+            sample.exception.message.as_deref(),
+            Some("fresher sample message")
+        );
+        assert_eq!(sample.error_causes.len(), 1);
+        assert_eq!(sample.error_causes[0].name, "ArgumentError");
+        assert_eq!(
+            sample.error_causes[0]
+                .first_line
+                .as_ref()
+                .unwrap()
+                .path
+                .as_deref(),
+            Some("app/models/report.rb")
+        );
     }
 
     #[tokio::test]

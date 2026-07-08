@@ -5,7 +5,9 @@ use serde::Serialize;
 use tabled::Tabled;
 
 use super::{authenticated_client, resolve_org};
-use crate::api::{resolve_user_ids, Incident};
+use crate::api::{
+    resolve_user_ids, ExceptionIncidentErrorCauseLine, ExceptionIncidentSample, Incident,
+};
 use crate::config::Config;
 use crate::output::{self, Output};
 
@@ -17,6 +19,28 @@ struct IncidentListResponse<'a> {
 #[derive(Serialize)]
 struct IncidentResponse<'a> {
     incident: &'a Incident,
+}
+
+#[derive(Serialize)]
+struct IncidentShowResponse<'a> {
+    incident: &'a Incident,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exception_error: Option<&'a ExceptionErrorView>,
+    #[serde(skip_serializing_if = "is_empty_exception_errors")]
+    error_causes: &'a [ExceptionErrorView],
+}
+
+#[derive(Serialize)]
+struct ExceptionErrorView {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    first_line: Option<String>,
+}
+
+fn is_empty_exception_errors(errors: &&[ExceptionErrorView]) -> bool {
+    errors.is_empty()
 }
 
 #[derive(Serialize)]
@@ -292,13 +316,31 @@ pub async fn show(
     let incident = client
         .get_incident(&resolved_app_id, incident_number)
         .await?;
+    let exception_sample = if matches!(incident, Incident::ExceptionIncident { .. }) {
+        client
+            .get_exception_incident_sample(&resolved_app_id, incident_number)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let exception_error = exception_sample
+        .as_ref()
+        .and_then(exception_error_from_sample);
+    let error_causes = exception_sample
+        .as_ref()
+        .map(exception_causes_from_sample)
+        .unwrap_or_default();
 
     output::print_with(
-        IncidentResponse {
+        IncidentShowResponse {
             incident: &incident,
+            exception_error: exception_error.as_ref(),
+            error_causes: &error_causes,
         },
         format,
-        |w| render_incident_detail(w, &incident),
+        |w| render_incident_detail(w, &incident, exception_error.as_ref(), &error_causes),
     )
 }
 
@@ -423,7 +465,7 @@ pub async fn update(
             incident: &incident,
         },
         format,
-        |w| render_incident_detail(w, &incident),
+        |w| render_incident_detail(w, &incident, None, &[]),
     )
 }
 
@@ -567,7 +609,97 @@ fn render_anomaly_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Result
     writeln!(w, "{} anomaly incident(s) found.", incidents.len())
 }
 
-fn render_incident_detail(w: &mut dyn Write, incident: &Incident) -> io::Result<()> {
+fn exception_error_from_sample(sample: &ExceptionIncidentSample) -> Option<ExceptionErrorView> {
+    let name = sample.exception.name.as_deref()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    Some(ExceptionErrorView {
+        name: name.to_string(),
+        message: sample
+            .exception
+            .message
+            .as_deref()
+            .map(str::trim)
+            .filter(|message| !message.is_empty())
+            .map(ToString::to_string),
+        first_line: None,
+    })
+}
+
+fn exception_causes_from_sample(sample: &ExceptionIncidentSample) -> Vec<ExceptionErrorView> {
+    sample
+        .error_causes
+        .iter()
+        .map(|cause| ExceptionErrorView {
+            name: if cause.name.trim().is_empty() {
+                "Unknown error".to_string()
+            } else {
+                cause.name.trim().to_string()
+            },
+            message: cause
+                .message
+                .as_deref()
+                .map(str::trim)
+                .filter(|message| !message.is_empty())
+                .map(ToString::to_string),
+            first_line: cause.first_line.as_ref().and_then(format_cause_first_line),
+        })
+        .collect()
+}
+
+fn format_cause_first_line(first_line: &ExceptionIncidentErrorCauseLine) -> Option<String> {
+    first_line
+        .original
+        .as_deref()
+        .map(str::trim)
+        .filter(|original| !original.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            let path = first_line.path.as_deref()?.trim();
+            if path.is_empty() {
+                return None;
+            }
+
+            let line = first_line.line.as_deref().map(str::trim).unwrap_or("");
+            if line.is_empty() {
+                Some(path.to_string())
+            } else {
+                Some(format!("{}:{}", path, line))
+            }
+        })
+}
+
+fn render_error_causes(w: &mut dyn Write, error_causes: &[ExceptionErrorView]) -> io::Result<()> {
+    if error_causes.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(w, "Error causes:")?;
+    for (index, cause) in error_causes.iter().enumerate() {
+        let details = [cause.message.as_deref(), cause.first_line.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" - ");
+
+        if details.is_empty() {
+            writeln!(w, "  {}. {}", index + 1, cause.name)?;
+        } else {
+            writeln!(w, "  {}. {}: {}", index + 1, cause.name, details)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn render_incident_detail(
+    w: &mut dyn Write,
+    incident: &Incident,
+    exception_error: Option<&ExceptionErrorView>,
+    error_causes: &[ExceptionErrorView],
+) -> io::Result<()> {
     let incident_label = format!("#{}", incident.number());
     let count = incident.count().to_string();
     output::detail(
@@ -602,16 +734,16 @@ fn render_incident_detail(w: &mut dyn Write, incident: &Incident) -> io::Result<
             first_backtrace_line,
             ..
         } => {
-            writeln!(
-                w,
-                "Exception:      {}",
-                exception_name.as_deref().unwrap_or("-")
-            )?;
-            writeln!(
-                w,
-                "Message:        {}",
-                exception_message.as_deref().unwrap_or("-")
-            )?;
+            let rendered_exception = exception_error
+                .map(|error| error.name.as_str())
+                .or(exception_name.as_deref())
+                .unwrap_or("-");
+            let rendered_message = exception_error
+                .and_then(|error| error.message.as_deref())
+                .or(exception_message.as_deref())
+                .unwrap_or("-");
+            writeln!(w, "Exception:      {}", rendered_exception)?;
+            writeln!(w, "Message:        {}", rendered_message)?;
             writeln!(w, "Namespace:      {}", namespace.as_deref().unwrap_or("-"))?;
             if let Some(actions) = action_names {
                 if !actions.is_empty() {
@@ -623,6 +755,7 @@ fn render_incident_detail(w: &mut dyn Write, incident: &Incident) -> io::Result<
                 "Backtrace:      {}",
                 first_backtrace_line.as_deref().unwrap_or("-")
             )?;
+            render_error_causes(w, error_causes)?;
         }
         Incident::PerformanceIncident {
             action_names,
@@ -677,6 +810,27 @@ fn render_incident_detail(w: &mut dyn Write, incident: &Incident) -> io::Result<
 mod tests {
     use super::*;
 
+    fn exception_incident() -> Incident {
+        Incident::ExceptionIncident {
+            id: "exc-1".to_string(),
+            number: 7,
+            state: Some("OPEN".to_string()),
+            severity: Some("CRITICAL".to_string()),
+            description: Some("Something broke".to_string()),
+            count: 3,
+            created_at: Some("2026-07-01T00:00:00Z".to_string()),
+            last_occurred_at: Some("2026-07-02T00:00:00Z".to_string()),
+            updated_at: None,
+            exception_name: Some("RuntimeError".to_string()),
+            exception_message: Some("stale incident message".to_string()),
+            action_names: Some(vec!["UsersController#show".to_string()]),
+            namespace: Some("web".to_string()),
+            first_backtrace_line: Some("app/models/user.rb:10".to_string()),
+            digests: Some(vec!["digest-1".to_string()]),
+            assignees: None,
+        }
+    }
+
     #[test]
     fn render_incident_table_uses_shared_table_format() {
         let incidents = vec![Incident::LogIncident {
@@ -701,5 +855,51 @@ mod tests {
         assert!(output.contains("| TYPE"));
         assert!(output.contains("42"));
         assert!(output.contains("1 incident(s) found."));
+    }
+
+    #[test]
+    fn render_incident_detail_uses_sample_error_and_causes() {
+        let incident = exception_incident();
+        let sample = ExceptionIncidentSample {
+            exception: crate::api::ExceptionIncidentSampleException {
+                name: Some("NoMethodError".to_string()),
+                message: Some("fresher sample message".to_string()),
+            },
+            error_causes: vec![crate::api::ExceptionIncidentErrorCause {
+                name: "ArgumentError".to_string(),
+                message: Some("argument out of range".to_string()),
+                first_line: Some(ExceptionIncidentErrorCauseLine {
+                    original: None,
+                    path: Some("app/models/report.rb".to_string()),
+                    line: Some("42".to_string()),
+                }),
+            }],
+        };
+        let exception_error = exception_error_from_sample(&sample);
+        let error_causes = exception_causes_from_sample(&sample);
+        let mut buf = Vec::new();
+
+        render_incident_detail(&mut buf, &incident, exception_error.as_ref(), &error_causes)
+            .unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        assert!(output.contains("Exception:      NoMethodError"));
+        assert!(output.contains("Message:        fresher sample message"));
+        assert!(!output.contains("stale incident message"));
+        assert!(output.contains("Error causes:"));
+        assert!(output.contains("ArgumentError: argument out of range - app/models/report.rb:42"));
+    }
+
+    #[test]
+    fn render_incident_detail_falls_back_to_incident_error() {
+        let incident = exception_incident();
+        let mut buf = Vec::new();
+
+        render_incident_detail(&mut buf, &incident, None, &[]).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        assert!(output.contains("Exception:      RuntimeError"));
+        assert!(output.contains("Message:        stale incident message"));
+        assert!(!output.contains("Error causes:"));
     }
 }
