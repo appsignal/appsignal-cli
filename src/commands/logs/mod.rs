@@ -464,7 +464,7 @@ fn render_log_line_human(w: &mut dyn Write, line: &LogLine) -> io::Result<()> {
     writeln!(
         w,
         "{} {:<8} {:<16} {:<24} {}{}",
-        &line.timestamp,
+        line.timestamp,
         line.severity.to_uppercase(),
         source_name,
         line.hostname,
