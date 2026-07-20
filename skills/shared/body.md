@@ -45,6 +45,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli triggers create [app options] [definition flags]` | Create an anomaly detection trigger |
 | `appsignal-cli triggers update --id <id> [app options] [definition flags]` | Update a trigger by creating a new version |
 | `appsignal-cli triggers archive --id <id> [app options]` | Archive a trigger |
+| `appsignal-cli feedback [MESSAGE] [--email <email>] [--no-email]` | Send CLI feedback about missing endpoints, missing features, or broken behavior |
 | `appsignal-cli skill install [--target TARGET] [--dir PATH] [--force]` | Install the bundled AppSignal skill |
 | `appsignal-cli skill update [--target TARGET] [--dir PATH]` | Update an installed AppSignal skill to the bundled version |
 | `appsignal-cli skill status [--target TARGET] [--dir PATH]` | Show whether installed AppSignal skills are current, outdated, missing, or unversioned; defaults to all supported targets |
@@ -57,6 +58,23 @@ Most app-specific commands accept either:
 - `--app <name> [--environment <env>]`
 
 Use `--app-id` when available. Use `--environment` when the same app name exists in multiple environments.
+
+## CLI Feedback
+
+Use `appsignal-cli feedback` when AppSignal CLI is missing an endpoint, missing a feature, or not working as expected. Pass short feedback as an argument, or pipe a longer multi-line report on stdin.
+
+```bash
+appsignal-cli feedback "Please add support for uptime monitor endpoints" --email ada@example.com
+```
+
+```bash
+appsignal-cli --output json feedback --email ada@example.com <<'EOF'
+The logs search command needs a way to export all fields without truncation.
+This is important for LLM workflows that analyze structured log attributes.
+EOF
+```
+
+The optional `--email` value is stored in the active AppSignal config for future feedback. Use `--no-email` to omit contact details.
 
 ## AppSignal URL Structure
 

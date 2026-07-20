@@ -83,11 +83,30 @@ enum Commands {
         #[command(subcommand)]
         action: TriggerAction,
     },
+    /// Send feedback about appsignal-cli to AppSignal
+    Feedback(FeedbackArgs),
     /// Install the bundled AppSignal LLM skill
     Skill {
         #[command(subcommand)]
         action: SkillAction,
     },
+}
+
+#[derive(Args)]
+#[command(group(ArgGroup::new("contact").args(["email", "no_email"])))]
+struct FeedbackArgs {
+    /// Feedback text. If omitted, reads from stdin.
+    #[arg(short = 'm', long, value_name = "TEXT", conflicts_with = "text")]
+    message: Option<String>,
+    /// Contact email for follow-up. Saved to the active config for next time.
+    #[arg(long)]
+    email: Option<String>,
+    /// Do not include a contact email, even if one is saved.
+    #[arg(long)]
+    no_email: bool,
+    /// Feedback text as positional arguments. Use quotes for multi-word feedback.
+    #[arg(value_name = "MESSAGE")]
+    text: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -1132,6 +1151,7 @@ impl_telemetry_command!(Commands {
     Self::Traces { action } => action.telemetry_command(),
     Self::Dashboards { action } => action.telemetry_command(),
     Self::Triggers { action } => action.telemetry_command(),
+    Self::Feedback(_) => telemetry::TelemetryCommand::Feedback,
     Self::Skill { action } => action.telemetry_command()
 });
 
@@ -2054,6 +2074,18 @@ async fn run(cli: Cli) -> Result<()> {
                 .await?
             }
         },
+        Commands::Feedback(args) => {
+            commands::feedback::send(
+                commands::feedback::FeedbackOptions {
+                    message: args.message,
+                    text: args.text,
+                    email: args.email,
+                    no_email: args.no_email,
+                },
+                cli.output,
+            )
+            .await?
+        }
         Commands::Skill { action } => match action {
             SkillAction::Install { target, dir, force } => {
                 commands::skill::install(&target, dir.as_deref(), force, cli.output)?
@@ -2145,6 +2177,26 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("--app-id"));
         assert!(message.contains("--app"));
+    }
+
+    #[test]
+    fn feedback_parses_email_after_positional_message() {
+        let cli = Cli::try_parse_from([
+            "appsignal-cli",
+            "feedback",
+            "please add uptime monitors",
+            "--email",
+            "ada@example.com",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Feedback(args) => {
+                assert_eq!(args.text, vec!["please add uptime monitors"]);
+                assert_eq!(args.email.as_deref(), Some("ada@example.com"));
+            }
+            _ => panic!("feedback command did not parse as feedback"),
+        }
     }
 
     #[test]

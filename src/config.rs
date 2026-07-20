@@ -25,6 +25,8 @@ pub struct Config {
     pub endpoint: Option<String>,
     /// Optional REST/public API base URL. Falls back to `endpoint` when unset.
     pub rest_endpoint: Option<String>,
+    /// Optional contact email used when submitting CLI feedback.
+    pub feedback_email: Option<String>,
     /// OAuth client ID used for login and token refresh. Defaults to the production
     /// client when unset.
     pub oauth_client_id: Option<String>,
@@ -242,6 +244,7 @@ impl PartialEq for Config {
         self.org == other.org
             && self.endpoint == other.endpoint
             && self.rest_endpoint == other.rest_endpoint
+            && self.feedback_email == other.feedback_email
             && self.oauth_client_id == other.oauth_client_id
             && self.oauth == other.oauth
     }
