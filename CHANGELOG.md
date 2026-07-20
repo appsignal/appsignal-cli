@@ -1,5 +1,17 @@
 # AppSignal CLI changelog
 
+## 2.0.2
+
+_Published on 2026-07-20._
+
+### Added
+
+- Added appsignal-cli feedback so users and LLM workflows can send missing endpoint, feature, or broken behavior reports directly from the CLI, with optional contact email reuse for follow-up. (patch [ce8f6d0](https://github.com/appsignal/appsignal-cli/commit/ce8f6d0b5f9c1b3e475e18334c821d69f43aaaba))
+
+### Changed
+
+- Exception incident details now show error causes when sample data is available, making wrapped root causes visible directly from incidents show. (patch [ce8f6d0](https://github.com/appsignal/appsignal-cli/commit/ce8f6d0b5f9c1b3e475e18334c821d69f43aaaba))
+
 ## 2.0.1
 
 _Published on 2026-07-01._
