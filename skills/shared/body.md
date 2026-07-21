@@ -28,7 +28,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents list-anomalies [options]` | List anomaly incidents |
 | `appsignal-cli incidents show --number <N> [app options]` | Show details for a single incident |
 | `appsignal-cli incidents update --number <N[,N...]> [flags]` | Update state, severity, notification frequency, assignees, or description; multiple numbers currently support `--state` only |
-| `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
+| `appsignal-cli incidents add-note --number <N> --content "..."` | Add a Markdown-formatted note to an incident |
 | `appsignal-cli incidents list-notes --number <N>` | List incident notes with IDs, authors, sources, permissions, and timestamps |
 | `appsignal-cli incidents update-note --number <N> --id <ID> --content "..."` | Update one of your incident notes |
 | `appsignal-cli incidents delete-note --number <N> --id <ID>` | Delete one of your incident notes |
@@ -458,10 +458,10 @@ Close an incident:
 appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --state CLOSED
 ```
 
-Add an incident note:
+Add an incident note. Note content supports Markdown; prefer Markdown for structured findings, actions, code, and links:
 
 ```bash
-appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Investigated and resolved."
+appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content $'## Investigation\n\n- Root cause: connection pool exhaustion\n- Resolution: increased the pool limit'
 
 # Update or delete a note using its AppSignal note ID
 appsignal-cli incidents list-notes --number 42 --app "MyApp" --environment "production"
