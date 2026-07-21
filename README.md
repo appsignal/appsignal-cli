@@ -141,6 +141,12 @@ appsignal-cli incidents list-anomalies --app "MyApp" --environment "production"
 # Close an incident
 appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --state CLOSED
 
+# Notify only if a closed incident regresses
+appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --notification-frequency FIRST_AFTER_CLOSE
+
+# Notify on the tenth occurrence each day
+appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --notification-frequency NTH_IN_DAY --notification-threshold 10
+
 # Close multiple incidents at once
 appsignal-cli incidents update --number 41,42,43 --app "MyApp" --environment "production" --state CLOSED
 
@@ -242,7 +248,7 @@ appsignal-cli skill install --target claude
 | `incidents list-performance` | List performance incidents (supports text search) |
 | `incidents list-anomalies` | List anomaly detection incidents |
 | `incidents show --number <N>` | Show details for a specific incident |
-| `incidents update --number <N[,N...]>` | Update incident state, severity, or assignees; multiple numbers currently support `--state` only |
+| `incidents update --number <N[,N...]>` | Update incident state, severity, notification frequency, or assignees; multiple numbers currently support `--state` only |
 | `incidents add-note --number <N> --content "..."` | Add a note to an incident |
 | `incidents list-notes --number <N>` | List incident notes with IDs, authors, sources, permissions, and timestamps |
 | `incidents update-note --number <N> --id <ID> --content "..."` | Update one of your incident notes |
@@ -363,6 +369,8 @@ All log and incident commands accept either `--app-id <id>` or `--app <name> [--
 |---|---|
 | `--state <STATE>` | New state: `OPEN`, `CLOSED`, or `WIP` |
 | `--severity <SEV>` | New severity: `UNTRIAGED`, `CRITICAL`, `HIGH`, `LOW`, `NONE`, or `INFORMATIONAL` |
+| `--notification-frequency <FREQUENCY>` | When to notify: `ALWAYS`, `NEVER`, `FIRST_IN_DEPLOY`, `FIRST_AFTER_CLOSE`, `NTH_IN_HOUR`, or `NTH_IN_DAY` |
+| `--notification-threshold <N>` | Occurrence number that triggers `NTH_IN_HOUR` or `NTH_IN_DAY` notifications |
 | `--assign <IDs>` | Comma-separated user IDs to assign |
 | `--assign-me` | Assign the incident to the authenticated CLI user |
 | `--description <text>` | New description |

@@ -11,7 +11,7 @@ mod version_check;
 use anyhow::{bail, Result};
 use clap::{ArgGroup, Args, Parser, Subcommand};
 
-use crate::api::AppResourceSection;
+use crate::api::{AppResourceSection, IncidentNotificationFrequency};
 use crate::commands::skill::InstallTarget;
 use crate::error::CliError;
 use crate::output::Output;
@@ -412,7 +412,7 @@ enum IncidentsAction {
         #[arg(long)]
         org: Option<String>,
     },
-    /// Update an incident (state, severity, assignees)
+    /// Update an incident (state, severity, notification frequency, assignees)
     #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
     Update {
         /// Incident number. Repeat or pass a comma-separated list for bulk state changes.
@@ -436,6 +436,12 @@ enum IncidentsAction {
         /// New severity: UNTRIAGED, CRITICAL, HIGH, LOW, NONE, or INFORMATIONAL
         #[arg(long)]
         severity: Option<String>,
+        /// Notification frequency: ALWAYS, NEVER, FIRST_IN_DEPLOY, FIRST_AFTER_CLOSE, NTH_IN_HOUR, or NTH_IN_DAY
+        #[arg(long, value_enum)]
+        notification_frequency: Option<IncidentNotificationFrequency>,
+        /// Occurrence number that triggers NTH_IN_HOUR or NTH_IN_DAY notifications
+        #[arg(long, value_parser = clap::value_parser!(i64).range(1..))]
+        notification_threshold: Option<i64>,
         /// Comma-separated user names or IDs to add as assignees
         #[arg(long)]
         assign: Option<String>,
@@ -1654,6 +1660,8 @@ async fn run(cli: Cli) -> Result<()> {
                 org,
                 state,
                 severity,
+                notification_frequency,
+                notification_threshold,
                 assign,
                 assign_me,
                 unassign,
@@ -1671,6 +1679,8 @@ async fn run(cli: Cli) -> Result<()> {
                     org.as_deref(),
                     state.as_deref(),
                     severity.as_deref(),
+                    notification_frequency,
+                    notification_threshold,
                     assign_list.as_deref(),
                     assign_me,
                     unassign_list.as_deref(),
@@ -2357,6 +2367,39 @@ mod tests {
             delete.telemetry_command(),
             telemetry::TelemetryCommand::IncidentsDeleteNote
         );
+    }
+
+    #[test]
+    fn incidents_update_parses_notification_frequency() {
+        let cli = Cli::try_parse_from([
+            "appsignal-cli",
+            "incidents",
+            "update",
+            "--number",
+            "42",
+            "--app-id",
+            "app-1",
+            "--notification-frequency",
+            "NTH_IN_DAY",
+            "--notification-threshold",
+            "10",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Incidents {
+                action:
+                    IncidentsAction::Update {
+                        notification_frequency,
+                        notification_threshold,
+                        ..
+                    },
+            } => assert_eq!(
+                (notification_frequency, notification_threshold),
+                (Some(IncidentNotificationFrequency::NthInDay), Some(10))
+            ),
+            _ => panic!("incidents update did not parse"),
+        }
     }
 
     #[test]

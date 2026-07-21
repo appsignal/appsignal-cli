@@ -27,7 +27,7 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents list-performance [options]` | List performance incidents |
 | `appsignal-cli incidents list-anomalies [options]` | List anomaly incidents |
 | `appsignal-cli incidents show --number <N> [app options]` | Show details for a single incident |
-| `appsignal-cli incidents update --number <N[,N...]> [flags]` | Update state, severity, assignees, or description; multiple numbers currently support `--state` only |
+| `appsignal-cli incidents update --number <N[,N...]> [flags]` | Update state, severity, notification frequency, assignees, or description; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
 | `appsignal-cli incidents list-notes --number <N>` | List incident notes with IDs, authors, sources, permissions, and timestamps |
 | `appsignal-cli incidents update-note --number <N> --id <ID> --content "..."` | Update one of your incident notes |
@@ -190,6 +190,8 @@ Useful `incidents update` flags:
 |---|---|
 | `--state <OPEN|CLOSED|WIP>` | Change state |
 | `--severity <...>` | Change severity |
+| `--notification-frequency <...>` | Change when notifications are sent, such as `FIRST_AFTER_CLOSE` |
+| `--notification-threshold <N>` | Set the occurrence number for `NTH_IN_HOUR` or `NTH_IN_DAY` |
 | `--assign <id,id>` | Assign users |
 | `--assign-me` | Assign the incident to the current CLI user |
 | `--description "..."` | Update description |

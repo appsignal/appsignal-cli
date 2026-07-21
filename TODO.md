@@ -112,6 +112,8 @@ Notes:
 Covered today:
 - `--state`
 - `--severity`
+- `--notification-frequency`
+- `--notification-threshold`
 - `--assign`
 - `--assign-me`
 - `--unassign`
@@ -119,7 +121,7 @@ Covered today:
 - bulk state updates by explicit incident number
 
 Still missing:
-- [ ] bulk severity, assignee, or description updates
+- [ ] bulk severity, notification frequency, assignee, or description updates
 
 Notes:
 - The CLI resolves assignee names case-insensitively and merges them with the current incident assignee list.

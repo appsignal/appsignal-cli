@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
+use clap::ValueEnum;
 use reqwest::{Client, Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -209,6 +210,18 @@ pub enum AppResourceSection {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DashboardSource {
     UserCreated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[value(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum IncidentNotificationFrequency {
+    Always,
+    Never,
+    FirstInDeploy,
+    FirstAfterClose,
+    NthInHour,
+    NthInDay,
 }
 
 impl DashboardSource {
@@ -2010,7 +2023,7 @@ impl AppSignalClient {
             .and_then(|incident| incident.sample))
     }
 
-    /// Update a single incident (state, severity, assignees, description).
+    /// Update a single incident (state, severity, notification frequency, assignees, description).
     #[allow(clippy::too_many_arguments)]
     pub async fn update_incident(
         &self,
@@ -2018,12 +2031,14 @@ impl AppSignalClient {
         incident_number: i64,
         state: Option<&str>,
         severity: Option<&str>,
+        notification_frequency: Option<IncidentNotificationFrequency>,
+        notification_threshold: Option<i64>,
         assignee_ids: Option<&[String]>,
         description: Option<&str>,
     ) -> Result<Incident> {
         let query = r#"
-            mutation UpdateIncident($appId: String!, $number: Int!, $state: IncidentStateEnum, $severity: IncidentSeverityEnum, $assigneeIds: [String!], $description: String) {
-                updateIncident(appId: $appId, number: $number, state: $state, severity: $severity, assigneeIds: $assigneeIds, description: $description) {
+            mutation UpdateIncident($appId: String!, $number: Int!, $state: IncidentStateEnum, $severity: IncidentSeverityEnum, $notificationFrequency: IncidentNotificationFrequencyEnum, $notificationThreshold: Int, $assigneeIds: [String!], $description: String) {
+                updateIncident(appId: $appId, number: $number, state: $state, severity: $severity, notificationFrequency: $notificationFrequency, notificationThreshold: $notificationThreshold, assigneeIds: $assigneeIds, description: $description) {
                     __typename
                     ... on ExceptionIncident {
                         id number state severity description count
@@ -2059,6 +2074,12 @@ impl AppSignalClient {
         }
         if let Some(s) = severity {
             vars["severity"] = json!(s);
+        }
+        if let Some(frequency) = notification_frequency {
+            vars["notificationFrequency"] = json!(frequency);
+        }
+        if let Some(threshold) = notification_threshold {
+            vars["notificationThreshold"] = json!(threshold);
         }
         if let Some(ids) = assignee_ids {
             vars["assigneeIds"] = json!(ids);
@@ -4331,6 +4352,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/graphql"))
+            .and(body_string_contains(
+                r#""notificationFrequency":"FIRST_AFTER_CLOSE""#,
+            ))
+            .and(body_string_contains(r#""notificationThreshold":10"#))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(graphql_response(json!({
                     "updateIncident": {
@@ -4354,7 +4379,16 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let incident = client
-            .update_incident("app1", 42, Some("CLOSED"), Some("CRITICAL"), None, None)
+            .update_incident(
+                "app1",
+                42,
+                Some("CLOSED"),
+                Some("CRITICAL"),
+                Some(IncidentNotificationFrequency::FirstAfterClose),
+                Some(10),
+                None,
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(incident.number(), 42);
