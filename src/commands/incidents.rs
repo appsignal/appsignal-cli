@@ -7,7 +7,7 @@ use tabled::Tabled;
 use super::{authenticated_client, resolve_org};
 use crate::api::{
     resolve_user_ids, ExceptionIncidentErrorCauseLine, ExceptionIncidentSample, Incident,
-    IncidentNote,
+    IncidentNote, IncidentNotificationFrequency,
 };
 use crate::config::Config;
 use crate::output::{self, Output};
@@ -369,7 +369,7 @@ pub async fn show(
     )
 }
 
-/// Update an incident (state, severity, assignees, description).
+/// Update an incident (state, severity, notification frequency, assignees, description).
 /// Assign/unassign accept user names (resolved case-insensitively) or raw IDs.
 #[allow(clippy::too_many_arguments)]
 pub async fn update(
@@ -380,6 +380,8 @@ pub async fn update(
     org: Option<&str>,
     state: Option<&str>,
     severity: Option<&str>,
+    notification_frequency: Option<IncidentNotificationFrequency>,
+    notification_threshold: Option<i64>,
     assign: Option<&[String]>,
     assign_me: bool,
     unassign: Option<&[String]>,
@@ -400,13 +402,15 @@ pub async fn update(
         }
 
         if severity.is_some()
+            || notification_frequency.is_some()
+            || notification_threshold.is_some()
             || assign.is_some()
             || assign_me
             || unassign.is_some()
             || description.is_some()
         {
             anyhow::bail!(
-                "Bulk incident updates currently support only `--state`. Use a single `--number` for severity, assignee, or description changes."
+                "Bulk incident updates currently support only `--state`. Use a single `--number` for severity, notification settings, assignee, or description changes."
             );
         }
 
@@ -479,6 +483,8 @@ pub async fn update(
             incident_number,
             state,
             severity,
+            notification_frequency,
+            notification_threshold,
             final_assignee_ids.as_deref(),
             description,
         )
