@@ -29,6 +29,9 @@ Use this skill when the user wants to inspect AppSignal data through `appsignal-
 | `appsignal-cli incidents show --number <N> [app options]` | Show details for a single incident |
 | `appsignal-cli incidents update --number <N[,N...]> [flags]` | Update state, severity, assignees, or description; multiple numbers currently support `--state` only |
 | `appsignal-cli incidents add-note --number <N> --content "..."` | Add a note to an incident |
+| `appsignal-cli incidents list-notes --number <N>` | List incident notes with IDs, authors, sources, permissions, and timestamps |
+| `appsignal-cli incidents update-note --number <N> --id <ID> --content "..."` | Update one of your incident notes |
+| `appsignal-cli incidents delete-note --number <N> --id <ID>` | Delete one of your incident notes |
 | `appsignal-cli samples incident --number <N> [app options]` | List performance samples/traces for a performance incident |
 | `appsignal-cli samples list --namespace <ns> --action <name> [app options]` | List performance samples/traces for a known namespace/action |
 | `appsignal-cli samples errors --digest <digest> [app options]` | List error traces for an exception digest |
@@ -457,6 +460,11 @@ Add an incident note:
 
 ```bash
 appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Investigated and resolved."
+
+# Update or delete a note using its AppSignal note ID
+appsignal-cli incidents list-notes --number 42 --app "MyApp" --environment "production"
+appsignal-cli incidents update-note --number 42 --app "MyApp" --environment "production" --id <note-id> --content "Investigation updated."
+appsignal-cli incidents delete-note --number 42 --app "MyApp" --environment "production" --id <note-id>
 ```
 
 Search logs with JSON output:

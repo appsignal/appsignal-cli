@@ -126,6 +126,9 @@ Notes:
 
 ### `create_incident_note`
 - [x] `incidents add-note --number <N> --content "..."`
+- [x] `incidents list-notes --number <N>`
+- [x] `incidents update-note --number <N> --id <ID> --content "..."`
+- [x] `incidents delete-note --number <N> --id <ID>`
 
 ---
 
