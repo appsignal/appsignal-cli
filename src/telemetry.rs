@@ -71,6 +71,12 @@ pub enum TelemetryCommand {
     IncidentsUpdate,
     #[serde(rename = "incidents.add-note")]
     IncidentsAddNote,
+    #[serde(rename = "incidents.list-notes")]
+    IncidentsListNotes,
+    #[serde(rename = "incidents.update-note")]
+    IncidentsUpdateNote,
+    #[serde(rename = "incidents.delete-note")]
+    IncidentsDeleteNote,
     #[serde(rename = "logs.tail")]
     LogsTail,
     #[serde(rename = "logs.search")]

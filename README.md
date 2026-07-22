@@ -149,6 +149,9 @@ appsignal-cli incidents update --number 42 --app "MyApp" --environment "producti
 
 # Add a note to an incident
 appsignal-cli incidents add-note --number 42 --app "MyApp" --environment "production" --content "Root cause identified."
+appsignal-cli incidents list-notes --number 42 --app "MyApp" --environment "production"
+appsignal-cli incidents update-note --number 42 --app "MyApp" --environment "production" --id <note-id> --content "Root cause confirmed."
+appsignal-cli incidents delete-note --number 42 --app "MyApp" --environment "production" --id <note-id>
 ```
 
 ### Logs
@@ -241,6 +244,9 @@ appsignal-cli skill install --target claude
 | `incidents show --number <N>` | Show details for a specific incident |
 | `incidents update --number <N[,N...]>` | Update incident state, severity, or assignees; multiple numbers currently support `--state` only |
 | `incidents add-note --number <N> --content "..."` | Add a note to an incident |
+| `incidents list-notes --number <N>` | List incident notes with IDs, authors, sources, permissions, and timestamps |
+| `incidents update-note --number <N> --id <ID> --content "..."` | Update one of your incident notes |
+| `incidents delete-note --number <N> --id <ID>` | Delete one of your incident notes |
 
 ### `logs`
 

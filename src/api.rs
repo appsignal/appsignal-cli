@@ -499,6 +499,47 @@ struct AppSingleIncident {
 }
 
 #[derive(Debug, Deserialize)]
+struct AppIncidentNotesData {
+    app: Option<AppIncidentNotes>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppIncidentNotes {
+    incident: Option<IncidentNotesLogbook>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IncidentNotesLogbook {
+    logbook: IncidentLogbook,
+}
+
+#[derive(Debug, Deserialize)]
+struct IncidentLogbook {
+    items: Vec<IncidentLogbookItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "__typename")]
+enum IncidentLogbookItem {
+    Note(IncidentNote),
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncidentNote {
+    pub id: String,
+    pub content: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub viewer_can_edit: bool,
+    pub viewer_can_delete: bool,
+    pub via: Option<String>,
+    pub author: Option<User>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AppExceptionIncidentSampleData {
     app: Option<AppExceptionIncidentSample>,
 }
@@ -601,6 +642,23 @@ struct BulkUpdateIncidentsData {
 struct CreateIncidentNoteData {
     #[serde(rename = "createIncidentNote")]
     create_incident_note: Option<Incident>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateIncidentNoteData {
+    #[serde(rename = "updateLogbookNote")]
+    update_logbook_note: Option<LogbookMutationResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteIncidentNoteData {
+    #[serde(rename = "deleteLogbookNote")]
+    delete_logbook_note: Option<LogbookMutationResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LogbookMutationResult {
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1874,6 +1932,47 @@ impl AppSignalClient {
             .with_context(|| CliError::msg(format!("Incident #{} not found", incident_number)))
     }
 
+    /// List notes on a single incident.
+    pub async fn list_incident_notes(
+        &self,
+        app_id: &str,
+        incident_number: i64,
+    ) -> Result<Vec<IncidentNote>> {
+        let query = r#"
+            query AppIncidentNotes($appId: String!, $incidentNumber: Int!) {
+                app(id: $appId) {
+                    incident(incidentNumber: $incidentNumber) {
+                        ... on ExceptionIncident { logbook { items { __typename ... on Note { id content createdAt updatedAt viewerCanEdit viewerCanDelete via author { id name } } } } }
+                        ... on PerformanceIncident { logbook { items { __typename ... on Note { id content createdAt updatedAt viewerCanEdit viewerCanDelete via author { id name } } } } }
+                        ... on AnomalyIncident { logbook { items { __typename ... on Note { id content createdAt updatedAt viewerCanEdit viewerCanDelete via author { id name } } } } }
+                        ... on LogIncident { logbook { items { __typename ... on Note { id content createdAt updatedAt viewerCanEdit viewerCanDelete via author { id name } } } } }
+                    }
+                }
+            }
+        "#;
+
+        let data: AppIncidentNotesData = self
+            .graphql(
+                query,
+                json!({ "appId": app_id, "incidentNumber": incident_number }),
+            )
+            .await?;
+        let app = data.app.context(CliError::msg("Application not found"))?;
+        let incident = app
+            .incident
+            .with_context(|| CliError::msg(format!("Incident #{} not found", incident_number)))?;
+
+        Ok(incident
+            .logbook
+            .items
+            .into_iter()
+            .filter_map(|item| match item {
+                IncidentLogbookItem::Note(note) => Some(note),
+                IncidentLogbookItem::Other => None,
+            })
+            .collect())
+    }
+
     /// Fetch the latest exception sample fields used to enrich exception incident details.
     pub async fn get_exception_incident_sample(
         &self,
@@ -2083,6 +2182,72 @@ impl AppSignalClient {
                 incident_number
             ))
         })
+    }
+
+    /// Update a note on an incident.
+    pub async fn update_incident_note(
+        &self,
+        app_id: &str,
+        incident_id: &str,
+        note_id: &str,
+        content: &str,
+    ) -> Result<()> {
+        let query = r#"
+            mutation UpdateIncidentNote($appId: String!, $incidentId: String!, $noteId: String!, $content: String!) {
+                updateLogbookNote(appId: $appId, logbookableType: INCIDENT, logbookableId: $incidentId, id: $noteId, content: $content) {
+                    id
+                }
+            }
+        "#;
+
+        let data: UpdateIncidentNoteData = self
+            .graphql(
+                query,
+                json!({
+                    "appId": app_id,
+                    "incidentId": incident_id,
+                    "noteId": note_id,
+                    "content": content,
+                }),
+            )
+            .await?;
+
+        data.update_logbook_note
+            .map(|logbook| logbook.id)
+            .context(CliError::msg("Failed to update incident note"))?;
+        Ok(())
+    }
+
+    /// Delete a note from an incident.
+    pub async fn delete_incident_note(
+        &self,
+        app_id: &str,
+        incident_id: &str,
+        note_id: &str,
+    ) -> Result<()> {
+        let query = r#"
+            mutation DeleteIncidentNote($appId: String!, $incidentId: String!, $noteId: String!) {
+                deleteLogbookNote(appId: $appId, logbookableType: INCIDENT, logbookableId: $incidentId, id: $noteId) {
+                    id
+                }
+            }
+        "#;
+
+        let data: DeleteIncidentNoteData = self
+            .graphql(
+                query,
+                json!({
+                    "appId": app_id,
+                    "incidentId": incident_id,
+                    "noteId": note_id,
+                }),
+            )
+            .await?;
+
+        data.delete_logbook_note
+            .map(|logbook| logbook.id)
+            .context(CliError::msg("Failed to delete incident note"))?;
+        Ok(())
     }
 
     /// Create a trigger, or create a new trigger version when `previous_trigger_id` is provided.
@@ -4202,6 +4367,14 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/graphql"))
+            .and(header(
+                CLIENT_NAME_HEADER.to_ascii_lowercase().as_str(),
+                CLIENT_NAME,
+            ))
+            .and(header(
+                CLIENT_VERSION_HEADER.to_ascii_lowercase().as_str(),
+                CLIENT_VERSION,
+            ))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(graphql_response(json!({
                     "createIncidentNote": {
@@ -4230,6 +4403,105 @@ mod tests {
             .unwrap();
         assert_eq!(incident.number(), 42);
         assert_eq!(incident.kind(), "exception");
+    }
+
+    #[tokio::test]
+    async fn test_list_incident_notes() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("AppIncidentNotes"))
+            .and(body_string_contains(r#""incidentNumber":42"#))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "app": {
+                        "incident": {
+                            "logbook": {
+                                "items": [
+                                    {
+                                        "__typename": "StateChange"
+                                    },
+                                    {
+                                        "__typename": "Note",
+                                        "id": "note-1",
+                                        "content": "Investigation complete",
+                                        "createdAt": "2026-07-22T10:00:00Z",
+                                        "updatedAt": "2026-07-22T11:00:00Z",
+                                        "viewerCanEdit": true,
+                                        "viewerCanDelete": false,
+                                        "via": "cli",
+                                        "author": { "id": "user-1", "name": "Ada" }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        let notes = client.list_incident_notes("app1", 42).await.unwrap();
+
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, "note-1");
+        assert_eq!(notes[0].content, "Investigation complete");
+        assert!(notes[0].viewer_can_edit);
+        assert!(!notes[0].viewer_can_delete);
+        assert_eq!(
+            notes[0].author.as_ref().unwrap().name.as_deref(),
+            Some("Ada")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_incident_note() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("updateLogbookNote"))
+            .and(body_string_contains("logbookableType: INCIDENT"))
+            .and(body_string_contains(r#""incidentId":"incident-1""#))
+            .and(body_string_contains(r#""noteId":"note-1""#))
+            .and(body_string_contains(r#""content":"Updated note""#))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "updateLogbookNote": { "id": "logbook-1" }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        client
+            .update_incident_note("app1", "incident-1", "note-1", "Updated note")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_delete_incident_note() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("deleteLogbookNote"))
+            .and(body_string_contains("logbookableType: INCIDENT"))
+            .and(body_string_contains(r#""incidentId":"incident-1""#))
+            .and(body_string_contains(r#""noteId":"note-1""#))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(graphql_response(json!({
+                    "deleteLogbookNote": { "id": "logbook-1" }
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
+        client
+            .delete_incident_note("app1", "incident-1", "note-1")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

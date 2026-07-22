@@ -7,6 +7,7 @@ use tabled::Tabled;
 use super::{authenticated_client, resolve_org};
 use crate::api::{
     resolve_user_ids, ExceptionIncidentErrorCauseLine, ExceptionIncidentSample, Incident,
+    IncidentNote,
 };
 use crate::config::Config;
 use crate::output::{self, Output};
@@ -47,6 +48,30 @@ fn is_empty_exception_errors(errors: &&[ExceptionErrorView]) -> bool {
 struct IncidentNoteResponse {
     incident_number: i64,
     message: String,
+}
+
+#[derive(Serialize)]
+struct IncidentNotesResponse<'a> {
+    incident_number: i64,
+    notes: &'a [IncidentNote],
+}
+
+#[derive(Tabled)]
+struct IncidentNoteRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "AUTHOR")]
+    author: String,
+    #[tabled(rename = "SOURCE")]
+    source: String,
+    #[tabled(rename = "CAN EDIT")]
+    can_edit: &'static str,
+    #[tabled(rename = "CAN DELETE")]
+    can_delete: &'static str,
+    #[tabled(rename = "UPDATED")]
+    updated_at: String,
+    #[tabled(rename = "CONTENT")]
+    content: String,
 }
 
 #[derive(Tabled)]
@@ -501,6 +526,136 @@ pub async fn add_note(
     )
 }
 
+/// List notes on an incident.
+pub async fn list_notes(
+    incident_number: i64,
+    app_id: Option<&str>,
+    app_name: Option<&str>,
+    environment: Option<&str>,
+    org: Option<&str>,
+    format: Output,
+) -> Result<()> {
+    let mut config = Config::load()?;
+    let org_slug = resolve_org(org, &config)?;
+    let client = authenticated_client(&mut config).await?;
+
+    let resolved_app_id = client
+        .resolve_app_id(&org_slug, app_id, app_name, environment)
+        .await?;
+    let notes = client
+        .list_incident_notes(&resolved_app_id, incident_number)
+        .await?;
+
+    output::print_with(
+        IncidentNotesResponse {
+            incident_number,
+            notes: &notes,
+        },
+        format,
+        |w| render_incident_notes(w, &notes),
+    )
+}
+
+/// Update a note on an incident.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_note(
+    incident_number: i64,
+    note_id: &str,
+    content: &str,
+    app_id: Option<&str>,
+    app_name: Option<&str>,
+    environment: Option<&str>,
+    org: Option<&str>,
+    format: Output,
+) -> Result<()> {
+    let mut config = Config::load()?;
+    let org_slug = resolve_org(org, &config)?;
+    let client = authenticated_client(&mut config).await?;
+
+    let resolved_app_id = client
+        .resolve_app_id(&org_slug, app_id, app_name, environment)
+        .await?;
+    let incident = client
+        .get_incident(&resolved_app_id, incident_number)
+        .await?;
+
+    client
+        .update_incident_note(&resolved_app_id, incident.id(), note_id, content)
+        .await?;
+
+    output::print_with(
+        IncidentNoteResponse {
+            incident_number,
+            message: format!("Note updated on incident #{}.", incident_number),
+        },
+        format,
+        |w| writeln!(w, "Note updated on incident #{}.", incident_number),
+    )
+}
+
+/// Delete a note from an incident.
+pub async fn delete_note(
+    incident_number: i64,
+    note_id: &str,
+    app_id: Option<&str>,
+    app_name: Option<&str>,
+    environment: Option<&str>,
+    org: Option<&str>,
+    format: Output,
+) -> Result<()> {
+    let mut config = Config::load()?;
+    let org_slug = resolve_org(org, &config)?;
+    let client = authenticated_client(&mut config).await?;
+
+    let resolved_app_id = client
+        .resolve_app_id(&org_slug, app_id, app_name, environment)
+        .await?;
+    let incident = client
+        .get_incident(&resolved_app_id, incident_number)
+        .await?;
+
+    client
+        .delete_incident_note(&resolved_app_id, incident.id(), note_id)
+        .await?;
+
+    output::print_with(
+        IncidentNoteResponse {
+            incident_number,
+            message: format!("Note deleted from incident #{}.", incident_number),
+        },
+        format,
+        |w| writeln!(w, "Note deleted from incident #{}.", incident_number),
+    )
+}
+
+fn render_incident_notes(w: &mut dyn Write, notes: &[IncidentNote]) -> io::Result<()> {
+    if notes.is_empty() {
+        return writeln!(w, "No notes found.");
+    }
+
+    let rows = notes.iter().map(|note| IncidentNoteRow {
+        id: note.id.clone(),
+        author: note
+            .author
+            .as_ref()
+            .and_then(|author| author.name.clone())
+            .unwrap_or_else(|| "-".to_string()),
+        source: note.via.clone().unwrap_or_else(|| "-".to_string()),
+        can_edit: if note.viewer_can_edit { "yes" } else { "no" },
+        can_delete: if note.viewer_can_delete { "yes" } else { "no" },
+        updated_at: note
+            .updated_at
+            .as_deref()
+            .or(note.created_at.as_deref())
+            .unwrap_or("-")
+            .to_string(),
+        content: output::truncate(&note.content.replace('\n', " "), 60),
+    });
+
+    output::table(w, rows)?;
+    writeln!(w, "{} note(s) found.", notes.len())
+}
+
 fn render_exception_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Result<()> {
     if incidents.is_empty() {
         return writeln!(w, "No exception incidents found.");
@@ -901,5 +1056,43 @@ mod tests {
         assert!(output.contains("Exception:      RuntimeError"));
         assert!(output.contains("Message:        stale incident message"));
         assert!(!output.contains("Error causes:"));
+    }
+
+    #[test]
+    fn render_incident_notes_includes_ids_and_content() {
+        let notes = vec![IncidentNote {
+            id: "note-1".to_string(),
+            content: "Investigated the failure".to_string(),
+            created_at: Some("2026-07-22T10:00:00Z".to_string()),
+            updated_at: None,
+            viewer_can_edit: true,
+            viewer_can_delete: true,
+            via: Some("cli".to_string()),
+            author: Some(crate::api::User {
+                id: "user-1".to_string(),
+                name: Some("Ada".to_string()),
+                email: None,
+            }),
+        }];
+        let mut buf = Vec::new();
+
+        render_incident_notes(&mut buf, &notes).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        assert!(output.contains("note-1"));
+        assert!(output.contains("Ada"));
+        assert!(output.contains("cli"));
+        assert!(output.contains("CAN EDIT"));
+        assert!(output.contains("CAN DELETE"));
+        assert!(output.contains("Investigated the failure"));
+        assert!(output.contains("1 note(s) found."));
+
+        let json = serde_json::to_value(IncidentNotesResponse {
+            incident_number: 42,
+            notes: &notes,
+        })
+        .unwrap();
+        assert_eq!(json["notes"][0]["viewerCanEdit"], true);
+        assert_eq!(json["notes"][0]["viewerCanDelete"], true);
     }
 }

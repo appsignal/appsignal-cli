@@ -471,6 +471,72 @@ enum IncidentsAction {
         #[arg(long)]
         org: Option<String>,
     },
+    /// List notes on an incident, including their IDs
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
+    ListNotes {
+        /// Incident number
+        #[arg(long)]
+        number: i64,
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+    },
+    /// Update one of your notes on an incident
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
+    UpdateNote {
+        /// Incident number
+        #[arg(long)]
+        number: i64,
+        /// Note ID
+        #[arg(long)]
+        id: String,
+        /// Replacement note content (markdown supported)
+        #[arg(long)]
+        content: String,
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+    },
+    /// Delete one of your notes from an incident
+    #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
+    DeleteNote {
+        /// Incident number
+        #[arg(long)]
+        number: i64,
+        /// Note ID
+        #[arg(long)]
+        id: String,
+        /// Application ID (alternative to --app + --environment)
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Application name — used with optional --environment to find the app
+        #[arg(long)]
+        app: Option<String>,
+        /// Environment filter (e.g. "production") — used with --app
+        #[arg(long)]
+        environment: Option<String>,
+        /// Organization slug (uses saved default if omitted)
+        #[arg(long)]
+        org: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1196,7 +1262,10 @@ impl_telemetry_command!(IncidentsAction {
     Self::ListAnomalies { .. } => telemetry::TelemetryCommand::IncidentsListAnomalies,
     Self::Show { .. } => telemetry::TelemetryCommand::IncidentsShow,
     Self::Update { .. } => telemetry::TelemetryCommand::IncidentsUpdate,
-    Self::AddNote { .. } => telemetry::TelemetryCommand::IncidentsAddNote
+    Self::AddNote { .. } => telemetry::TelemetryCommand::IncidentsAddNote,
+    Self::ListNotes { .. } => telemetry::TelemetryCommand::IncidentsListNotes,
+    Self::UpdateNote { .. } => telemetry::TelemetryCommand::IncidentsUpdateNote,
+    Self::DeleteNote { .. } => telemetry::TelemetryCommand::IncidentsDeleteNote
 });
 
 impl_telemetry_command!(LogsAction {
@@ -1621,6 +1690,63 @@ async fn run(cli: Cli) -> Result<()> {
                 commands::incidents::add_note(
                     number,
                     &content,
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+            IncidentsAction::ListNotes {
+                number,
+                app_id,
+                app,
+                environment,
+                org,
+            } => {
+                commands::incidents::list_notes(
+                    number,
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+            IncidentsAction::UpdateNote {
+                number,
+                id,
+                content,
+                app_id,
+                app,
+                environment,
+                org,
+            } => {
+                commands::incidents::update_note(
+                    number,
+                    &id,
+                    &content,
+                    app_id.as_deref(),
+                    app.as_deref(),
+                    environment.as_deref(),
+                    org.as_deref(),
+                    cli.output,
+                )
+                .await?
+            }
+            IncidentsAction::DeleteNote {
+                number,
+                id,
+                app_id,
+                app,
+                environment,
+                org,
+            } => {
+                commands::incidents::delete_note(
+                    number,
+                    &id,
                     app_id.as_deref(),
                     app.as_deref(),
                     environment.as_deref(),
@@ -2177,6 +2303,60 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("--app-id"));
         assert!(message.contains("--app"));
+    }
+
+    #[test]
+    fn incident_note_management_commands_parse() {
+        let list = Cli::try_parse_from([
+            "appsignal-cli",
+            "incidents",
+            "list-notes",
+            "--number",
+            "42",
+            "--app-id",
+            "app-1",
+        ])
+        .unwrap();
+        assert_eq!(
+            list.telemetry_command(),
+            telemetry::TelemetryCommand::IncidentsListNotes
+        );
+
+        let update = Cli::try_parse_from([
+            "appsignal-cli",
+            "incidents",
+            "update-note",
+            "--number",
+            "42",
+            "--id",
+            "note-1",
+            "--content",
+            "Updated note",
+            "--app-id",
+            "app-1",
+        ])
+        .unwrap();
+        assert_eq!(
+            update.telemetry_command(),
+            telemetry::TelemetryCommand::IncidentsUpdateNote
+        );
+
+        let delete = Cli::try_parse_from([
+            "appsignal-cli",
+            "incidents",
+            "delete-note",
+            "--number",
+            "42",
+            "--id",
+            "note-1",
+            "--app-id",
+            "app-1",
+        ])
+        .unwrap();
+        assert_eq!(
+            delete.telemetry_command(),
+            telemetry::TelemetryCommand::IncidentsDeleteNote
+        );
     }
 
     #[test]
