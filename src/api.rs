@@ -2742,6 +2742,7 @@ impl AppSignalClient {
         start: &str,
         end: &str,
         min_duration_ms: Option<f64>,
+        query: Option<&str>,
         limit: i64,
         order: &str,
         cursor_time: Option<&str>,
@@ -2762,6 +2763,9 @@ impl AppSignalClient {
 
         if let Some(duration_ms) = min_duration_ms {
             body["duration_ms"] = json!(duration_ms);
+        }
+        if let Some(query) = query {
+            body["query"] = json!(query);
         }
 
         let resp = self
@@ -2826,12 +2830,13 @@ impl AppSignalClient {
         &self,
         app_id: &str,
         digest: &str,
+        query: Option<&str>,
         limit: i64,
         order: &str,
         cursor_time: Option<&str>,
     ) -> Result<Vec<TraceSummary>> {
         let rest_url = self.rest_url("/api/v2/tracing/traces/errors");
-        let body = json!({
+        let mut body = json!({
             "site_ids": [app_id],
             "digests": [digest],
             "pagination": {
@@ -2840,6 +2845,9 @@ impl AppSignalClient {
                 "cursor": { "time": cursor_time }
             }
         });
+        if let Some(query) = query {
+            body["query"] = json!(query);
+        }
 
         let resp = self
             .rest_request(Method::POST, &rest_url)
@@ -4707,6 +4715,7 @@ mod tests {
                 "\"action_name\":\"PostsController#index\"",
             ))
             .and(body_string_contains("\"duration_ms\":300"))
+            .and(body_string_contains("\"query\":\"tag.region=eu-west\""))
             .and(body_string_contains("\"order\":\"ASC\""))
             .and(body_string_contains("\"time\":\"2025-07-23T08:30:00Z\""))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([
@@ -4735,6 +4744,7 @@ mod tests {
                 "2025-07-23T08:00:00Z",
                 "2025-07-23T09:00:00Z",
                 Some(300.0),
+                Some("tag.region=eu-west"),
                 25,
                 "ASC",
                 Some("2025-07-23T08:30:00Z"),
@@ -4803,6 +4813,7 @@ mod tests {
             .and(path("/api/v2/tracing/traces/errors"))
             .and(body_string_contains("\"site_ids\":[\"app1\"]"))
             .and(body_string_contains("\"digests\":[\"digest-1\"]"))
+            .and(body_string_contains("\"query\":\"tag.region=eu-west\""))
             .and(body_string_contains("\"per_page\":25"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([
                 {
@@ -4823,7 +4834,14 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let traces = client
-            .list_error_traces("app1", "digest-1", 25, "DESC", None)
+            .list_error_traces(
+                "app1",
+                "digest-1",
+                Some("tag.region=eu-west"),
+                25,
+                "DESC",
+                None,
+            )
             .await
             .unwrap();
 

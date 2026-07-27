@@ -710,6 +710,9 @@ enum TracesAction {
         /// Minimum trace duration in milliseconds
         #[arg(long)]
         min_duration_ms: Option<f64>,
+        /// Filter by trace tags or revision (e.g. "tag.region=eu-west")
+        #[arg(long)]
+        query: Option<String>,
         /// Maximum number of samples/traces to return (1-100, default 25)
         #[arg(long, default_value = "25")]
         limit: Option<i64>,
@@ -736,6 +739,9 @@ enum TracesAction {
         /// Minimum trace duration in milliseconds
         #[arg(long)]
         min_duration_ms: Option<f64>,
+        /// Filter by trace tags or revision (e.g. "tag.region=eu-west")
+        #[arg(long)]
+        query: Option<String>,
         /// Maximum number of samples/traces to return per action (1-100, default 25)
         #[arg(long, default_value = "25")]
         limit: Option<i64>,
@@ -750,6 +756,9 @@ enum TracesAction {
         /// Exception incident digest
         #[arg(long)]
         digest: String,
+        /// Filter by trace tags or revision (e.g. "tag.region=eu-west")
+        #[arg(long)]
+        query: Option<String>,
         /// Maximum number of error traces to return (1-100, default 25)
         #[arg(long, default_value = "25")]
         limit: Option<i64>,
@@ -1990,6 +1999,7 @@ async fn run(cli: Cli) -> Result<()> {
                 start,
                 end,
                 min_duration_ms,
+                query,
                 limit,
                 page_all,
             } => {
@@ -2003,6 +2013,7 @@ async fn run(cli: Cli) -> Result<()> {
                     start.as_deref(),
                     end.as_deref(),
                     min_duration_ms,
+                    query.as_deref(),
                     limit,
                     page_all,
                     cli.output,
@@ -2016,6 +2027,7 @@ async fn run(cli: Cli) -> Result<()> {
                 start,
                 end,
                 min_duration_ms,
+                query,
                 limit,
                 page_all,
             } => {
@@ -2029,6 +2041,7 @@ async fn run(cli: Cli) -> Result<()> {
                     start.as_deref(),
                     end.as_deref(),
                     min_duration_ms,
+                    query.as_deref(),
                     limit,
                     page_all,
                     cli.output,
@@ -2038,6 +2051,7 @@ async fn run(cli: Cli) -> Result<()> {
             TracesAction::Errors {
                 app,
                 digest,
+                query,
                 limit,
                 page_all,
             } => {
@@ -2047,6 +2061,7 @@ async fn run(cli: Cli) -> Result<()> {
                     app.environment.as_deref(),
                     app.org.as_deref(),
                     &digest,
+                    query.as_deref(),
                     limit,
                     page_all,
                     cli.output,
@@ -2455,14 +2470,22 @@ mod tests {
             "web",
             "--action",
             "PostsController#index",
+            "--query",
+            "tag.region=eu-west",
             "--page-all",
         ])
         .unwrap();
 
         match cli.command {
             Commands::Traces {
-                action: TracesAction::List { page_all, .. },
-            } => assert!(page_all),
+                action:
+                    TracesAction::List {
+                        query, page_all, ..
+                    },
+            } => {
+                assert_eq!(query.as_deref(), Some("tag.region=eu-west"));
+                assert!(page_all);
+            }
             _ => panic!("samples list did not parse as traces list"),
         }
     }
