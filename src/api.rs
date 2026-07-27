@@ -1652,13 +1652,15 @@ impl AppSignalClient {
         offset: Option<i64>,
         state: Option<&str>,
         order: Option<&str>,
+        start: Option<&str>,
+        end: Option<&str>,
         namespaces: Option<&[String]>,
         action_name: Option<&str>,
     ) -> Result<Vec<Incident>> {
         let query = r#"
-            query AppIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $namespaces: [String], $actionName: String) {
+            query AppIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $start: DateTime, $end: DateTime, $namespaces: [String], $actionName: String) {
                 app(id: $appId) {
-                    incidents(limit: $limit, offset: $offset, state: $state, order: $order, namespaces: $namespaces, actionName: $actionName) {
+                    incidents(limit: $limit, offset: $offset, state: $state, order: $order, start: $start, end: $end, namespaces: $namespaces, actionName: $actionName) {
                         __typename
                         ... on ExceptionIncident {
                             id number state severity description count
@@ -1703,6 +1705,12 @@ impl AppSignalClient {
         if let Some(o) = order {
             vars["order"] = json!(o);
         }
+        if let Some(s) = start {
+            vars["start"] = json!(s);
+        }
+        if let Some(e) = end {
+            vars["end"] = json!(e);
+        }
         if let Some(ns) = namespaces {
             vars["namespaces"] = json!(ns);
         }
@@ -1724,14 +1732,16 @@ impl AppSignalClient {
         offset: Option<i64>,
         state: Option<&str>,
         order: Option<&str>,
+        start: Option<&str>,
+        end: Option<&str>,
         namespaces: Option<&[String]>,
         action_name: Option<&str>,
         query_str: Option<&str>,
     ) -> Result<Vec<Incident>> {
         let query = r#"
-            query AppExceptionIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $namespaces: [String], $actionName: String, $query: String) {
+            query AppExceptionIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $start: DateTime, $end: DateTime, $namespaces: [String], $actionName: String, $query: String) {
                 app(id: $appId) {
-                    exceptionIncidents(limit: $limit, offset: $offset, state: $state, order: $order, namespaces: $namespaces, actionName: $actionName, query: $query) {
+                    exceptionIncidents(limit: $limit, offset: $offset, state: $state, order: $order, start: $start, end: $end, namespaces: $namespaces, actionName: $actionName, query: $query) {
                         __typename
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
@@ -1754,6 +1764,12 @@ impl AppSignalClient {
         }
         if let Some(o) = order {
             vars["order"] = json!(o);
+        }
+        if let Some(s) = start {
+            vars["start"] = json!(s);
+        }
+        if let Some(e) = end {
+            vars["end"] = json!(e);
         }
         if let Some(ns) = namespaces {
             vars["namespaces"] = json!(ns);
@@ -1779,14 +1795,16 @@ impl AppSignalClient {
         offset: Option<i64>,
         state: Option<&str>,
         order: Option<&str>,
+        start: Option<&str>,
+        end: Option<&str>,
         namespaces: Option<&[String]>,
         action_name: Option<&str>,
         query_str: Option<&str>,
     ) -> Result<Vec<Incident>> {
         let query = r#"
-            query AppPerformanceIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $namespaces: [String], $actionName: String, $query: String) {
+            query AppPerformanceIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $start: DateTime, $end: DateTime, $namespaces: [String], $actionName: String, $query: String) {
                 app(id: $appId) {
-                    performanceIncidents(limit: $limit, offset: $offset, state: $state, order: $order, namespaces: $namespaces, actionName: $actionName, query: $query) {
+                    performanceIncidents(limit: $limit, offset: $offset, state: $state, order: $order, start: $start, end: $end, namespaces: $namespaces, actionName: $actionName, query: $query) {
                         __typename
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
@@ -1810,6 +1828,12 @@ impl AppSignalClient {
         if let Some(o) = order {
             vars["order"] = json!(o);
         }
+        if let Some(s) = start {
+            vars["start"] = json!(s);
+        }
+        if let Some(e) = end {
+            vars["end"] = json!(e);
+        }
         if let Some(ns) = namespaces {
             vars["namespaces"] = json!(ns);
         }
@@ -1826,6 +1850,7 @@ impl AppSignalClient {
     }
 
     /// List anomaly incidents for an app.
+    #[allow(clippy::too_many_arguments)]
     pub async fn list_anomaly_incidents(
         &self,
         app_id: &str,
@@ -1833,11 +1858,13 @@ impl AppSignalClient {
         offset: Option<i64>,
         state: Option<&str>,
         order: Option<&str>,
+        start: Option<&str>,
+        end: Option<&str>,
     ) -> Result<Vec<Incident>> {
         let query = r#"
-            query AppAnomalyIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum) {
+            query AppAnomalyIncidents($appId: String!, $limit: Int, $offset: Int, $state: IncidentStateEnum, $order: IncidentOrderEnum, $start: DateTime, $end: DateTime) {
                 app(id: $appId) {
-                    anomalyIncidents(limit: $limit, offset: $offset, state: $state, order: $order) {
+                    anomalyIncidents(limit: $limit, offset: $offset, state: $state, order: $order, start: $start, end: $end) {
                         __typename
                         id number state severity description count
                         createdAt lastOccurredAt updatedAt
@@ -1861,6 +1888,12 @@ impl AppSignalClient {
         }
         if let Some(o) = order {
             vars["order"] = json!(o);
+        }
+        if let Some(s) = start {
+            vars["start"] = json!(s);
+        }
+        if let Some(e) = end {
+            vars["end"] = json!(e);
         }
 
         let data: AppAnomalyIncidentsData = self.graphql(query, vars).await?;
@@ -3985,6 +4018,8 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/graphql"))
+            .and(body_string_contains(r#""start":"2025-05-01T00:00:00Z""#))
+            .and(body_string_contains(r#""end":"2025-06-01T00:00:00Z""#))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(graphql_response(json!({
                     "app": {
@@ -4023,7 +4058,17 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let incidents = client
-            .list_incidents("app1", Some(10), None, None, None, None, None)
+            .list_incidents(
+                "app1",
+                Some(10),
+                None,
+                None,
+                None,
+                Some("2025-05-01T00:00:00Z"),
+                Some("2025-06-01T00:00:00Z"),
+                None,
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(incidents.len(), 2);
@@ -4048,7 +4093,7 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let incidents = client
-            .list_incidents("app1", None, None, None, None, None, None)
+            .list_incidents("app1", None, None, None, None, None, None, None, None)
             .await
             .unwrap();
         assert!(incidents.is_empty());
@@ -4264,6 +4309,8 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/graphql"))
+            .and(body_string_contains(r#""start":"2025-05-01T00:00:00Z""#))
+            .and(body_string_contains(r#""end":"2025-06-01T00:00:00Z""#))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(graphql_response(json!({
                     "app": {
@@ -4291,7 +4338,18 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let incidents = client
-            .list_exception_incidents("app1", Some(10), None, None, None, None, None, None)
+            .list_exception_incidents(
+                "app1",
+                Some(10),
+                None,
+                None,
+                None,
+                Some("2025-05-01T00:00:00Z"),
+                Some("2025-06-01T00:00:00Z"),
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(incidents.len(), 1);
@@ -4303,6 +4361,8 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/graphql"))
+            .and(body_string_contains(r#""start":"2025-05-01T00:00:00Z""#))
+            .and(body_string_contains(r#""end":"2025-06-01T00:00:00Z""#))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(graphql_response(json!({
                     "app": {
@@ -4328,7 +4388,15 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let incidents = client
-            .list_anomaly_incidents("app1", Some(10), None, None, None)
+            .list_anomaly_incidents(
+                "app1",
+                Some(10),
+                None,
+                None,
+                None,
+                Some("2025-05-01T00:00:00Z"),
+                Some("2025-06-01T00:00:00Z"),
+            )
             .await
             .unwrap();
         assert_eq!(incidents.len(), 1);

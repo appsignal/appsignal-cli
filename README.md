@@ -138,6 +138,10 @@ appsignal-cli incidents list-performance --app "MyApp" --environment "production
 # List anomaly detection alerts
 appsignal-cli incidents list-anomalies --app "MyApp" --environment "production"
 
+# Filter by when incidents last occurred
+appsignal-cli incidents list --app "MyApp" --environment "production" \
+  --start "2026-07-01T00:00:00Z" --end "2026-07-07T23:59:59Z"
+
 # Close an incident
 appsignal-cli incidents update --number 42 --app "MyApp" --environment "production" --state CLOSED
 
@@ -349,6 +353,8 @@ All log and incident commands accept either `--app-id <id>` or `--app <name> [--
 | `--offset <N>` | Pagination offset |
 | `--state <STATE>` | Filter by state: `OPEN`, `CLOSED`, or `WIP` |
 | `--order <ORDER>` | Sort by: `LAST` (recent activity, default) or `ID` (creation) |
+| `--start <ISO8601>` | Filter by latest occurrence at or after this time; requires `--end` |
+| `--end <ISO8601>` | Filter by latest occurrence at or before this time; requires `--start` |
 
 #### Additional options for `list`, `list-exceptions`, and `list-performance`
 

@@ -284,6 +284,12 @@ enum IncidentsAction {
         /// Sort order: LAST (most recent activity) or ID (creation order)
         #[arg(long, default_value = "LAST")]
         order: Option<String>,
+        /// Filter by latest occurrence at or after this ISO 8601 date-time
+        #[arg(long, requires = "end")]
+        start: Option<String>,
+        /// Filter by latest occurrence at or before this ISO 8601 date-time
+        #[arg(long, requires = "start")]
+        end: Option<String>,
         /// Filter by namespaces (comma-separated, e.g. "web,background")
         #[arg(long)]
         namespaces: Option<String>,
@@ -318,6 +324,12 @@ enum IncidentsAction {
         /// Sort order: LAST (most recent activity) or ID (creation order)
         #[arg(long, default_value = "LAST")]
         order: Option<String>,
+        /// Filter by latest occurrence at or after this ISO 8601 date-time
+        #[arg(long, requires = "end")]
+        start: Option<String>,
+        /// Filter by latest occurrence at or before this ISO 8601 date-time
+        #[arg(long, requires = "start")]
+        end: Option<String>,
         /// Filter by namespaces (comma-separated, e.g. "web,background")
         #[arg(long)]
         namespaces: Option<String>,
@@ -355,6 +367,12 @@ enum IncidentsAction {
         /// Sort order: LAST (most recent activity) or ID (creation order)
         #[arg(long, default_value = "LAST")]
         order: Option<String>,
+        /// Filter by latest occurrence at or after this ISO 8601 date-time
+        #[arg(long, requires = "end")]
+        start: Option<String>,
+        /// Filter by latest occurrence at or before this ISO 8601 date-time
+        #[arg(long, requires = "start")]
+        end: Option<String>,
         /// Filter by namespaces (comma-separated, e.g. "web,background")
         #[arg(long)]
         namespaces: Option<String>,
@@ -392,6 +410,12 @@ enum IncidentsAction {
         /// Sort order: LAST (most recent activity) or ID (creation order)
         #[arg(long, default_value = "LAST")]
         order: Option<String>,
+        /// Filter by latest occurrence at or after this ISO 8601 date-time
+        #[arg(long, requires = "end")]
+        start: Option<String>,
+        /// Filter by latest occurrence at or before this ISO 8601 date-time
+        #[arg(long, requires = "start")]
+        end: Option<String>,
     },
     /// Show details for a specific incident by number
     #[command(group(ArgGroup::new("app_ref").required(true).args(["app_id", "app"])))]
@@ -1536,6 +1560,8 @@ async fn run(cli: Cli) -> Result<()> {
                 offset,
                 state,
                 order,
+                start,
+                end,
                 namespaces,
                 action,
             } => {
@@ -1548,6 +1574,8 @@ async fn run(cli: Cli) -> Result<()> {
                     offset,
                     state.as_deref(),
                     order.as_deref(),
+                    start.as_deref(),
+                    end.as_deref(),
                     namespaces.as_deref(),
                     action.as_deref(),
                     cli.output,
@@ -1563,6 +1591,8 @@ async fn run(cli: Cli) -> Result<()> {
                 offset,
                 state,
                 order,
+                start,
+                end,
                 namespaces,
                 action,
                 query,
@@ -1576,6 +1606,8 @@ async fn run(cli: Cli) -> Result<()> {
                     offset,
                     state.as_deref(),
                     order.as_deref(),
+                    start.as_deref(),
+                    end.as_deref(),
                     namespaces.as_deref(),
                     action.as_deref(),
                     query.as_deref(),
@@ -1592,6 +1624,8 @@ async fn run(cli: Cli) -> Result<()> {
                 offset,
                 state,
                 order,
+                start,
+                end,
                 namespaces,
                 action,
                 query,
@@ -1605,6 +1639,8 @@ async fn run(cli: Cli) -> Result<()> {
                     offset,
                     state.as_deref(),
                     order.as_deref(),
+                    start.as_deref(),
+                    end.as_deref(),
                     namespaces.as_deref(),
                     action.as_deref(),
                     query.as_deref(),
@@ -1621,6 +1657,8 @@ async fn run(cli: Cli) -> Result<()> {
                 offset,
                 state,
                 order,
+                start,
+                end,
             } => {
                 commands::incidents::list_anomalies(
                     app_id.as_deref(),
@@ -1631,6 +1669,8 @@ async fn run(cli: Cli) -> Result<()> {
                     offset,
                     state.as_deref(),
                     order.as_deref(),
+                    start.as_deref(),
+                    end.as_deref(),
                     cli.output,
                 )
                 .await?
@@ -2313,6 +2353,51 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("--app-id"));
         assert!(message.contains("--app"));
+    }
+
+    #[test]
+    fn incident_list_parses_last_occurrence_range() {
+        let cli = Cli::try_parse_from([
+            "appsignal-cli",
+            "incidents",
+            "list",
+            "--app-id",
+            "app-1",
+            "--start",
+            "2026-07-01T00:00:00Z",
+            "--end",
+            "2026-07-07T23:59:59Z",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Incidents {
+                action: IncidentsAction::List { start, end, .. },
+            } => {
+                assert_eq!(start.as_deref(), Some("2026-07-01T00:00:00Z"));
+                assert_eq!(end.as_deref(), Some("2026-07-07T23:59:59Z"));
+            }
+            _ => panic!("incident list range did not parse"),
+        }
+    }
+
+    #[test]
+    fn incident_list_requires_both_range_bounds() {
+        let err = match Cli::try_parse_from([
+            "appsignal-cli",
+            "incidents",
+            "list-anomalies",
+            "--app-id",
+            "app-1",
+            "--start",
+            "2026-07-01T00:00:00Z",
+        ]) {
+            Ok(_) => panic!("incident list unexpectedly parsed with one range bound"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        assert!(err.to_string().contains("--end"));
     }
 
     #[test]

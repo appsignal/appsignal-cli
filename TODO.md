@@ -77,16 +77,16 @@ Covered today:
 - `--state` (single state)
 - `--query`
 - `--limit` / `--offset`
+- `--start` / `--end` (latest occurrence range)
 
 Still missing:
-- [ ] `start`
-- [ ] `end`
 - [ ] `revision`
 - [ ] multiple states in a single request
 
 Notes:
 - The current GraphQL query only supports a single incident state enum.
-- Time-range and deploy-scoped filters may require different API support.
+- Date filters use the incident's latest occurrence timestamp.
+- Exact exception occurrence timeframes with range-scoped counts remain separate from this listing behavior.
 
 ### `get_anomaly_incidents`
 - [~] `incidents list-anomalies`
@@ -95,6 +95,7 @@ Covered today:
 - app selection
 - pagination via `--limit` / `--offset`
 - `--state`
+- `--start` / `--end` (latest occurrence range)
 
 Still missing:
 - [ ] `trigger_id`
@@ -146,10 +147,9 @@ Covered today:
 - `--state`
 - `--query`
 - pagination via `--limit` / `--offset`
+- `--start` / `--end` (latest occurrence range)
 
 Still missing:
-- [ ] `start`
-- [ ] `end`
 - [ ] `revision`
 - [ ] OTel action ranking output
 - [ ] richer performance overview beyond incident listing

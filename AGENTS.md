@@ -113,8 +113,9 @@ each request is authenticated:
 - `name` and `environment` are `NON_NULL String` on `App`.
 - GraphQL errors are returned with HTTP 400, not in the `errors` array of a
   200 response. The client handles both cases.
-- The GraphQL API does **not** expose `start`/`end` time range filters for
-  incidents. The MCP server achieves this via direct MongoDB access.
+- Standard GraphQL incident lists expose `start`/`end` filters based on each
+  incident's `lastOccurredAt` timestamp. Exact historical occurrence filtering
+  with range-scoped counts remains a separate exception-only query.
 - The GraphQL `state` filter only accepts a **single** `IncidentStateEnum`
   value, not a list (unlike the MCP server which supports comma-separated states).
 
@@ -157,12 +158,12 @@ Root query fields:
 
 Key fields on `App`:
 - `id`, `name`, `environment`
-- `incidents(namespaces, marker, state, actionName, limit, offset, order)` — all incident types (union)
+- `incidents(namespaces, marker, state, actionName, limit, offset, order, start, end)` — all incident types (union)
 - `incident(incidentNumber: Int!)` — single incident by number (union)
-- `exceptionIncidents(namespaces, marker, query, state, limit, offset, order, actionName)` — exception incidents only, with text search via `query`
-- `performanceIncidents(namespaces, marker, query, state, limit, offset, order, actionName)`
-- `anomalyIncidents(state, limit, offset, order)` — anomaly incidents only (fewer filters than exceptions)
-- `logIncidents(state, limit, offset, order)`
+- `exceptionIncidents(namespaces, marker, query, state, limit, offset, order, actionName, start, end)` — exception incidents only, with text search via `query`
+- `performanceIncidents(namespaces, marker, query, state, limit, offset, order, actionName, start, end)`
+- `anomalyIncidents(state, limit, offset, order, start, end)` — anomaly incidents only (fewer filters than exceptions)
+- `logIncidents(state, limit, offset, order, start, end)`
 - `deployMarkers(limit, offset, start, end)`
 - `metrics { list(...) }`, `metrics { timeseries(...) }`
 - `uptimeMonitors`
@@ -291,6 +292,8 @@ Common options for `incidents list`, `list-exceptions`, `list-performance`, and 
 | `--offset <N>` | Pagination offset |
 | `--state <STATE>` | Filter by state: `OPEN`, `CLOSED`, or `WIP` |
 | `--order <ORDER>` | Sort by: `LAST` (recent activity, default) or `ID` (creation) |
+| `--start <ISO8601>` | Filter by latest occurrence at or after this time; requires `--end` |
+| `--end <ISO8601>` | Filter by latest occurrence at or before this time; requires `--start` |
 
 Additional options for `incidents list`, `list-exceptions`, and `list-performance`:
 
@@ -588,7 +591,9 @@ queries.
 The MCP server (`devenv/appsignal-server/app/mcp/tools/`) has direct MongoDB
 access, giving it capabilities the GraphQL API does not expose:
 
-- **Time range filters** (`start`/`end`) on incident queries — not available in GraphQL
+- **Exact occurrence timeframes and range-scoped counts** — standard GraphQL
+  `start`/`end` filters use `lastOccurredAt`; exact timeframe aggregation is
+  available only for exception incidents
 - **Multiple state filters** (comma-separated) — GraphQL only accepts a single enum value
 - **Trigger ID filter** on anomaly incidents — not available in GraphQL
 - **Incident mutations** (update state/severity/assignees, create notes) — need to discover GraphQL mutations

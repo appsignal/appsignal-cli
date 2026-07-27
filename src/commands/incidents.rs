@@ -153,6 +153,8 @@ pub async fn list(
     offset: Option<i64>,
     state: Option<&str>,
     order: Option<&str>,
+    start: Option<&str>,
+    end: Option<&str>,
     namespaces: Option<&str>,
     action_name: Option<&str>,
     format: Output,
@@ -175,6 +177,8 @@ pub async fn list(
             offset,
             state,
             order,
+            start,
+            end,
             ns.as_deref(),
             action_name,
         )
@@ -200,6 +204,8 @@ pub async fn list_exceptions(
     offset: Option<i64>,
     state: Option<&str>,
     order: Option<&str>,
+    start: Option<&str>,
+    end: Option<&str>,
     namespaces: Option<&str>,
     action_name: Option<&str>,
     query: Option<&str>,
@@ -223,6 +229,8 @@ pub async fn list_exceptions(
             offset,
             state,
             order,
+            start,
+            end,
             ns.as_deref(),
             action_name,
             query,
@@ -249,6 +257,8 @@ pub async fn list_anomalies(
     offset: Option<i64>,
     state: Option<&str>,
     order: Option<&str>,
+    start: Option<&str>,
+    end: Option<&str>,
     format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
@@ -260,7 +270,7 @@ pub async fn list_anomalies(
         .await?;
 
     let incidents = client
-        .list_anomaly_incidents(&resolved_app_id, limit, offset, state, order)
+        .list_anomaly_incidents(&resolved_app_id, limit, offset, state, order, start, end)
         .await?;
 
     output::print_with(
@@ -283,6 +293,8 @@ pub async fn list_performance(
     offset: Option<i64>,
     state: Option<&str>,
     order: Option<&str>,
+    start: Option<&str>,
+    end: Option<&str>,
     namespaces: Option<&str>,
     action_name: Option<&str>,
     query: Option<&str>,
@@ -306,6 +318,8 @@ pub async fn list_performance(
             offset,
             state,
             order,
+            start,
+            end,
             ns.as_deref(),
             action_name,
             query,

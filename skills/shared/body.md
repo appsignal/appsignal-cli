@@ -175,6 +175,8 @@ Common flags for `incidents list`, `list-exceptions`, `list-performance`, and `l
 | `--offset <N>` | Pagination offset |
 | `--state <OPEN|CLOSED|WIP>` | Incident state filter |
 | `--order <LAST|ID>` | Sort order |
+| `--start <ISO8601>` | Latest occurrence range start; requires `--end` |
+| `--end <ISO8601>` | Latest occurrence range end; requires `--start` |
 
 Additional incident flags:
 
@@ -444,6 +446,9 @@ List the latest incidents:
 
 ```bash
 appsignal-cli incidents list --app "MyApp" --environment "production" --limit 10 --order LAST
+
+appsignal-cli incidents list --app "MyApp" --environment "production" \
+  --start "2026-07-01T00:00:00Z" --end "2026-07-07T23:59:59Z"
 ```
 
 Show a single incident:
