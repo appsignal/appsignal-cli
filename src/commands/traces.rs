@@ -73,6 +73,7 @@ pub async fn list(
     start: Option<&str>,
     end: Option<&str>,
     min_duration_ms: Option<f64>,
+    query: Option<&str>,
     limit: Option<i64>,
     page_all: bool,
     format: Output,
@@ -96,6 +97,7 @@ pub async fn list(
             &start,
             &end,
             min_duration_ms,
+            query,
         )
         .await?
     } else {
@@ -107,6 +109,7 @@ pub async fn list(
                 &start,
                 &end,
                 min_duration_ms,
+                query,
                 limit.unwrap_or(25),
                 "DESC",
                 None,
@@ -115,7 +118,7 @@ pub async fn list(
     };
 
     output::print_with(TraceListResponse { traces: &traces }, format, |w| {
-        render_trace_list(w, &traces, namespace, action_name, &start, &end)
+        render_trace_list(w, &traces, namespace, action_name, &start, &end, query)
     })
 }
 
@@ -131,6 +134,7 @@ pub async fn incident(
     start: Option<&str>,
     end: Option<&str>,
     min_duration_ms: Option<f64>,
+    query: Option<&str>,
     limit: Option<i64>,
     page_all: bool,
     format: Output,
@@ -160,6 +164,7 @@ pub async fn incident(
                 &start,
                 &end,
                 min_duration_ms,
+                query,
                 limit,
                 page_all,
             )
@@ -197,6 +202,7 @@ pub async fn incident(
                 &client,
                 &resolved_app_id,
                 digests,
+                query,
                 limit,
                 page_all,
             )
@@ -229,6 +235,7 @@ pub async fn errors(
     environment: Option<&str>,
     org: Option<&str>,
     digest: &str,
+    query: Option<&str>,
     limit: Option<i64>,
     page_all: bool,
     format: Output,
@@ -242,15 +249,22 @@ pub async fn errors(
         .await?;
 
     let traces = if page_all {
-        fetch_all_error_trace_pages(&client, &resolved_app_id, digest).await?
+        fetch_all_error_trace_pages(&client, &resolved_app_id, digest, query).await?
     } else {
         client
-            .list_error_traces(&resolved_app_id, digest, limit.unwrap_or(25), "DESC", None)
+            .list_error_traces(
+                &resolved_app_id,
+                digest,
+                query,
+                limit.unwrap_or(25),
+                "DESC",
+                None,
+            )
             .await?
     };
 
     output::print_with(TraceListResponse { traces: &traces }, format, |w| {
-        render_error_trace_list(w, &traces, digest)
+        render_error_trace_list(w, &traces, digest, query)
     })
 }
 
@@ -446,6 +460,7 @@ async fn fetch_action_samples(
     start: &str,
     end: &str,
     min_duration_ms: Option<f64>,
+    query: Option<&str>,
     limit: Option<i64>,
     page_all: bool,
 ) -> Result<Vec<ActionSamples>> {
@@ -460,6 +475,7 @@ async fn fetch_action_samples(
                 start,
                 end,
                 min_duration_ms,
+                query,
             )
             .await?
         } else {
@@ -471,6 +487,7 @@ async fn fetch_action_samples(
                     start,
                     end,
                     min_duration_ms,
+                    query,
                     limit.unwrap_or(25),
                     "DESC",
                     None,
@@ -489,16 +506,17 @@ async fn fetch_digest_samples(
     client: &AppSignalClient,
     app_id: &str,
     digests: Vec<String>,
+    query: Option<&str>,
     limit: Option<i64>,
     page_all: bool,
 ) -> Result<Vec<DigestSamples>> {
     let mut digest_samples = Vec::with_capacity(digests.len());
     for digest in digests {
         let traces = if page_all {
-            fetch_all_error_trace_pages(client, app_id, &digest).await?
+            fetch_all_error_trace_pages(client, app_id, &digest, query).await?
         } else {
             client
-                .list_error_traces(app_id, &digest, limit.unwrap_or(25), "DESC", None)
+                .list_error_traces(app_id, &digest, query, limit.unwrap_or(25), "DESC", None)
                 .await?
         };
         digest_samples.push(DigestSamples { digest, traces });
@@ -580,6 +598,7 @@ fn find_span<'a>(
         .transpose()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_all_trace_pages(
     client: &AppSignalClient,
     app_id: &str,
@@ -588,6 +607,7 @@ async fn fetch_all_trace_pages(
     start: &str,
     end: &str,
     min_duration_ms: Option<f64>,
+    query: Option<&str>,
 ) -> Result<Vec<TraceSummary>> {
     let mut all_traces = Vec::new();
     let mut seen_ids = HashSet::new();
@@ -604,6 +624,7 @@ async fn fetch_all_trace_pages(
                 start,
                 end,
                 min_duration_ms,
+                query,
                 100,
                 "DESC",
                 cursor_time.as_deref(),
@@ -648,6 +669,7 @@ async fn fetch_all_error_trace_pages(
     client: &AppSignalClient,
     app_id: &str,
     digest: &str,
+    query: Option<&str>,
 ) -> Result<Vec<TraceSummary>> {
     let mut all_traces = Vec::new();
     let mut seen_ids = HashSet::new();
@@ -657,7 +679,7 @@ async fn fetch_all_error_trace_pages(
     loop {
         page += 1;
         let batch = client
-            .list_error_traces(app_id, digest, 100, "DESC", cursor_time.as_deref())
+            .list_error_traces(app_id, digest, query, 100, "DESC", cursor_time.as_deref())
             .await?;
 
         let batch_len = batch.len();
@@ -872,6 +894,7 @@ fn render_trace_list(
     action_name: &str,
     start: &str,
     end: &str,
+    query: Option<&str>,
 ) -> io::Result<()> {
     writeln!(
         w,
@@ -879,6 +902,9 @@ fn render_trace_list(
         namespace, action_name
     )?;
     writeln!(w, "Time range: {} to {}", start, end)?;
+    if let Some(query) = query {
+        writeln!(w, "Query: {}", query)?;
+    }
 
     if traces.is_empty() {
         return writeln!(w, "No samples/traces found.");
@@ -893,8 +919,12 @@ fn render_error_trace_list(
     w: &mut dyn Write,
     traces: &[TraceSummary],
     digest: &str,
+    query: Option<&str>,
 ) -> io::Result<()> {
     writeln!(w, "Error traces for digest {}", digest)?;
+    if let Some(query) = query {
+        writeln!(w, "Query: {}", query)?;
+    }
 
     if traces.is_empty() {
         return writeln!(w, "No error traces found.");
@@ -1194,7 +1224,7 @@ mod tests {
     use crate::api::AppSignalClient;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
     fn rest_trace_json(id: &str, time: &str) -> serde_json::Value {
@@ -1245,6 +1275,7 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/v2/tracing/traces/performance"))
+            .and(body_string_contains("\"query\":\"tag.region=eu-west\""))
             .respond_with(move |_req: &Request| {
                 let count = call_count_clone.fetch_add(1, Ordering::SeqCst);
                 if count == 0 {
@@ -1269,6 +1300,7 @@ mod tests {
             "2026-06-22T00:00:00Z",
             "2026-06-23T00:00:00Z",
             None,
+            Some("tag.region=eu-west"),
         )
         .await
         .unwrap();
@@ -1312,6 +1344,7 @@ mod tests {
             "2026-06-22T00:00:00Z",
             "2026-06-23T00:00:00Z",
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1349,6 +1382,7 @@ mod tests {
             "PostsController#index",
             "2026-06-22T00:00:00Z",
             "2026-06-23T00:00:00Z",
+            None,
             None,
         )
         .await

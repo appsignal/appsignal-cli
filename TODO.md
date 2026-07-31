@@ -166,6 +166,7 @@ Covered today:
 - [x] inspect a span by span ID with `samples show --span-id`
 - [x] inspect an error trace tree or span with `samples show-error`
 - [x] inspect performance or exception traces from an incident number with `samples show-incident`
+- [x] filter performance and error traces by tags or revision with `--query`
 - [x] cursor pagination with `--page-all`
 
 ---

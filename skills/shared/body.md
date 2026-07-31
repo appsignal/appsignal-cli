@@ -222,6 +222,14 @@ appsignal-cli --output json samples list --app-id <site_id> --namespace web --ac
 
 Use direct `samples list` when you already know the exact namespace/action, when investigating a slow action before starting from an incident, or when querying OpenTelemetry-style action traces.
 
+Filter traces by transaction tags with a trace query. Prefix tag names with `tag.`; multiple expressions are combined with AND:
+
+```bash
+appsignal-cli --output json samples list --app-id <site_id> --namespace web --action "UsersController#show" --query "tag.region=eu-west"
+```
+
+The trace query supports exact (`=`), not-equal (`!=`), contains (`:`), and does-not-contain (`!:`) operators for tags and revisions. For example, `--query "tag.region=eu-west tag.customer_tier!=free"`.
+
 Direct exception digest workflow:
 
 ```bash
@@ -275,6 +283,7 @@ Useful sample/trace flags:
 | `--start <ISO8601>` | Start time; defaults to 24 hours ago |
 | `--end <ISO8601>` | End time; defaults to now |
 | `--min-duration-ms <N>` | Only list samples/traces slower than this duration |
+| `--query <expression>` | Filter listed traces by tags or revision, such as `tag.region=eu-west` |
 | `--limit <N>` | Maximum samples/traces to return, capped at 100 |
 | `--page-all` | Automatically paginate to fetch all samples/traces; ignores `--limit` |
 | `--include-sensitive` | Include HTTP headers, request parameters, session data, and function parameters in span detail output |
