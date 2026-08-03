@@ -1,5 +1,19 @@
 # AppSignal CLI changelog
 
+## 2.1.0
+
+_Published on 2026-08-03._
+
+### Added
+
+- Added `--notification-frequency` and `--notification-threshold` to `incidents update`, so incident notification behavior, including nth-occurrence notifications, can be configured from the CLI. (minor [39cbb2a](https://github.com/appsignal/appsignal-cli/commit/39cbb2a6208923c6d2d5ad220c009829f6da0f9a))
+- Trace listing commands now accept `--query`, allowing performance and error samples to be filtered by transaction tags such as `tag.region=eu-west` or by revision. (patch [39cbb2a](https://github.com/appsignal/appsignal-cli/commit/39cbb2a6208923c6d2d5ad220c009829f6da0f9a))
+- Added incident note listing, update, and delete commands, so you can find note IDs and edit or remove notes you authored. (patch [39cbb2a](https://github.com/appsignal/appsignal-cli/commit/39cbb2a6208923c6d2d5ad220c009829f6da0f9a))
+
+### Changed
+
+- The bundled AppSignal skill now documents and recommends Markdown for structured incident notes, including findings, actions, code, and links. (patch [39cbb2a](https://github.com/appsignal/appsignal-cli/commit/39cbb2a6208923c6d2d5ad220c009829f6da0f9a))
+
 ## 2.0.2
 
 _Published on 2026-07-20._
