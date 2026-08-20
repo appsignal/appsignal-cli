@@ -813,6 +813,8 @@ pub struct LogLine {
     pub group: Option<String>,
     pub message: String,
     pub attributes: Option<Vec<KeyStringValue>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json: Option<serde_json::Map<String, Value>>,
     pub source: Option<LogSourceRef>,
 }
 
@@ -1237,6 +1239,7 @@ pub(crate) struct RestLogLine {
     pub hostname: Option<String>,
     #[serde(default)]
     pub attributes: serde_json::Map<String, Value>,
+    pub json: Option<serde_json::Map<String, Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2724,6 +2727,7 @@ impl AppSignalClient {
                     group: line.group,
                     message: line.message.unwrap_or_default(),
                     attributes,
+                    json: line.json.filter(|json| !json.is_empty()),
                     source,
                 }
             })
@@ -3704,7 +3708,12 @@ mod tests {
                     "severity": "error",
                     "message": "Request failed",
                     "hostname": "web-1",
-                    "attributes": {"request_id": "123", "duration_ms": 42}
+                    "attributes": {"request_id": "123", "duration_ms": 42},
+                    "json": {
+                        "nestjs.context": "UsersController",
+                        "user.id": 42,
+                        "trace_id": "trace-123"
+                    }
                 }
             ])))
             .mount(&server)
@@ -3729,6 +3738,10 @@ mod tests {
         assert_eq!(lines[0].id.as_deref(), Some("log-1"));
         assert_eq!(lines[0].source_id.as_deref(), Some("src-1"));
         assert_eq!(lines[0].attributes.get("request_id"), Some(&json!("123")));
+        assert_eq!(
+            lines[0].json.as_ref().and_then(|json| json.get("user.id")),
+            Some(&json!(42))
+        );
     }
 
     #[test]
@@ -3747,6 +3760,10 @@ mod tests {
                     ("duration_ms".to_string(), json!(42)),
                     ("request_id".to_string(), json!("123")),
                 ]),
+                json: Some(serde_json::Map::from_iter([
+                    ("nestjs.context".to_string(), json!("UsersController")),
+                    ("user.id".to_string(), json!(42)),
+                ])),
             }],
             &source_names,
         );
@@ -3767,6 +3784,17 @@ mod tests {
         assert_eq!(
             lines[0].attributes.as_ref().unwrap()[0].value.as_deref(),
             Some("42")
+        );
+        assert_eq!(
+            lines[0]
+                .json
+                .as_ref()
+                .and_then(|json| json.get("nestjs.context")),
+            Some(&json!("UsersController"))
+        );
+        assert_eq!(
+            serde_json::to_value(&lines[0]).unwrap()["json"]["user.id"],
+            json!(42)
         );
     }
 
