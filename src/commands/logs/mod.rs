@@ -445,21 +445,24 @@ fn render_log_line_human(w: &mut dyn Write, line: &LogLine) -> io::Result<()> {
         .and_then(|s| s.name.as_deref())
         .unwrap_or("-");
 
-    let attrs = line
-        .attributes
-        .as_ref()
-        .map(|attrs| {
-            if attrs.is_empty() {
-                String::new()
-            } else {
-                let kv: Vec<String> = attrs
-                    .iter()
-                    .map(|a| format!("{}={}", a.key, a.value.as_deref().unwrap_or("")))
-                    .collect();
-                format!(" [{}]", kv.join(" "))
-            }
+    let metadata: Vec<String> = line
+        .json
+        .iter()
+        .flat_map(|json| {
+            json.iter().map(|(key, value)| {
+                let value = value
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| value.to_string());
+                format!("{key}={value}")
+            })
         })
-        .unwrap_or_default();
+        .collect();
+    let metadata = if metadata.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", metadata.join(" "))
+    };
 
     writeln!(
         w,
@@ -469,7 +472,7 @@ fn render_log_line_human(w: &mut dyn Write, line: &LogLine) -> io::Result<()> {
         source_name,
         line.hostname,
         line.message,
-        attrs,
+        metadata,
     )
 }
 
@@ -526,7 +529,7 @@ fn render_log_sources(w: &mut dyn Write, sources: &[crate::api::LogSource]) -> i
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{AppSignalClient, KeyStringValue, LogSourceRef};
+    use crate::api::{AppSignalClient, LogSourceRef};
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use wiremock::matchers::{method, path};
@@ -542,10 +545,10 @@ mod tests {
             hostname: "web-1".to_string(),
             group: None,
             message: "Something went wrong".to_string(),
-            attributes: Some(vec![KeyStringValue {
-                key: "request_id".to_string(),
-                value: Some("123".to_string()),
-            }]),
+            json: Some(serde_json::Map::from_iter([(
+                "request_id".to_string(),
+                json!("123"),
+            )])),
             source: Some(LogSourceRef {
                 id: "s1".to_string(),
                 name: Some("Application".to_string()),
@@ -563,14 +566,14 @@ mod tests {
             hostname: "worker-3".to_string(),
             group: Some("background".to_string()),
             message: "Job completed".to_string(),
-            attributes: None,
+            json: None,
             source: None,
         };
         print_log_line(&line, Output::Human).unwrap();
     }
 
     #[test]
-    fn test_print_log_line_empty_attributes() {
+    fn test_print_log_line_empty_json() {
         let line = LogLine {
             id: "ghi".to_string(),
             timestamp: "2025-06-15T12:30:00Z".to_string(),
@@ -578,13 +581,37 @@ mod tests {
             hostname: "api-1".to_string(),
             group: None,
             message: "Rate limited".to_string(),
-            attributes: Some(vec![]),
+            json: Some(serde_json::Map::new()),
             source: Some(LogSourceRef {
                 id: "s2".to_string(),
                 name: None,
             }),
         };
         print_log_line(&line, Output::Human).unwrap();
+    }
+
+    #[test]
+    fn test_render_log_line_human_includes_structured_json() {
+        let line = LogLine {
+            id: "json-log".to_string(),
+            timestamp: "2025-06-15T12:30:00Z".to_string(),
+            severity: "info".to_string(),
+            hostname: "api-1".to_string(),
+            group: None,
+            message: "Request completed".to_string(),
+            json: Some(serde_json::Map::from_iter([
+                ("nestjs.context".to_string(), json!("UsersController")),
+                ("user".to_string(), json!({ "id": 42 })),
+            ])),
+            source: None,
+        };
+        let mut output = Vec::new();
+
+        render_log_line_human(&mut output, &line).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("nestjs.context=UsersController"));
+        assert!(output.contains(r#"user={"id":42}"#));
     }
 
     fn graphql_log_sources_response(sources: Vec<serde_json::Value>) -> serde_json::Value {
@@ -621,7 +648,7 @@ mod tests {
             "hostname": "web-1",
             "group": null,
             "message": message,
-            "attributes": {},
+            "json": {},
             "source_id": "src-1"
         })
     }

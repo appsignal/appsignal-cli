@@ -812,7 +812,8 @@ pub struct LogLine {
     pub hostname: String,
     pub group: Option<String>,
     pub message: String,
-    pub attributes: Option<Vec<KeyStringValue>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json: Option<serde_json::Map<String, Value>>,
     pub source: Option<LogSourceRef>,
 }
 
@@ -1235,8 +1236,7 @@ pub(crate) struct RestLogLine {
     pub severity: Option<String>,
     pub message: Option<String>,
     pub hostname: Option<String>,
-    #[serde(default)]
-    pub attributes: serde_json::Map<String, Value>,
+    pub json: Option<serde_json::Map<String, Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2692,25 +2692,6 @@ impl AppSignalClient {
         lines
             .into_iter()
             .map(|line| {
-                let attributes = if line.attributes.is_empty() {
-                    None
-                } else {
-                    let mut entries: Vec<KeyStringValue> = line
-                        .attributes
-                        .into_iter()
-                        .map(|(key, value)| KeyStringValue {
-                            key,
-                            value: match value {
-                                Value::Null => None,
-                                Value::String(value) => Some(value),
-                                other => Some(other.to_string()),
-                            },
-                        })
-                        .collect();
-                    entries.sort_by(|left, right| left.key.cmp(&right.key));
-                    Some(entries)
-                };
-
                 let source = line.source_id.as_ref().map(|source_id| LogSourceRef {
                     id: source_id.clone(),
                     name: source_names.get(source_id).cloned(),
@@ -2723,7 +2704,7 @@ impl AppSignalClient {
                     hostname: line.hostname.unwrap_or_default(),
                     group: line.group,
                     message: line.message.unwrap_or_default(),
-                    attributes,
+                    json: line.json.filter(|json| !json.is_empty()),
                     source,
                 }
             })
@@ -3704,7 +3685,13 @@ mod tests {
                     "severity": "error",
                     "message": "Request failed",
                     "hostname": "web-1",
-                    "attributes": {"request_id": "123", "duration_ms": 42}
+                    "json": {
+                        "duration_ms": 42,
+                        "nestjs.context": "UsersController",
+                        "request_id": "123",
+                        "user.id": 42,
+                        "trace_id": "trace-123"
+                    }
                 }
             ])))
             .mount(&server)
@@ -3728,11 +3715,14 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].id.as_deref(), Some("log-1"));
         assert_eq!(lines[0].source_id.as_deref(), Some("src-1"));
-        assert_eq!(lines[0].attributes.get("request_id"), Some(&json!("123")));
+        assert_eq!(
+            lines[0].json.as_ref().and_then(|json| json.get("user.id")),
+            Some(&json!(42))
+        );
     }
 
     #[test]
-    fn test_rest_log_lines_to_log_lines_maps_attributes_and_sources() {
+    fn test_rest_log_lines_to_log_lines_maps_json_and_sources() {
         let source_names = HashMap::from([("src-1".to_string(), "Application".to_string())]);
         let lines = AppSignalClient::rest_log_lines_to_log_lines(
             vec![RestLogLine {
@@ -3743,10 +3733,12 @@ mod tests {
                 severity: Some("error".to_string()),
                 message: Some("Request failed".to_string()),
                 hostname: Some("web-1".to_string()),
-                attributes: serde_json::Map::from_iter([
+                json: Some(serde_json::Map::from_iter([
                     ("duration_ms".to_string(), json!(42)),
+                    ("nestjs.context".to_string(), json!("UsersController")),
                     ("request_id".to_string(), json!("123")),
-                ]),
+                    ("user.id".to_string(), json!(42)),
+                ])),
             }],
             &source_names,
         );
@@ -3760,13 +3752,15 @@ mod tests {
             Some("Application")
         );
         assert_eq!(
-            lines[0].attributes.as_ref().map(|attrs| attrs.len()),
-            Some(2)
+            lines[0]
+                .json
+                .as_ref()
+                .and_then(|json| json.get("nestjs.context")),
+            Some(&json!("UsersController"))
         );
-        assert_eq!(lines[0].attributes.as_ref().unwrap()[0].key, "duration_ms");
         assert_eq!(
-            lines[0].attributes.as_ref().unwrap()[0].value.as_deref(),
-            Some("42")
+            serde_json::to_value(&lines[0]).unwrap()["json"]["user.id"],
+            json!(42)
         );
     }
 
@@ -5082,7 +5076,7 @@ mod tests {
             "hostname": "worker-ams1",
             "group": "notifiers",
             "message": "[Email] Sending notification",
-            "attributes": [{ "key": "request_id", "value": "abc123" }],
+            "json": { "request_id": "abc123" },
             "source": { "id": "s1", "name": "application" }
         }"#;
         let line: LogLine = serde_json::from_str(json).unwrap();
@@ -5091,10 +5085,10 @@ mod tests {
         assert_eq!(line.hostname, "worker-ams1");
         assert_eq!(line.group.as_deref(), Some("notifiers"));
         assert_eq!(line.message, "[Email] Sending notification");
-        let attrs = line.attributes.unwrap();
-        assert_eq!(attrs.len(), 1);
-        assert_eq!(attrs[0].key, "request_id");
-        assert_eq!(attrs[0].value.as_deref(), Some("abc123"));
+        assert_eq!(
+            line.json.as_ref().and_then(|json| json.get("request_id")),
+            Some(&json!("abc123"))
+        );
         let source = line.source.unwrap();
         assert_eq!(source.id, "s1");
         assert_eq!(source.name.as_deref(), Some("application"));
@@ -5109,13 +5103,12 @@ mod tests {
             "hostname": "web-1",
             "group": null,
             "message": "Hello",
-            "attributes": null,
             "source": null
         }"#;
         let line: LogLine = serde_json::from_str(json).unwrap();
         assert_eq!(line.id, "line1");
         assert!(line.group.is_none());
-        assert!(line.attributes.is_none());
+        assert!(line.json.is_none());
         assert!(line.source.is_none());
     }
 
