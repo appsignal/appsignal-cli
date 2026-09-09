@@ -26,7 +26,6 @@ Implemented in the CLI today:
 
 Still missing or incomplete:
 - Metrics discovery and querying
-- Dashboard visual management
 - Trace inspection
 - Log line action management
 - Deploy marker access
@@ -242,16 +241,17 @@ Notes:
 - [x] `dashboards update`
 
 ### `create_dashboard_visual`
-- [ ] Not implemented
+- [x] `dashboards add-visual` (timeseries and number)
 
 ### `update_dashboard_visual`
-- [ ] Not implemented
+- [x] `dashboards update-visual` (partial updates)
 
 Likely implementation work:
 - [x] Add `dashboards create`
 - [x] Add `dashboards update`
-- [ ] Add `dashboards add-visual`
-- [ ] Add `dashboards update-visual`
+- [x] Add `dashboards show` for chart IDs and configuration
+- [x] Add `dashboards add-visual`
+- [x] Add `dashboards update-visual`
 
 ---
 

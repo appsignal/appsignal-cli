@@ -1,3 +1,5 @@
+pub mod dashboard_visuals;
+
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -209,7 +211,8 @@ pub enum AppResourceSection {
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DashboardSource {
-    UserCreated,
+    User,
+    Auto,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
@@ -227,7 +230,8 @@ pub enum IncidentNotificationFrequency {
 impl DashboardSource {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::UserCreated => "USER_CREATED",
+            Self::User => "USER",
+            Self::Auto => "AUTO",
         }
     }
 }
@@ -4885,6 +4889,16 @@ mod tests {
         assert_eq!(spans[0].event_names, vec!["exception"]);
     }
 
+    #[test]
+    fn dashboard_sources_match_the_graphql_schema() {
+        for source in ["USER", "AUTO"] {
+            let dashboard: Dashboard =
+                serde_json::from_value(json!({"id":"dash-1", "source":source})).unwrap();
+            assert_eq!(dashboard.source.unwrap().as_str(), source);
+            assert_eq!(serde_json::to_value(dashboard).unwrap()["source"], source);
+        }
+    }
+
     #[tokio::test]
     async fn test_create_dashboard() {
         let server = MockServer::start().await;
@@ -4897,7 +4911,7 @@ mod tests {
                         "title": "Overview",
                         "description": "Main dashboard",
                         "label": null,
-                        "source": "USER_CREATED",
+                        "source": "USER",
                         "createdAt": "2026-06-12T10:00:00Z",
                         "updatedAt": "2026-06-12T10:00:00Z"
                     }
@@ -4914,7 +4928,7 @@ mod tests {
 
         assert_eq!(dashboard.id, "dash-2");
         assert_eq!(dashboard.title.as_deref(), Some("Overview"));
-        assert_eq!(dashboard.source, Some(DashboardSource::UserCreated));
+        assert_eq!(dashboard.source, Some(DashboardSource::User));
     }
 
     #[tokio::test]
@@ -4929,7 +4943,7 @@ mod tests {
                         "title": "Overview v2",
                         "description": "Updated dashboard",
                         "label": "beta",
-                        "source": "USER_CREATED",
+                        "source": "USER",
                         "createdAt": "2026-06-12T10:00:00Z",
                         "updatedAt": "2026-06-12T11:00:00Z"
                     }

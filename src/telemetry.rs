@@ -53,6 +53,12 @@ pub enum TelemetryCommand {
     ProjectInit,
     #[serde(rename = "dashboards.list")]
     DashboardsList,
+    #[serde(rename = "dashboards.show")]
+    DashboardsShow,
+    #[serde(rename = "dashboards.add-visual")]
+    DashboardsAddVisual,
+    #[serde(rename = "dashboards.update-visual")]
+    DashboardsUpdateVisual,
     #[serde(rename = "dashboards.create")]
     DashboardsCreate,
     #[serde(rename = "dashboards.update")]

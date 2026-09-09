@@ -1176,6 +1176,38 @@ enum TriggerAction {
 
 #[derive(Subcommand)]
 enum DashboardAction {
+    /// Show dashboard metadata and chart IDs and settings
+    Show {
+        #[command(flatten)]
+        app: DashboardAppArgs,
+        #[arg(long)]
+        id: String,
+    },
+    /// Add a chart using a JSON definition
+    AddVisual {
+        #[command(flatten)]
+        app: DashboardAppArgs,
+        #[arg(long)]
+        dashboard_id: String,
+        #[arg(long = "type", value_enum)]
+        kind: api::dashboard_visuals::VisualType,
+        /// JSON definition file, or - to read stdin
+        #[arg(long)]
+        file: String,
+    },
+    /// Update chart settings; omitted fields remain unchanged
+    UpdateVisual {
+        #[command(flatten)]
+        app: DashboardAppArgs,
+        #[arg(long)]
+        dashboard_id: String,
+        /// Chart ID within the selected dashboard
+        #[arg(long)]
+        id: String,
+        /// JSON patch file, or - to read stdin; nested fields are replaced whole
+        #[arg(long)]
+        file: String,
+    },
     /// List dashboards for an application
     List {
         #[command(flatten)]
@@ -1323,6 +1355,9 @@ impl_telemetry_command!(TriggerAction {
 });
 
 impl_telemetry_command!(DashboardAction {
+    Self::Show { .. } => telemetry::TelemetryCommand::DashboardsShow,
+    Self::AddVisual { .. } => telemetry::TelemetryCommand::DashboardsAddVisual,
+    Self::UpdateVisual { .. } => telemetry::TelemetryCommand::DashboardsUpdateVisual,
     Self::List { .. } => telemetry::TelemetryCommand::DashboardsList,
     Self::Create { .. } => telemetry::TelemetryCommand::DashboardsCreate,
     Self::Update { .. } => telemetry::TelemetryCommand::DashboardsUpdate
@@ -1495,6 +1530,57 @@ async fn run(cli: Cli) -> Result<()> {
             )?,
         },
         Commands::Dashboards { action } => match action {
+            DashboardAction::Show { app, id } => {
+                commands::dashboards::visuals::run(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    commands::dashboards::visuals::VisualCommand::Show { id },
+                    cli.output,
+                )
+                .await?
+            }
+            DashboardAction::AddVisual {
+                app,
+                dashboard_id,
+                kind,
+                file,
+            } => {
+                commands::dashboards::visuals::run(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    commands::dashboards::visuals::VisualCommand::Add {
+                        dashboard_id,
+                        kind,
+                        file,
+                    },
+                    cli.output,
+                )
+                .await?
+            }
+            DashboardAction::UpdateVisual {
+                app,
+                dashboard_id,
+                id,
+                file,
+            } => {
+                commands::dashboards::visuals::run(
+                    app.app_id.as_deref(),
+                    app.app.as_deref(),
+                    app.environment.as_deref(),
+                    app.org.as_deref(),
+                    commands::dashboards::visuals::VisualCommand::Update {
+                        dashboard_id,
+                        id,
+                        file,
+                    },
+                    cli.output,
+                )
+                .await?
+            }
             DashboardAction::List { app } => {
                 commands::dashboards::list(
                     app.app_id.as_deref(),
@@ -2255,6 +2341,123 @@ async fn run(cli: Cli) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dashboard_visual_commands_parse_and_emit_telemetry() {
+        use clap::Parser;
+        for (args, event) in [
+            (
+                vec!["dashboards", "show", "--app-id", "app-1", "--id", "dash-1"],
+                "dashboards.show",
+            ),
+            (
+                vec![
+                    "dashboards",
+                    "add-visual",
+                    "--app",
+                    "Example",
+                    "--environment",
+                    "production",
+                    "--org",
+                    "example",
+                    "--dashboard-id",
+                    "dash-1",
+                    "--type",
+                    "timeseries",
+                    "--file",
+                    "chart.json",
+                ],
+                "dashboards.add-visual",
+            ),
+            (
+                vec![
+                    "dashboards",
+                    "add-visual",
+                    "--app-id",
+                    "app-1",
+                    "--dashboard-id",
+                    "dash-1",
+                    "--type",
+                    "number",
+                    "--file",
+                    "-",
+                ],
+                "dashboards.add-visual",
+            ),
+            (
+                vec![
+                    "dashboards",
+                    "update-visual",
+                    "--app-id",
+                    "app-1",
+                    "--dashboard-id",
+                    "dash-1",
+                    "--id",
+                    "chart-1",
+                    "--file",
+                    "-",
+                ],
+                "dashboards.update-visual",
+            ),
+        ] {
+            let cli = super::Cli::try_parse_from(
+                ["appsignal-cli", "--output", "json"]
+                    .into_iter()
+                    .chain(args),
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(cli.telemetry_command()).unwrap(),
+                event
+            );
+        }
+        for args in [
+            vec!["show", "--id", "dash-1"],
+            vec![
+                "add-visual",
+                "--app-id",
+                "app-1",
+                "--dashboard-id",
+                "dash-1",
+                "--file",
+                "chart.json",
+            ],
+            vec![
+                "add-visual",
+                "--app-id",
+                "app-1",
+                "--dashboard-id",
+                "dash-1",
+                "--type",
+                "pie",
+                "--file",
+                "chart.json",
+            ],
+            vec![
+                "update-visual",
+                "--app-id",
+                "app-1",
+                "--id",
+                "chart-1",
+                "--file",
+                "-",
+            ],
+            vec![
+                "update-visual",
+                "--app-id",
+                "app-1",
+                "--dashboard-id",
+                "dash-1",
+                "--id",
+                "chart-1",
+            ],
+        ] {
+            assert!(super::Cli::try_parse_from(
+                ["appsignal-cli", "dashboards"].into_iter().chain(args)
+            )
+            .is_err());
+        }
+    }
+
     use super::*;
 
     #[test]

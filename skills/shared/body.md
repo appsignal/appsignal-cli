@@ -309,6 +309,45 @@ Example:
 appsignal-cli --output json incidents show --number 42 --app "MyApp" --environment "production"
 ```
 
+## Dashboard charts
+
+1. Find a dashboard with `dashboards list --app-id APP`, then inspect chart IDs
+   and configuration with `--output json dashboards show --app-id APP --id DASH`.
+2. Create with `dashboards add-visual --app-id APP --dashboard-id DASH --type
+   timeseries --file chart.json` (or `--type number`). Use `--file -` for stdin.
+3. Update with `dashboards update-visual --app-id APP --dashboard-id DASH --id
+   CHART --file changes.json`. The existing chart determines the type.
+4. Read back with `dashboards show` to verify the requested settings.
+
+JSON contains camelCase settings only. A timeseries definition:
+
+```json
+{"title":"Latency","format":"duration","metrics":[{"name":"transaction_duration","fields":[{"field":"MEAN"}],"tags":[{"key":"namespace","value":"web"}]}]}
+```
+
+A number definition:
+
+```json
+{"title":"Requests","metric":{"name":"requests","field":"COUNT","aggregate":"SUM"}}
+```
+
+Use actual metric names for the selected app. Creation requires a title. A patch
+such as `{"title":"New title"}` preserves omitted settings. Supplied `metrics`,
+`metric`, and `layout` replace the entire field; include full nested definitions.
+Layout requires integer `x`, `y`, `w`, `h`. Metric fields are `MEAN`, `P90`, `P95`,
+`COUNT`, `GAUGE`, `COUNTER`; number aggregates are `MAX`, `MIN`, `AVG`, `SUM`,
+`FIRST`, `LAST`.
+
+Both types accept `description`, `format`, `formatInput`, and `layout`. Timeseries
+also accepts `lineLabel`, `display` (`LINE`, `AREA`, `AREA_RELATIVE`),
+`drawNullAsZero`, and `minYAxis`. Formats are `number`, `percent`, `duration`,
+`throughput`, `size`; size units are `bit`, `byte`, `kilobit`, `kilobyte`, `megabyte`.
+Use `null` to clear optional description, formatting, layout, line label, minimum
+axis, or number metric values; use `[]` to clear timeseries metrics. Changing away
+from `size` clears `formatInput` on the server. Empty patches and unknown fields
+are rejected. Responses contain `dashboard.visuals`, including chart IDs and
+settings. Inspect the dashboard after an ambiguous creation failure before retrying.
+
 ## Trigger Options
 
 Useful `triggers list` flags:
