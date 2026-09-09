@@ -276,7 +276,7 @@ appsignal-cli skill install --target claude
 | Command | Description |
 |---|---|
 | `dashboards list` | List dashboards for an app |
-| `dashboards create` | Create a dashboard |
+| `dashboards create --title <title> --description <text>` | Create a dashboard |
 | `dashboards update --id <id>` | Update a dashboard |
 | `dashboards show --id <id>` | Show dashboard metadata and chart IDs and settings |
 | `dashboards add-visual --dashboard-id <id> --type <type> --file <path>` | Add a chart from JSON |
@@ -284,6 +284,13 @@ appsignal-cli skill install --target claude
 
 All dashboard commands support `--app-id`, or `--app` with optional
 `--environment` and `--org`, and global `--output human|json`.
+
+Dashboard creation requires a nonempty description:
+
+```bash
+appsignal-cli dashboards create --app-id APP --title "CLI usage" \
+  --description "Track CLI command volume and version adoption"
+```
 
 Inspect charts before updating them:
 
@@ -300,6 +307,7 @@ Create a timeseries chart with a JSON file:
 ```json
 {
   "title": "Request duration",
+  "description": "Mean web request duration over time",
   "display": "LINE",
   "format": "duration",
   "metrics": [
@@ -324,6 +332,7 @@ with a `field` and `aggregate`:
 ```json
 {
   "title": "Requests",
+  "description": "Total requests in the selected time range",
   "format": "number",
   "metric": { "name": "requests", "field": "COUNT", "aggregate": "SUM" }
 }
@@ -355,12 +364,13 @@ Supported settings:
 | Timeseries | `metrics`, `lineLabel`, `display`, `drawNullAsZero`, `minYAxis` |
 | Number | `metric` |
 
-- Creation requires a nonempty `title`. Updates accept only the fields being
-  changed; an empty patch is rejected.
+- Chart creation requires a nonempty `title` and `description`. Missing, null,
+  empty, or whitespace-only descriptions are rejected before creation. Updates
+  accept only the fields being changed; an empty patch is rejected.
 - Supplied arrays and nested objects replace that entire field. To change a
   metric's tags, supply the complete metric definition. To change layout, supply
   all four integer fields: `x`, `y`, `w`, `h`.
-- Omitted fields stay unchanged. Use `null` to clear `description`, `format`,
+- On updates, omitted fields stay unchanged. Use `null` to clear `description`, `format`,
   `formatInput`, `layout`, `lineLabel`, `minYAxis`, or a number widget's `metric`.
   Clear timeseries metrics with `"metrics": []`.
 - Changing `format` away from `size` also clears `formatInput` on the server.

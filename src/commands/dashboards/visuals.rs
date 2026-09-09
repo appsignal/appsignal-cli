@@ -173,7 +173,11 @@ mod tests {
     fn file_input_is_parsed() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("chart.json");
-        std::fs::write(&file, r#"{"title":"Requests"}"#).unwrap();
+        std::fs::write(
+            &file,
+            r#"{"title":"Requests","description":"Monitor requests"}"#,
+        )
+        .unwrap();
         read_input(file.to_str().unwrap())
             .unwrap()
             .validate(VisualType::Timeseries, true)

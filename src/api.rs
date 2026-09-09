@@ -2411,11 +2411,16 @@ impl AppSignalClient {
         &self,
         app_id: &str,
         title: &str,
-        description: Option<&str>,
+        description: &str,
     ) -> Result<Dashboard> {
+        if description.trim().is_empty() {
+            return Err(
+                CliError::msg("Dashboard creation requires a nonempty description.").into(),
+            );
+        }
         let query = format!(
             r#"
-            mutation CreateDashboard($appId: String!, $title: String!, $description: String) {{
+            mutation CreateDashboard($appId: String!, $title: String!, $description: String!) {{
                 createDashboard(appId: $appId, title: $title, description: $description) {{
                     {}
                 }}
@@ -2424,14 +2429,11 @@ impl AppSignalClient {
             DASHBOARD_SELECTION
         );
 
-        let mut vars = json!({
+        let vars = json!({
             "appId": app_id,
             "title": title,
+            "description": description,
         });
-
-        if let Some(description) = description {
-            vars["description"] = json!(description);
-        }
 
         let data: CreateDashboardData = self.graphql(&query, vars).await?;
         data.create_dashboard
@@ -4900,6 +4902,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dashboard_creation_rejects_blank_description_before_request() {
+        let server = MockServer::start().await;
+        let client = AppSignalClient::with_endpoint("tok", &server.uri());
+        for description in ["", "   ", "\n\t"] {
+            let error = client
+                .create_dashboard("app1", "Overview", description)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("nonempty description"));
+        }
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn test_create_dashboard() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -4922,13 +4938,16 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let dashboard = client
-            .create_dashboard("app1", "Overview", Some("Main dashboard"))
+            .create_dashboard("app1", "Overview", "Main dashboard")
             .await
             .unwrap();
 
         assert_eq!(dashboard.id, "dash-2");
         assert_eq!(dashboard.title.as_deref(), Some("Overview"));
         assert_eq!(dashboard.source, Some(DashboardSource::User));
+        let requests = server.received_requests().await.unwrap();
+        let body: Value = requests[0].body_json().unwrap();
+        assert_eq!(body["variables"]["description"], "Main dashboard");
     }
 
     #[tokio::test]

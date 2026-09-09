@@ -178,6 +178,12 @@ impl VisualInput {
             PatchField::Missing if creating => return invalid("Chart creation requires a title."),
             _ => {}
         }
+        if creating {
+            match &self.description {
+                PatchField::Value(description) if !description.trim().is_empty() => {}
+                _ => return invalid("Chart creation requires a nonempty description."),
+            }
+        }
         if serde_json::to_value(self)?
             .as_object()
             .is_some_and(|o| o.is_empty())
@@ -451,10 +457,33 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn chart_creation_requires_a_nonempty_description() {
+        for kind in [VisualType::Timeseries, VisualType::Number] {
+            for definition in [
+                json!({"title":"Chart"}),
+                json!({"title":"Chart", "description":null}),
+                json!({"title":"Chart", "description":""}),
+                json!({"title":"Chart", "description":" \n\t"}),
+            ] {
+                assert!(input(definition).validate(kind, true).is_err());
+            }
+            input(json!({"title":"Chart", "description":"Monitor request latency"}))
+                .validate(kind, true)
+                .unwrap();
+            input(json!({"title":"Renamed"}))
+                .validate(kind, false)
+                .unwrap();
+            input(json!({"description":null}))
+                .validate(kind, false)
+                .unwrap();
+        }
+    }
+
+    #[test]
     fn parses_and_validates_both_types() {
-        input(json!({"title":"Latency", "display":"AREA_RELATIVE", "metrics":[{"name":"duration","fields":[{"field":"P95"}]}]}))
+        input(json!({"title":"Latency", "description":"Monitor latency", "display":"AREA_RELATIVE", "metrics":[{"name":"duration","fields":[{"field":"P95"}]}]}))
             .validate(VisualType::Timeseries, true).unwrap();
-        input(json!({"title":"Requests", "metric":{"name":"requests","field":"COUNT","aggregate":"SUM"}}))
+        input(json!({"title":"Requests", "description":"Monitor requests", "metric":{"name":"requests","field":"COUNT","aggregate":"SUM"}}))
             .validate(VisualType::Number, true).unwrap();
     }
 
@@ -573,8 +602,11 @@ pub(crate) mod tests {
         let server = MockServer::start().await;
         let client = AppSignalClient::with_endpoint("tok", &server.uri());
         for definition in [
+            json!({"title":"Chart"}),
+            json!({"title":"Chart", "description":null}),
+            json!({"title":"Chart", "description":"   "}),
             json!({"title":""}),
-            json!({"title":"Requests", "metric":{"name":"requests","field":"COUNT","aggregate":"SUM","tags":[{"key":"namespace","value":""}]}}),
+            json!({"title":"Requests", "description":"Monitor requests", "metric":{"name":"requests","field":"COUNT","aggregate":"SUM","tags":[{"key":"namespace","value":""}]}}),
         ] {
             assert!(client
                 .create_dashboard_visual("app-1", "dash-1", VisualType::Number, input(definition))
@@ -590,12 +622,12 @@ pub(crate) mod tests {
             (
                 VisualType::Timeseries,
                 "createVisualTimeseries",
-                json!({"title":"Latency","metrics":[{"name":"duration","fields":[{"field":"MEAN"}]}]}),
+                json!({"title":"Latency","description":"Monitor latency","metrics":[{"name":"duration","fields":[{"field":"MEAN"}]}]}),
             ),
             (
                 VisualType::Number,
                 "createVisualNumber",
-                json!({"title":"Requests","metric":{"name":"requests","field":"COUNT","aggregate":"SUM"}}),
+                json!({"title":"Requests","description":"Monitor requests","metric":{"name":"requests","field":"COUNT","aggregate":"SUM"}}),
             ),
         ] {
             let server = MockServer::start().await;
@@ -735,7 +767,7 @@ pub(crate) mod tests {
                     "app-1",
                     "dash-1",
                     VisualType::Timeseries,
-                    input(json!({"title":"Latency"})),
+                    input(json!({"title":"Latency", "description":"Monitor latency"})),
                 )
                 .await
                 .unwrap_err();

@@ -72,7 +72,7 @@ pub async fn create(
     environment: Option<&str>,
     org: Option<&str>,
     title: &str,
-    description: Option<&str>,
+    description: &str,
     format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;

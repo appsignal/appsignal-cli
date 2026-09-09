@@ -1072,6 +1072,23 @@ struct DashboardAppArgs {
     org: Option<String>,
 }
 
+fn parse_description(value: &str) -> std::result::Result<String, String> {
+    if value.trim().is_empty() {
+        return Err("Description cannot be empty or whitespace-only".to_string());
+    }
+    Ok(value.to_owned())
+}
+
+#[derive(Args)]
+struct DashboardCreateArgs {
+    /// Dashboard title
+    #[arg(long)]
+    title: String,
+    /// Describe what the dashboard monitors
+    #[arg(long, value_parser = parse_description)]
+    description: String,
+}
+
 #[derive(Args)]
 struct DashboardDefinitionArgs {
     /// Dashboard title
@@ -1218,7 +1235,7 @@ enum DashboardAction {
         #[command(flatten)]
         app: DashboardAppArgs,
         #[command(flatten)]
-        definition: DashboardDefinitionArgs,
+        definition: DashboardCreateArgs,
     },
     /// Update an existing dashboard
     Update {
@@ -1598,7 +1615,7 @@ async fn run(cli: Cli) -> Result<()> {
                     app.environment.as_deref(),
                     app.org.as_deref(),
                     &definition.title,
-                    definition.description.as_deref(),
+                    &definition.description,
                     cli.output,
                 )
                 .await?
@@ -2341,6 +2358,43 @@ async fn run(cli: Cli) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dashboard_creation_requires_a_nonempty_description() {
+        let args = [
+            "appsignal-cli",
+            "dashboards",
+            "create",
+            "--app-id",
+            "app-1",
+            "--title",
+            "Overview",
+        ];
+        assert!(Cli::try_parse_from(args).is_err());
+        for description in ["", "   ", "\n\t"] {
+            assert!(
+                Cli::try_parse_from(args.into_iter().chain(["--description", description]))
+                    .is_err()
+            );
+        }
+        assert!(Cli::try_parse_from(
+            args.into_iter()
+                .chain(["--description", "Monitor request latency"])
+        )
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "appsignal-cli",
+            "dashboards",
+            "update",
+            "--app-id",
+            "app-1",
+            "--id",
+            "dash-1",
+            "--title",
+            "Renamed"
+        ])
+        .is_ok());
+    }
+
     #[test]
     fn dashboard_visual_commands_parse_and_emit_telemetry() {
         use clap::Parser;
