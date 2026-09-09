@@ -1,3 +1,5 @@
+pub mod dashboard_visuals;
+
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -209,7 +211,8 @@ pub enum AppResourceSection {
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DashboardSource {
-    UserCreated,
+    User,
+    Auto,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
@@ -227,7 +230,8 @@ pub enum IncidentNotificationFrequency {
 impl DashboardSource {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::UserCreated => "USER_CREATED",
+            Self::User => "USER",
+            Self::Auto => "AUTO",
         }
     }
 }
@@ -2407,11 +2411,16 @@ impl AppSignalClient {
         &self,
         app_id: &str,
         title: &str,
-        description: Option<&str>,
+        description: &str,
     ) -> Result<Dashboard> {
+        if description.trim().is_empty() {
+            return Err(
+                CliError::msg("Dashboard creation requires a nonempty description.").into(),
+            );
+        }
         let query = format!(
             r#"
-            mutation CreateDashboard($appId: String!, $title: String!, $description: String) {{
+            mutation CreateDashboard($appId: String!, $title: String!, $description: String!) {{
                 createDashboard(appId: $appId, title: $title, description: $description) {{
                     {}
                 }}
@@ -2420,14 +2429,11 @@ impl AppSignalClient {
             DASHBOARD_SELECTION
         );
 
-        let mut vars = json!({
+        let vars = json!({
             "appId": app_id,
             "title": title,
+            "description": description,
         });
-
-        if let Some(description) = description {
-            vars["description"] = json!(description);
-        }
 
         let data: CreateDashboardData = self.graphql(&query, vars).await?;
         data.create_dashboard
@@ -4885,6 +4891,30 @@ mod tests {
         assert_eq!(spans[0].event_names, vec!["exception"]);
     }
 
+    #[test]
+    fn dashboard_sources_match_the_graphql_schema() {
+        for source in ["USER", "AUTO"] {
+            let dashboard: Dashboard =
+                serde_json::from_value(json!({"id":"dash-1", "source":source})).unwrap();
+            assert_eq!(dashboard.source.unwrap().as_str(), source);
+            assert_eq!(serde_json::to_value(dashboard).unwrap()["source"], source);
+        }
+    }
+
+    #[tokio::test]
+    async fn dashboard_creation_rejects_blank_description_before_request() {
+        let server = MockServer::start().await;
+        let client = AppSignalClient::with_endpoint("tok", &server.uri());
+        for description in ["", "   ", "\n\t"] {
+            let error = client
+                .create_dashboard("app1", "Overview", description)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("nonempty description"));
+        }
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn test_create_dashboard() {
         let server = MockServer::start().await;
@@ -4897,7 +4927,7 @@ mod tests {
                         "title": "Overview",
                         "description": "Main dashboard",
                         "label": null,
-                        "source": "USER_CREATED",
+                        "source": "USER",
                         "createdAt": "2026-06-12T10:00:00Z",
                         "updatedAt": "2026-06-12T10:00:00Z"
                     }
@@ -4908,13 +4938,16 @@ mod tests {
 
         let client = AppSignalClient::with_endpoint("tok", &format!("{}/graphql", server.uri()));
         let dashboard = client
-            .create_dashboard("app1", "Overview", Some("Main dashboard"))
+            .create_dashboard("app1", "Overview", "Main dashboard")
             .await
             .unwrap();
 
         assert_eq!(dashboard.id, "dash-2");
         assert_eq!(dashboard.title.as_deref(), Some("Overview"));
-        assert_eq!(dashboard.source, Some(DashboardSource::UserCreated));
+        assert_eq!(dashboard.source, Some(DashboardSource::User));
+        let requests = server.received_requests().await.unwrap();
+        let body: Value = requests[0].body_json().unwrap();
+        assert_eq!(body["variables"]["description"], "Main dashboard");
     }
 
     #[tokio::test]
@@ -4929,7 +4962,7 @@ mod tests {
                         "title": "Overview v2",
                         "description": "Updated dashboard",
                         "label": "beta",
-                        "source": "USER_CREATED",
+                        "source": "USER",
                         "createdAt": "2026-06-12T10:00:00Z",
                         "updatedAt": "2026-06-12T11:00:00Z"
                     }

@@ -331,7 +331,7 @@ mod tests {
                 title: Some("Overview".to_string()),
                 description: Some("Main dashboard".to_string()),
                 label: None,
-                source: Some(DashboardSource::UserCreated),
+                source: Some(DashboardSource::User),
                 created_at: None,
                 updated_at: None,
             }]),

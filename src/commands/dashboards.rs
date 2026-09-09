@@ -1,3 +1,5 @@
+pub mod visuals;
+
 use std::io::{self, Write};
 
 use anyhow::Result;
@@ -70,7 +72,7 @@ pub async fn create(
     environment: Option<&str>,
     org: Option<&str>,
     title: &str,
-    description: Option<&str>,
+    description: &str,
     format: Output,
 ) -> Result<()> {
     let mut config = Config::load()?;
@@ -173,7 +175,7 @@ mod tests {
             title: Some("Overview".to_string()),
             description: Some("Main dashboard".to_string()),
             label: Some("beta".to_string()),
-            source: Some(DashboardSource::UserCreated),
+            source: Some(DashboardSource::User),
             created_at: Some("2026-06-12T10:00:00Z".to_string()),
             updated_at: Some("2026-06-12T11:00:00Z".to_string()),
         }
@@ -190,7 +192,7 @@ mod tests {
         assert!(output.contains("ID:"));
         assert!(output.contains("Overview"));
         assert!(output.contains("Main dashboard"));
-        assert!(output.contains("USER_CREATED"));
+        assert!(output.contains("USER"));
         assert!(output.contains("2026-06-12T11:00:00Z"));
     }
 
@@ -226,7 +228,7 @@ mod tests {
 
         assert_eq!(json["dashboard"]["id"], "dash-1");
         assert_eq!(json["dashboard"]["title"], "Overview");
-        assert_eq!(json["dashboard"]["source"], "USER_CREATED");
+        assert_eq!(json["dashboard"]["source"], "USER");
     }
 
     #[test]

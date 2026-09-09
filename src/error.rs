@@ -68,7 +68,7 @@ pub enum CliError {
     #[error("Could not reach AppSignal. Check your network connection and try again.")]
     NetworkUnreachable,
 
-    #[error("AppSignal returned an unexpected response. Please try again.")]
+    #[error("AppSignal returned an unexpected response. Set APPSIGNAL_CLI_DEBUG=1 for diagnostic details.")]
     UnexpectedResponse,
 
     #[error(

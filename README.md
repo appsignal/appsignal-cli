@@ -276,8 +276,113 @@ appsignal-cli skill install --target claude
 | Command | Description |
 |---|---|
 | `dashboards list` | List dashboards for an app |
-| `dashboards create` | Create a dashboard |
+| `dashboards create --title <title> --description <text>` | Create a dashboard |
 | `dashboards update --id <id>` | Update a dashboard |
+| `dashboards show --id <id>` | Show dashboard metadata and chart IDs and settings |
+| `dashboards add-visual --dashboard-id <id> --type <type> --file <path>` | Add a chart from JSON |
+| `dashboards update-visual --dashboard-id <id> --id <chart-id> --file <path>` | Update selected chart settings |
+
+All dashboard commands support `--app-id`, or `--app` with optional
+`--environment` and `--org`, and global `--output human|json`.
+
+Dashboard creation requires a nonempty description:
+
+```bash
+appsignal-cli dashboards create --app-id APP --title "CLI usage" \
+  --description "Track CLI command volume and version adoption"
+```
+
+Inspect charts before updating them:
+
+```bash
+appsignal-cli --output json dashboards show --app-id APP --id DASH
+```
+
+The response is `{ "dashboard": { ..., "visuals": [...] } }`. Each visual includes
+its `id`, `__typename`, and configuration. Add and update return the same dashboard
+shape. Existing `dashboards list` output is unchanged.
+
+Create a timeseries chart with a JSON file:
+
+```json
+{
+  "title": "Request duration",
+  "description": "Mean web request duration over time",
+  "display": "LINE",
+  "format": "duration",
+  "metrics": [
+    {
+      "name": "transaction_duration",
+      "fields": [{ "field": "MEAN" }],
+      "tags": [{ "key": "namespace", "value": "web" }]
+    }
+  ],
+  "layout": { "x": 0, "y": 0, "w": 6, "h": 4 }
+}
+```
+
+```bash
+appsignal-cli dashboards add-visual --app-id APP --dashboard-id DASH \
+  --type timeseries --file chart.json
+```
+
+Use metric names and tags present in your app. A number widget uses one `metric`
+with a `field` and `aggregate`:
+
+```json
+{
+  "title": "Requests",
+  "description": "Total requests in the selected time range",
+  "format": "number",
+  "metric": { "name": "requests", "field": "COUNT", "aggregate": "SUM" }
+}
+```
+
+```bash
+appsignal-cli dashboards add-visual --app-id APP --dashboard-id DASH \
+  --type number --file number.json
+```
+
+Use `--file -` to read a single JSON object from stdin. For example, rename an
+existing chart while preserving its metrics and layout:
+
+```bash
+printf '%s' '{"title":"Request duration"}' | \
+  appsignal-cli dashboards update-visual --app-id APP --dashboard-id DASH \
+    --id CHART --file -
+```
+
+Chart JSON uses camelCase keys and contains settings only; IDs and chart type
+belong in command flags. Updates infer the existing type and cannot change it.
+Unknown keys, invalid values, and settings for the other type produce errors.
+
+Supported settings:
+
+| Type | Settings |
+|---|---|
+| Both | `title`, `description`, `format`, `formatInput`, `layout` |
+| Timeseries | `metrics`, `lineLabel`, `display`, `drawNullAsZero`, `minYAxis` |
+| Number | `metric` |
+
+- Chart creation requires a nonempty `title` and `description`. Missing, null,
+  empty, or whitespace-only descriptions are rejected before creation. Updates
+  accept only the fields being changed; an empty patch is rejected.
+- Supplied arrays and nested objects replace that entire field. To change a
+  metric's tags, supply the complete metric definition. To change layout, supply
+  all four integer fields: `x`, `y`, `w`, `h`.
+- On updates, omitted fields stay unchanged. Use `null` to clear `description`, `format`,
+  `formatInput`, `layout`, `lineLabel`, `minYAxis`, or a number widget's `metric`.
+  Clear timeseries metrics with `"metrics": []`.
+- Changing `format` away from `size` also clears `formatInput` on the server.
+- Display values: `LINE`, `AREA`, `AREA_RELATIVE`. Metric fields: `MEAN`, `P90`,
+  `P95`, `COUNT`, `GAUGE`, `COUNTER`. Number aggregates: `MAX`, `MIN`, `AVG`, `SUM`,
+  `FIRST`, `LAST`.
+- Formats: `number`, `percent`, `duration`, `throughput`, `size`. Size input units:
+  `bit`, `byte`, `kilobit`, `kilobyte`, `megabyte`.
+- Concurrent edits to the same field are last-write-wins. A chart creation is
+  not automatically retried; after an ambiguous network failure, inspect the
+  dashboard before running it again.
+
 
 ### `triggers`
 
