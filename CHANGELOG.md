@@ -1,5 +1,24 @@
 # AppSignal CLI changelog
 
+## 2.2.0
+
+_Published on 2026-09-10._
+
+### Added
+
+- Add dashboard chart inspection, creation, and partial updates from JSON files or stdin.
+
+  Creating dashboards and charts now requires a nonempty description. Partial
+  updates continue to preserve omitted descriptions.
+
+  (minor [c8762a6](https://github.com/appsignal/appsignal-cli/commit/c8762a6d575f9a5291a34da0073e12a72b3cefeb))
+
+### Fixed
+
+- Fix dashboard commands rejecting valid API source values. (patch [c8762a6](https://github.com/appsignal/appsignal-cli/commit/c8762a6d575f9a5291a34da0073e12a72b3cefeb))
+- Restore exception details and ordered error causes in incidents show using retained traces. Cause backtrace locations remain available. If optional details cannot be loaded within ten seconds, the command preserves available results and warns on stderr without failing. (patch [c8762a6](https://github.com/appsignal/appsignal-cli/commit/c8762a6d575f9a5291a34da0073e12a72b3cefeb))
+- Structured metadata from JSON logs is now included in both JSON and human output from logs search and logs tail. (patch [c8762a6](https://github.com/appsignal/appsignal-cli/commit/c8762a6d575f9a5291a34da0073e12a72b3cefeb))
+
 ## 2.1.0
 
 _Published on 2026-08-03._
