@@ -163,6 +163,17 @@ appsignal-cli logs tail --app-id 12345 --view error-view
 
 ## Incident Options
 
+`incidents show` automatically enriches exception incidents from the newest
+retained error trace, including ordered causes and available cause backtrace
+locations. JSON preserves `incident` and adds `exception_error` and
+`error_causes` only when available.
+
+Check stderr for enrichment warnings even when the command succeeds: a trace
+or backtrace request may fail or exceed the ten-second enrichment deadline.
+Use the returned incident details as partial results in that case. No retained
+trace is a normal result without a warning. For an explicitly selected trace,
+use `samples incident`, then `samples show-incident`.
+
 Common flags for `incidents list`, `list-exceptions`, `list-performance`, and `list-anomalies`:
 
 | Flag | Description |
