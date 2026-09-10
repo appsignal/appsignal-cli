@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use crate::output::Output;
 
 const SKILL_NAME: &str = "appsignal";
-const SKILL_VERSION: &str = env!("CARGO_PKG_VERSION");
+// Bump this whenever the bundled skill templates change, even if the CLI
+// package version does not.
+const SKILL_VERSION: &str = "2";
 const OPENCODE_SKILL_TEMPLATE: &str = include_str!("../../skills/opencode/SKILL.md");
 const CODEX_SKILL_TEMPLATE: &str = include_str!("../../skills/codex/SKILL.md");
 const CLAUDE_SKILL_TEMPLATE: &str = include_str!("../../skills/claude/SKILL.md");
@@ -560,6 +562,30 @@ mod tests {
 
         assert_eq!(existing.status, SkillFileStatus::UpdateAvailable);
         assert_eq!(existing.installed_version.as_deref(), Some("0.0.1"));
+    }
+
+    #[test]
+    fn inspect_existing_skill_marks_package_version_as_update_available() {
+        let dir = TempDir::new().unwrap();
+        let skill_path = dir.path().join("appsignal").join("SKILL.md");
+
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(
+            &skill_path,
+            format!(
+                "skill\n{VERSION_MARKER_PREFIX}{}{VERSION_MARKER_SUFFIX}\n",
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .unwrap();
+
+        let existing = inspect_existing_skill(&skill_path).unwrap();
+
+        assert_eq!(existing.status, SkillFileStatus::UpdateAvailable);
+        assert_eq!(
+            existing.installed_version.as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]

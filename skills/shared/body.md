@@ -403,6 +403,20 @@ Extra `logs search` flags:
 | `--order <ASC|DESC>` | Sort order |
 | `--page-all` | Auto-paginate to fetch all results |
 
+## Structured Log Metadata
+
+`logs search` and `logs tail` preserve structured fields from a log line in the
+`json` object when using `--output json`; values retain their JSON types. Use
+this output when an agent needs to inspect or process metadata reliably. Human
+output appends nonempty fields as `[key=value ...]`.
+
+Custom metadata fields can also be queried directly, including dotted keys:
+
+```bash
+appsignal-cli --output json logs search --app "MyApp" --environment "production" \
+  --query "request_id=abc123 user.id=42"
+```
+
 ## Log Metric Options
 
 Use `logs metrics` when the goal is to extract a metric from matching log lines so it can later be charted, alerted on, or queried elsewhere in AppSignal.
