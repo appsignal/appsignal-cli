@@ -3,6 +3,7 @@ pub mod apps;
 pub mod auth;
 pub mod dashboards;
 pub mod feedback;
+mod incident_enrichment;
 pub mod incidents;
 pub mod logs;
 pub mod project;

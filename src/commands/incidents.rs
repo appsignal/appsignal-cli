@@ -6,8 +6,7 @@ use tabled::Tabled;
 
 use super::{authenticated_client, resolve_org};
 use crate::api::{
-    resolve_user_ids, ExceptionIncidentErrorCauseLine, ExceptionIncidentSample, Incident,
-    IncidentNote, IncidentNotificationFrequency,
+    resolve_user_ids, AppSignalClient, Incident, IncidentNote, IncidentNotificationFrequency,
 };
 use crate::config::Config;
 use crate::output::{self, Output};
@@ -32,12 +31,12 @@ struct IncidentShowResponse<'a> {
 }
 
 #[derive(Serialize)]
-struct ExceptionErrorView {
-    name: String,
+pub(super) struct ExceptionErrorView {
+    pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
+    pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    first_line: Option<String>,
+    pub first_line: Option<String>,
 }
 
 fn is_empty_exception_errors(errors: &&[ExceptionErrorView]) -> bool {
@@ -338,35 +337,45 @@ pub async fn show(
         .resolve_app_id(&org_slug, app_id, app_name, environment)
         .await?;
 
-    let incident = client
-        .get_incident(&resolved_app_id, incident_number)
-        .await?;
-    let exception_sample = if matches!(incident, Incident::ExceptionIncident { .. }) {
-        client
-            .get_exception_incident_sample(&resolved_app_id, incident_number)
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
-    let exception_error = exception_sample
-        .as_ref()
-        .and_then(exception_error_from_sample);
-    let error_causes = exception_sample
-        .as_ref()
-        .map(exception_causes_from_sample)
-        .unwrap_or_default();
-
-    output::print_with(
-        IncidentShowResponse {
-            incident: &incident,
-            exception_error: exception_error.as_ref(),
-            error_causes: &error_causes,
-        },
+    let mut stdout = io::stdout();
+    let mut stderr = io::stderr();
+    show_with_client(
+        &client,
+        &resolved_app_id,
+        incident_number,
         format,
-        |w| render_incident_detail(w, &incident, exception_error.as_ref(), &error_causes),
+        &mut stdout,
+        &mut stderr,
     )
+    .await
+}
+
+async fn show_with_client(
+    client: &AppSignalClient,
+    app_id: &str,
+    incident_number: i64,
+    format: Output,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<()> {
+    let incident = client.get_incident(app_id, incident_number).await?;
+    let enrichment = super::incident_enrichment::fetch(client, app_id, &incident).await;
+    if let Some(warning) = enrichment.warning {
+        writeln!(stderr, "Warning: {warning}")?;
+    }
+    let causes: Vec<_> = enrichment
+        .causes
+        .into_iter()
+        .map(|cause| cause.error)
+        .collect();
+    let response = IncidentShowResponse {
+        incident: &incident,
+        exception_error: enrichment.exception.as_ref(),
+        error_causes: &causes,
+    };
+    output::write_with(response, format, stdout, |w| {
+        render_incident_detail(w, &incident, enrichment.exception.as_ref(), &causes)
+    })
 }
 
 /// Update an incident (state, severity, notification frequency, assignees, description).
@@ -770,68 +779,6 @@ fn render_anomaly_table(w: &mut dyn Write, incidents: &[Incident]) -> io::Result
     writeln!(w, "{} anomaly incident(s) found.", incidents.len())
 }
 
-fn exception_error_from_sample(sample: &ExceptionIncidentSample) -> Option<ExceptionErrorView> {
-    let name = sample.exception.name.as_deref()?.trim();
-    if name.is_empty() {
-        return None;
-    }
-
-    Some(ExceptionErrorView {
-        name: name.to_string(),
-        message: sample
-            .exception
-            .message
-            .as_deref()
-            .map(str::trim)
-            .filter(|message| !message.is_empty())
-            .map(ToString::to_string),
-        first_line: None,
-    })
-}
-
-fn exception_causes_from_sample(sample: &ExceptionIncidentSample) -> Vec<ExceptionErrorView> {
-    sample
-        .error_causes
-        .iter()
-        .map(|cause| ExceptionErrorView {
-            name: if cause.name.trim().is_empty() {
-                "Unknown error".to_string()
-            } else {
-                cause.name.trim().to_string()
-            },
-            message: cause
-                .message
-                .as_deref()
-                .map(str::trim)
-                .filter(|message| !message.is_empty())
-                .map(ToString::to_string),
-            first_line: cause.first_line.as_ref().and_then(format_cause_first_line),
-        })
-        .collect()
-}
-
-fn format_cause_first_line(first_line: &ExceptionIncidentErrorCauseLine) -> Option<String> {
-    first_line
-        .original
-        .as_deref()
-        .map(str::trim)
-        .filter(|original| !original.is_empty())
-        .map(ToString::to_string)
-        .or_else(|| {
-            let path = first_line.path.as_deref()?.trim();
-            if path.is_empty() {
-                return None;
-            }
-
-            let line = first_line.line.as_deref().map(str::trim).unwrap_or("");
-            if line.is_empty() {
-                Some(path.to_string())
-            } else {
-                Some(format!("{}:{}", path, line))
-            }
-        })
-}
-
 fn render_error_causes(w: &mut dyn Write, error_causes: &[ExceptionErrorView]) -> io::Result<()> {
     if error_causes.is_empty() {
         return Ok(());
@@ -970,6 +917,178 @@ fn render_incident_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use wiremock::matchers::{body_partial_json, body_string_contains, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn mount_show_incident(server: &MockServer, incident: &Incident) {
+        Mock::given(method("POST"))
+            .and(path("/graphql"))
+            .and(body_string_contains("query AppIncident("))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"data": {"app": {"incident": incident}}})),
+            )
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn show_preserves_enriched_human_and_json_output() {
+        for format in [Output::Human, Output::Json] {
+            let server = MockServer::start().await;
+            let mut incident = exception_incident();
+            if let Incident::ExceptionIncident { digests, .. } = &mut incident {
+                *digests = Some(vec!["digest".into()]);
+            }
+            mount_show_incident(&server, &incident).await;
+            Mock::given(path("/api/v2/tracing/traces/errors"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!([{"trace_id": "trace", "span_id": "span"}])),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(path("/api/v2/tracing/trace/error"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                    "trace_id": "trace", "span_id": "span",
+                    "events.name": ["exception", "exception"],
+                    "events.attributes": [
+                        {"appsignal.incident_digest": "digest", "exception.type": "LatestError", "exception.message": "fresh message", "appsignal.exception.stacktrace_index": "0_0"},
+                        {"exception.type": "CauseError", "exception.message": "cause message", "appsignal.exception.stacktrace_index": "0_1", "appsignal.stacktrace_id": "stack"}
+                    ]
+                }])))
+                .expect(1).mount(&server).await;
+            Mock::given(path("/graphql")).and(body_string_contains("query IncidentCauseBacktrace("))
+                .and(body_partial_json(json!({"variables": {"appId": "app", "id": "stack", "revision": null}})))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": {"app": {"backtrace": [{"type": "app", "original": "app.rb:42"}]}}})))
+                .expect(1).mount(&server).await;
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            show_with_client(
+                &AppSignalClient::with_endpoint("tok", &server.uri()),
+                "app",
+                7,
+                format,
+                &mut stdout,
+                &mut stderr,
+            )
+            .await
+            .unwrap();
+            assert!(stderr.is_empty());
+            match format {
+                Output::Json => {
+                    let value: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+                    assert_eq!(
+                        value["incident"]["exceptionMessage"],
+                        "stale incident message"
+                    );
+                    assert_eq!(
+                        value["exception_error"],
+                        json!({"name": "LatestError", "message": "fresh message"})
+                    );
+                    assert_eq!(
+                        value["error_causes"],
+                        json!([{"name": "CauseError", "message": "cause message", "first_line": "app.rb:42"}])
+                    );
+                }
+                Output::Human => {
+                    let output = String::from_utf8(stdout).unwrap();
+                    assert!(output.contains("Exception:      LatestError"));
+                    assert!(output.contains("Message:        fresh message"));
+                    assert!(output.contains("CauseError: cause message - app.rb:42"));
+                    assert!(!output.contains("stale incident message"));
+                }
+            }
+            for request in server.received_requests().await.unwrap() {
+                if request.url.path() == "/graphql" {
+                    assert!(!request.body_json::<serde_json::Value>().unwrap()["query"]
+                        .as_str()
+                        .unwrap()
+                        .contains("sample"));
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn show_optional_failures_warn_only_on_stderr_and_still_succeed() {
+        for format in [Output::Human, Output::Json] {
+            let server = MockServer::start().await;
+            let mut incident = exception_incident();
+            if let Incident::ExceptionIncident { digests, .. } = &mut incident {
+                *digests = Some(vec!["digest".into()]);
+            }
+            mount_show_incident(&server, &incident).await;
+            Mock::given(path("/api/v2/tracing/traces/errors"))
+                .respond_with(
+                    ResponseTemplate::new(403).set_body_string("sensitive server details"),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            show_with_client(
+                &AppSignalClient::with_endpoint("tok", &server.uri()),
+                "app",
+                7,
+                format,
+                &mut stdout,
+                &mut stderr,
+            )
+            .await
+            .unwrap();
+            let warning = String::from_utf8(stderr).unwrap();
+            assert_eq!(warning.lines().count(), 1);
+            assert!(warning.starts_with("Warning: "));
+            assert!(warning.contains("authentication rejected"));
+            assert!(!warning.contains("sensitive"));
+            if matches!(format, Output::Json) {
+                let value: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+                assert!(value.get("exception_error").is_none());
+                assert!(value.get("error_causes").is_none());
+                assert_eq!(value["incident"]["number"], 7);
+            } else {
+                assert!(String::from_utf8(stdout)
+                    .unwrap()
+                    .contains("stale incident message"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn show_non_exception_does_not_enrich_and_main_fetch_errors_remain_fatal() {
+        let server = MockServer::start().await;
+        let incident: Incident = serde_json::from_value(json!({
+            "__typename": "PerformanceIncident", "id": "p", "number": 8, "count": 1
+        }))
+        .unwrap();
+        mount_show_incident(&server, &incident).await;
+        let client = AppSignalClient::with_endpoint("tok", &server.uri());
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        show_with_client(&client, "app", 8, Output::Json, &mut stdout, &mut stderr)
+            .await
+            .unwrap();
+        assert!(stderr.is_empty());
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        server.reset().await;
+        Mock::given(path("/graphql"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        stdout.clear();
+        assert!(
+            show_with_client(&client, "app", 8, Output::Json, &mut stdout, &mut stderr)
+                .await
+                .is_err()
+        );
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+    }
 
     fn exception_incident() -> Incident {
         Incident::ExceptionIncident {
@@ -1021,23 +1140,16 @@ mod tests {
     #[test]
     fn render_incident_detail_uses_sample_error_and_causes() {
         let incident = exception_incident();
-        let sample = ExceptionIncidentSample {
-            exception: crate::api::ExceptionIncidentSampleException {
-                name: Some("NoMethodError".to_string()),
-                message: Some("fresher sample message".to_string()),
-            },
-            error_causes: vec![crate::api::ExceptionIncidentErrorCause {
-                name: "ArgumentError".to_string(),
-                message: Some("argument out of range".to_string()),
-                first_line: Some(ExceptionIncidentErrorCauseLine {
-                    original: None,
-                    path: Some("app/models/report.rb".to_string()),
-                    line: Some("42".to_string()),
-                }),
-            }],
-        };
-        let exception_error = exception_error_from_sample(&sample);
-        let error_causes = exception_causes_from_sample(&sample);
+        let exception_error = Some(ExceptionErrorView {
+            name: "NoMethodError".to_string(),
+            message: Some("fresher sample message".to_string()),
+            first_line: None,
+        });
+        let error_causes = vec![ExceptionErrorView {
+            name: "ArgumentError".to_string(),
+            message: Some("argument out of range".to_string()),
+            first_line: Some("app/models/report.rb:42".to_string()),
+        }];
         let mut buf = Vec::new();
 
         render_incident_detail(&mut buf, &incident, exception_error.as_ref(), &error_causes)

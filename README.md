@@ -271,6 +271,16 @@ appsignal-cli skill install --target claude
 | `logs triggers update --id <id>` | Update a log-based trigger |
 | `logs triggers delete --id <id>` | Delete a log-based trigger |
 
+For exception incidents, `incidents show` automatically loads the newest retained
+error trace and includes its exception details, ordered causes, and available
+cause backtrace locations. JSON keeps the `incident`, optional `exception_error`,
+and optional `error_causes` fields.
+
+If no trace is retained, the command shows incident details alone. Optional
+trace or backtrace failures produce a warning on stderr and preserve available
+details with a successful exit; enrichment has a ten-second deadline. A failure
+to fetch the incident itself still fails the command.
+
 ### `dashboards`
 
 | Command | Description |

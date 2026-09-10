@@ -59,6 +59,10 @@ where
 pub fn print<T: Render>(value: &T, format: Output) -> Result<()> {
     let stdout = io::stdout();
     let mut w = stdout.lock();
+    write(value, format, &mut w)
+}
+
+fn write<T: Render>(value: &T, format: Output, mut w: &mut dyn Write) -> Result<()> {
     match format {
         Output::Human => value.render_human(&mut w)?,
         Output::Json => {
@@ -67,6 +71,22 @@ pub fn print<T: Render>(value: &T, format: Output) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Render a command result to an injected writer, using the standard output format.
+pub fn write_with<T, F>(value: T, format: Output, w: &mut dyn Write, render_human: F) -> Result<()>
+where
+    T: Serialize,
+    F: Fn(&mut dyn Write) -> io::Result<()>,
+{
+    write(
+        &CustomRender {
+            value,
+            render_human,
+        },
+        format,
+        w,
+    )
 }
 
 /// Print a command result without a bespoke named `Render` type.
