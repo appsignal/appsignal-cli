@@ -1226,7 +1226,19 @@ pub(crate) struct RestLogLine {
     pub severity: Option<String>,
     pub message: Option<String>,
     pub hostname: Option<String>,
-    pub json: Option<serde_json::Map<String, Value>>,
+    pub json: Option<Value>,
+}
+
+fn normalize_rest_log_json(value: Value) -> Option<serde_json::Map<String, Value>> {
+    let json = match value {
+        Value::Object(map) => map,
+        Value::String(raw) => serde_json::from_str(&raw).unwrap_or_else(|_| {
+            serde_json::Map::from_iter([("raw".to_string(), Value::String(raw))])
+        }),
+        other => serde_json::Map::from_iter([("raw".to_string(), other)]),
+    };
+
+    (!json.is_empty()).then_some(json)
 }
 
 #[derive(Debug, Deserialize)]
@@ -2685,7 +2697,7 @@ impl AppSignalClient {
                     hostname: line.hostname.unwrap_or_default(),
                     group: line.group,
                     message: line.message.unwrap_or_default(),
-                    json: line.json.filter(|json| !json.is_empty()),
+                    json: line.json.and_then(normalize_rest_log_json),
                     source,
                 }
             })
@@ -3703,6 +3715,13 @@ mod tests {
                         "user.id": 42,
                         "trace_id": "trace-123"
                     }
+                },
+                {
+                    "id": "log-2",
+                    "timestamp": "2025-06-01T12:00:01Z",
+                    "severity": "error",
+                    "message": "Scheduler failed",
+                    "json": r##"{"gl":"#PID<0.3593.0>"}"##
                 }
             ])))
             .mount(&server)
@@ -3723,12 +3742,57 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(lines.len(), 1);
+        assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].id.as_deref(), Some("log-1"));
         assert_eq!(lines[0].source_id.as_deref(), Some("src-1"));
         assert_eq!(
             lines[0].json.as_ref().and_then(|json| json.get("user.id")),
             Some(&json!(42))
+        );
+        assert!(lines[1].json.as_ref().is_some_and(Value::is_string));
+
+        let lines = AppSignalClient::rest_log_lines_to_log_lines(lines, &HashMap::new());
+        assert_eq!(
+            lines[1].json.as_ref().and_then(|json| json.get("gl")),
+            Some(&json!("#PID<0.3593.0>"))
+        );
+    }
+
+    #[test]
+    fn test_rest_log_lines_normalize_string_json_attributes() {
+        let lines: Vec<RestLogLine> = serde_json::from_value(json!([
+            {
+                "id": "log-1",
+                "timestamp": "2025-06-01T12:00:00Z",
+                "json": { "request_id": "123" }
+            },
+            {
+                "id": "log-2",
+                "timestamp": "2025-06-01T12:00:01Z",
+                "json": r##"{"gl":"#PID<0.3593.0>","time":1789923861250572}"##
+            },
+            {
+                "id": "log-3",
+                "timestamp": "2025-06-01T12:00:02Z",
+                "json": "unstructured attributes"
+            }
+        ]))
+        .expect("a page with string attributes should decode");
+
+        let lines = AppSignalClient::rest_log_lines_to_log_lines(lines, &HashMap::new());
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].json.as_ref().unwrap()["request_id"], json!("123"));
+        assert_eq!(
+            lines[1].json.as_ref().unwrap()["gl"],
+            json!("#PID<0.3593.0>")
+        );
+        assert_eq!(
+            lines[1].json.as_ref().unwrap()["time"],
+            json!(1789923861250572_i64)
+        );
+        assert_eq!(
+            lines[2].json.as_ref().unwrap()["raw"],
+            json!("unstructured attributes")
         );
     }
 
@@ -3744,12 +3808,12 @@ mod tests {
                 severity: Some("error".to_string()),
                 message: Some("Request failed".to_string()),
                 hostname: Some("web-1".to_string()),
-                json: Some(serde_json::Map::from_iter([
-                    ("duration_ms".to_string(), json!(42)),
-                    ("nestjs.context".to_string(), json!("UsersController")),
-                    ("request_id".to_string(), json!("123")),
-                    ("user.id".to_string(), json!(42)),
-                ])),
+                json: Some(json!({
+                    "duration_ms": 42,
+                    "nestjs.context": "UsersController",
+                    "request_id": "123",
+                    "user.id": 42,
+                })),
             }],
             &source_names,
         );
