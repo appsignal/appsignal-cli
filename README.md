@@ -108,6 +108,9 @@ appsignal-cli apps find --name "MyApp" --environment "production"
 # List recent incidents (all types)
 appsignal-cli incidents list --app "MyApp" --environment "production" --limit 5
 
+# List incidents tied to a specific deploy marker ("what broke in this deploy?")
+appsignal-cli incidents list --app "MyApp" --environment "production" --marker "<marker-id>"
+
 # Show details for a specific incident
 appsignal-cli incidents show --number 42 --app "MyApp" --environment "production"
 
