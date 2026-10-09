@@ -2,9 +2,9 @@
 language: "custom"
 repo: "https://github.com/appsignal/appsignal-cli"
 build:
-  command: "echo 'Can only build from GitHub Actions'"
+  command: 'test "$CI" = "true" || { echo "Can only build from GitHub Actions"; exit 1; }'
 publish:
-  command: "echo 'Can only publish from GitHub Actions'"
+  command: 'test "$CI" = "true" || { echo "Can only publish from GitHub Actions"; exit 1; }'
 test:
   command: "cargo test"
 
