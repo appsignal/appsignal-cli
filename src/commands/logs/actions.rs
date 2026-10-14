@@ -12,6 +12,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use super::super::{authenticated_client, resolve_org};
+use super::merge_rest_log_query;
 use crate::api::{
     AppSignalClient, LogLineAction, LogLineActionKind, LogLineActionTriggerInput,
     LogLineMetricInput, LogSource, Patch,
@@ -31,15 +32,19 @@ pub struct AppRef<'a> {
 
 /// Trigger-specific fields, in the shape an `update`/`create` cares about.
 ///
-/// `description` uses [`Patch`] and `notifier_ids` / `severities` use
-/// `Option<Vec<_>>`; both encode the same three states the server cares about
-/// — leave alone, clear, or replace — but the scalar field uses `Patch` so
-/// "set to empty string" and "clear" stay distinct.
+/// `description` uses [`Patch`] and `notifier_ids` uses `Option<Vec<_>>`;
+/// both encode the same three states the server cares about — leave alone,
+/// clear, or replace — but the scalar field uses `Patch` so "set to empty
+/// string" and "clear" stay distinct.
+///
+/// `severities` is not sent to the API as a separate field: the server treats
+/// the query as the single source of truth, so severities are folded into the
+/// query as `severity=[...]` before the mutation is sent.
 #[derive(Default)]
 pub struct TriggerFields {
     pub description: Patch<String>,
     pub notifier_ids: Option<Vec<String>>,
-    pub severities: Option<Vec<String>>,
+    pub severities: Vec<String>,
 }
 
 // -- Wire-format response envelopes --
@@ -125,12 +130,13 @@ pub async fn create_trigger(
     trigger: TriggerFields,
     format: Output,
 ) -> Result<()> {
+    let query = merge_trigger_query(query, &trigger.severities);
     let trigger_input = build_trigger_input(trigger);
     let action = create_action(
         LogLineActionKind::Trigger,
         app,
         name,
-        query,
+        &query,
         source_ids,
         None,
         trigger_input.as_ref(),
@@ -149,12 +155,19 @@ pub async fn update_trigger(
     trigger: TriggerFields,
     format: Output,
 ) -> Result<()> {
+    let query = match query {
+        Some(query) => Some(merge_trigger_query(query, &trigger.severities)),
+        None if !trigger.severities.is_empty() => {
+            anyhow::bail!("`--severity` requires `--query` when updating a log trigger.")
+        }
+        None => None,
+    };
     let trigger_input = build_trigger_input(trigger);
     let action = update_action(
         app,
         id,
         name,
-        query,
+        query.as_deref(),
         source_ids.as_deref(),
         None,
         trigger_input.as_ref(),
@@ -238,27 +251,28 @@ fn finish_mutation(
     })
 }
 
+fn merge_trigger_query(query: &str, severities: &[String]) -> String {
+    let severities: Vec<String> = severities
+        .iter()
+        .map(|severity| severity.trim().to_string())
+        .filter(|severity| !severity.is_empty())
+        .collect();
+    merge_rest_log_query(Some(query), Some(&severities))
+}
+
 fn build_trigger_input(fields: TriggerFields) -> Option<LogLineActionTriggerInput> {
     let TriggerFields {
         description,
         notifier_ids,
-        severities,
+        ..
     } = fields;
 
-    let severities = severities.map(|values| {
-        values
-            .into_iter()
-            .map(|severity| severity.trim().to_ascii_uppercase())
-            .collect::<Vec<_>>()
-    });
-
-    if description.is_unchanged() && notifier_ids.is_none() && severities.is_none() {
+    if description.is_unchanged() && notifier_ids.is_none() {
         None
     } else {
         Some(LogLineActionTriggerInput {
             description,
             notifier_ids,
-            severities,
         })
     }
 }
@@ -303,20 +317,15 @@ fn render_action_table(
             writeln!(w, "{} log metric configuration(s) found.", actions.len())
         }
         LogLineActionKind::Trigger => {
-            writeln!(
-                w,
-                "{:<28} {:<24} {:<18} {:<18} ID",
-                "NAME", "SEVERITIES", "NOTIFIERS", "QUERY"
-            )?;
+            writeln!(w, "{:<28} {:<18} {:<42} ID", "NAME", "NOTIFIERS", "QUERY")?;
             writeln!(w, "{}", "-".repeat(120))?;
             for action in actions {
                 writeln!(
                     w,
-                    "{:<28} {:<24} {:<18} {:<18} {}",
+                    "{:<28} {:<18} {:<42} {}",
                     truncate(action.name(), 26),
-                    truncate(&trigger_severities_summary(action), 22),
                     truncate(&trigger_notifiers_summary(action), 16),
-                    truncate(action.query(), 16),
+                    truncate(action.query(), 40),
                     truncate(action.id(), 26),
                 )?;
             }
@@ -346,7 +355,6 @@ fn render_action_detail(
             render_metric_definitions(w, action)
         }
         LogLineActionKind::Trigger => {
-            let severities = trigger_severities_summary(action);
             let notifiers = trigger_notifiers_summary(action);
             output::detail(
                 w,
@@ -355,7 +363,6 @@ fn render_action_detail(
                     ("Name", action.name()),
                     ("Query", action.query()),
                     ("Sources", &sources),
-                    ("Severities", &severities),
                     ("Notifiers", &notifiers),
                 ],
             )?;
@@ -433,15 +440,6 @@ fn metric_names_summary(action: &LogLineAction) -> String {
     }
 }
 
-fn trigger_severities_summary(action: &LogLineAction) -> String {
-    let severities = action.trigger_severities();
-    if severities.is_empty() {
-        "all".to_string()
-    } else {
-        severities.join(",")
-    }
-}
-
 fn trigger_notifiers_summary(action: &LogLineAction) -> String {
     let names: Vec<String> = action
         .trigger_notifiers()
@@ -465,13 +463,43 @@ mod tests {
         let trigger = build_trigger_input(TriggerFields {
             description: Patch::Set("desc".to_string()),
             notifier_ids: Some(vec![]),
-            severities: Some(vec![]),
+            severities: vec![],
         })
         .unwrap();
 
         assert_eq!(trigger.description, Patch::Set("desc".to_string()));
         assert_eq!(trigger.notifier_ids, Some(vec![]));
-        assert_eq!(trigger.severities, Some(vec![]));
+    }
+
+    #[test]
+    fn build_trigger_input_never_sends_severities() {
+        let trigger = build_trigger_input(TriggerFields {
+            description: Patch::Unchanged,
+            notifier_ids: Some(vec!["notifier-1".to_string()]),
+            severities: vec!["ERROR".to_string()],
+        })
+        .unwrap();
+
+        let json = serde_json::to_value(&trigger).unwrap();
+        assert_eq!(json, serde_json::json!({ "notifierIds": ["notifier-1"] }));
+    }
+
+    #[test]
+    fn build_trigger_input_none_when_only_severities_set() {
+        let trigger = build_trigger_input(TriggerFields {
+            severities: vec!["ERROR".to_string()],
+            ..TriggerFields::default()
+        });
+        assert!(trigger.is_none());
+    }
+
+    #[test]
+    fn merge_trigger_query_folds_severities_into_query() {
+        assert_eq!(
+            merge_trigger_query("message:root", &["ERROR".to_string(), " warn ".to_string()]),
+            "message:root severity=[error,warn]"
+        );
+        assert_eq!(merge_trigger_query("message:root", &[]), "message:root");
     }
 
     #[test]
@@ -479,7 +507,7 @@ mod tests {
         let trigger = build_trigger_input(TriggerFields {
             description: Patch::Clear,
             notifier_ids: None,
-            severities: None,
+            severities: vec![],
         })
         .unwrap();
 
@@ -527,7 +555,6 @@ mod tests {
                 order: 0,
             },
             description: Some("Alert on root logins".to_string()),
-            severities: vec!["ERROR".to_string()],
             user: None,
             previous_trigger: None,
             notification_options: None,
@@ -555,8 +582,9 @@ mod tests {
         render_action_table(&mut buf, LogLineActionKind::Trigger, &actions).unwrap();
         let output = String::from_utf8(buf).unwrap();
 
-        assert!(output.contains("SEVERITIES"));
+        assert!(output.contains("NOTIFIERS"));
         assert!(output.contains("Root login"));
+        assert!(output.contains("message:root"));
         assert!(output.contains("1 log trigger(s) found."));
     }
 }

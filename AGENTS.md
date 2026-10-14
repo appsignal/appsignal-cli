@@ -376,7 +376,10 @@ The CLI still uses GraphQL for `logs views` and `logs sources` metadata.
 - `source` (Source) — which log source (lazy-loaded)
 
 **`LogView`** — a saved filter preset:
-- `id`, `name`, `query` (free-text search), `sourceIds`, `severities`, `columns`, `lineHeight`
+- `id`, `name`, `query` (free-text search), `sourceIds`, `columns`, `lineHeight`
+- Severities are part of `query` (e.g. `severity=[error]`). The `severities`
+  field is being removed from log views and log triggers on the server, so the
+  CLI must not request or send it.
 
 **`LogSource`** — a log ingestion source:
 - `id`, `name`, `type` (vector/custom/vercel), `fmt` (JSON/PLAINTEXT/LOGFMT/AUTODETECT), `key`
@@ -386,12 +389,12 @@ The CLI still uses GraphQL for `logs views` and `logs sources` metadata.
 ```graphql
 # Fetch log views
 app(id: $appId) {
-  logViews { id name query sourceIds severities columns }
+  logViews { id name query sourceIds columns }
 }
 
 # Fetch single log view by ID
 app(id: $appId) {
-  logView(id: $viewId) { id name query sourceIds severities columns }
+  logView(id: $viewId) { id name query sourceIds columns }
 }
 
 # Fetch log sources
@@ -476,9 +479,9 @@ The `--view` flag on `tail` and `search` resolves a log view by:
 2. If that fails, listing all views and matching **by name** (case-insensitive)
 3. Errors if no match or multiple matches
 
-The view's `query`, `sourceIds`, and `severities` are applied as defaults.
-Explicit CLI flags (`--query`, `--severities`, `--source-ids`) always override
-the view's values.
+The view's `query` and `sourceIds` are applied as defaults. Explicit
+`--query` and `--source-ids` flags override the view's values. `--severities`
+is always added to the effective query as `severity=[...]`.
 
 ### Pagination (`--page-all`)
 

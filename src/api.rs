@@ -760,7 +760,6 @@ const LOG_LINE_ACTION_SELECTION: &str = r#"
         description
         query
         sourceIds
-        severities
         actionType
         sources { id name type fmt }
         order
@@ -830,7 +829,6 @@ pub struct LogView {
     pub query: Option<String>,
     #[serde(rename = "sourceIds")]
     pub source_ids: Option<Vec<String>>,
-    pub severities: Option<Vec<String>>,
     pub columns: Option<Vec<String>>,
 }
 
@@ -952,7 +950,6 @@ pub enum LogLineAction {
         #[serde(flatten)]
         common: LogLineActionCommon,
         description: Option<String>,
-        severities: Vec<String>,
         user: Option<User>,
         #[serde(rename = "previousTrigger")]
         previous_trigger: Option<LogLineActionTriggerReference>,
@@ -1018,13 +1015,6 @@ impl LogLineAction {
         match self {
             LogLineAction::Trigger { description, .. } => description.as_deref(),
             _ => None,
-        }
-    }
-
-    pub fn trigger_severities(&self) -> &[String] {
-        match self {
-            LogLineAction::Trigger { severities, .. } => severities,
-            _ => &[],
         }
     }
 
@@ -1192,8 +1182,6 @@ pub struct LogLineActionTriggerInput {
     pub description: Patch<String>,
     #[serde(rename = "notifierIds", skip_serializing_if = "Option::is_none")]
     pub notifier_ids: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub severities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2909,7 +2897,6 @@ impl AppSignalClient {
                         name
                         query
                         sourceIds
-                        severities
                         columns
                     }
                 }
@@ -2930,7 +2917,6 @@ impl AppSignalClient {
                         name
                         query
                         sourceIds
-                        severities
                         columns
                     }
                 }
@@ -5163,7 +5149,6 @@ mod tests {
             "name": "Error logs",
             "query": "severity=[error,critical]",
             "sourceIds": ["s1", "s2"],
-            "severities": ["ERROR", "CRITICAL"],
             "columns": ["timestamp", "message"]
         }"#;
         let view: LogView = serde_json::from_str(json).unwrap();
@@ -5171,7 +5156,6 @@ mod tests {
         assert_eq!(view.name, "Error logs");
         assert_eq!(view.query.as_deref(), Some("severity=[error,critical]"));
         assert_eq!(view.source_ids.as_ref().unwrap(), &["s1", "s2"]);
-        assert_eq!(view.severities.as_ref().unwrap(), &["ERROR", "CRITICAL"]);
         assert_eq!(view.columns.as_ref().unwrap(), &["timestamp", "message"]);
     }
 
@@ -5182,7 +5166,6 @@ mod tests {
             "name": "All logs",
             "query": null,
             "sourceIds": null,
-            "severities": null,
             "columns": null
         }"#;
         let view: LogView = serde_json::from_str(json).unwrap();
@@ -5223,7 +5206,6 @@ mod tests {
                                 "name": "Error logs",
                                 "query": "severity=[error]",
                                 "sourceIds": ["s1"],
-                                "severities": ["ERROR"],
                                 "columns": ["timestamp", "message"]
                             },
                             {
@@ -5231,7 +5213,6 @@ mod tests {
                                 "name": "All logs",
                                 "query": null,
                                 "sourceIds": [],
-                                "severities": [],
                                 "columns": null
                             }
                         ]
@@ -5282,7 +5263,6 @@ mod tests {
                             "name": "Error logs",
                             "query": "severity=[error]",
                             "sourceIds": ["s1"],
-                            "severities": ["ERROR"],
                             "columns": []
                         }
                     }

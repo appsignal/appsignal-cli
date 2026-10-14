@@ -51,15 +51,11 @@ pub async fn tail(
         .resolve_app_id(&org_slug, app_id, app_name, environment)
         .await?;
 
-    let (view_query, view_source_ids, view_severities) = if let Some(view_name) = view {
+    let (view_query, view_source_ids) = if let Some(view_name) = view {
         let lv = resolve_log_view(&client, &resolved_app_id, view_name).await?;
-        (
-            lv.query.clone(),
-            lv.source_ids.clone(),
-            lv.severities.clone(),
-        )
+        (lv.query, lv.source_ids)
     } else {
-        (None, None, None)
+        (None, None)
     };
 
     let effective_query = query.map(|q| q.to_string()).or(view_query);
@@ -70,13 +66,11 @@ pub async fn tail(
                 .collect::<Vec<_>>()
         })
         .or(view_source_ids);
-    let effective_severities = severities
-        .map(|s| {
-            s.split(',')
-                .map(|x| x.trim().to_uppercase())
-                .collect::<Vec<_>>()
-        })
-        .or(view_severities);
+    let effective_severities = severities.map(|s| {
+        s.split(',')
+            .map(|x| x.trim().to_uppercase())
+            .collect::<Vec<_>>()
+    });
 
     let (resolved_source_ids, source_names) =
         resolve_search_sources(&client, &resolved_app_id, effective_source_ids.as_deref()).await?;
@@ -163,15 +157,11 @@ pub async fn search(
         .resolve_app_id(&org_slug, app_id, app_name, environment)
         .await?;
 
-    let (view_query, view_source_ids, view_severities) = if let Some(view_name) = view {
+    let (view_query, view_source_ids) = if let Some(view_name) = view {
         let lv = resolve_log_view(&client, &resolved_app_id, view_name).await?;
-        (
-            lv.query.clone(),
-            lv.source_ids.clone(),
-            lv.severities.clone(),
-        )
+        (lv.query, lv.source_ids)
     } else {
-        (None, None, None)
+        (None, None)
     };
 
     let effective_query = query.map(|q| q.to_string()).or(view_query);
@@ -182,13 +172,11 @@ pub async fn search(
                 .collect::<Vec<_>>()
         })
         .or(view_source_ids);
-    let effective_severities = severities
-        .map(|s| {
-            s.split(',')
-                .map(|x| x.trim().to_uppercase())
-                .collect::<Vec<_>>()
-        })
-        .or(view_severities);
+    let effective_severities = severities.map(|s| {
+        s.split(',')
+            .map(|x| x.trim().to_uppercase())
+            .collect::<Vec<_>>()
+    });
 
     let (resolved_source_ids, source_names) =
         resolve_search_sources(&client, &resolved_app_id, effective_source_ids.as_deref()).await?;
@@ -322,7 +310,7 @@ async fn resolve_search_sources(
     Ok((resolved_source_ids, source_names))
 }
 
-fn merge_rest_log_query(query: Option<&str>, severities: Option<&[String]>) -> String {
+pub(crate) fn merge_rest_log_query(query: Option<&str>, severities: Option<&[String]>) -> String {
     let mut parts = Vec::new();
 
     if let Some(query) = query.filter(|query| !query.trim().is_empty()) {
@@ -481,23 +469,17 @@ fn render_log_views(w: &mut dyn Write, views: &[LogView]) -> io::Result<()> {
         return writeln!(w, "No log views found.");
     }
 
-    writeln!(w, "{:<28} {:<40} {:<20} SEVERITIES", "ID", "NAME", "QUERY")?;
+    writeln!(w, "{:<28} {:<40} QUERY", "ID", "NAME")?;
     writeln!(w, "{}", "-".repeat(100))?;
 
     for v in views {
         let query_str = v.query.as_deref().unwrap_or("-");
-        let sevs = v
-            .severities
-            .as_ref()
-            .map(|s| s.join(","))
-            .unwrap_or_else(|| "-".to_string());
         writeln!(
             w,
-            "{:<28} {:<40} {:<20} {}",
+            "{:<28} {:<40} {}",
             output::truncate(&v.id, 26),
             output::truncate(&v.name, 38),
-            output::truncate(query_str, 18),
-            sevs,
+            output::truncate(query_str, 30),
         )?;
     }
 

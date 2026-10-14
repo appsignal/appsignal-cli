@@ -463,10 +463,9 @@ Useful `logs triggers create` and `logs triggers update` flags:
 | `--source-id <id>` | Restrict matching to specific log sources; repeat for multiple sources |
 | `--description <text>` | Optional longer description or runbook hint |
 | `--notifier-id <id>` | Attach a notifier; repeat for multiple notifiers |
-| `--severity <value>` | Match only specific severities; repeat for multiple values |
+| `--severity <value>` | Match only specific severities; repeat for multiple values. Added to the query as `severity=[...]`, so `update` requires `--query` |
 | `--clear-sources` | On update, remove all source restrictions |
 | `--clear-notifiers` | On update, remove all notifiers |
-| `--clear-severities` | On update, remove all severity filters |
 | `--id <id>` | Required for `update` and `delete`. Existing trigger ID |
 
 ## Log Query Syntax

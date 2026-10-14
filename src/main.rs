@@ -983,13 +983,14 @@ enum LogTriggerAction {
         /// Attach a notifier to this trigger. Repeat to add more.
         #[arg(long = "notifier-id")]
         notifier_ids: Vec<String>,
-        /// Match only these severities. Repeat to add more.
+        /// Match only these severities. Repeat to add more. Added to the
+        /// query as `severity=[...]`.
         #[arg(long = "severity")]
         severities: Vec<String>,
     },
     /// Update an existing log-based trigger
     #[command(
-        after_help = "Examples:\n  appsignal-cli logs triggers update --app \"MyApp\" --environment production --id trigger_rule_123 --name \"Root login attempts\"\n  appsignal-cli logs triggers update --app \"MyApp\" --environment production --id trigger_rule_123 --clear-severities --clear-notifiers"
+        after_help = "Examples:\n  appsignal-cli logs triggers update --app \"MyApp\" --environment production --id trigger_rule_123 --name \"Root login attempts\"\n  appsignal-cli logs triggers update --app \"MyApp\" --environment production --id trigger_rule_123 --query 'message:root' --severity ERROR --clear-notifiers"
     )]
     Update {
         #[command(flatten)]
@@ -1021,12 +1022,10 @@ enum LogTriggerAction {
         /// Remove all trigger notifier IDs
         #[arg(long, conflicts_with = "notifier_ids")]
         clear_notifiers: bool,
-        /// Replace trigger severities with these values. Repeat to add more.
-        #[arg(long = "severity", conflicts_with = "clear_severities")]
+        /// Match only these severities. Repeat to add more. Added to the
+        /// new `--query` as `severity=[...]`.
+        #[arg(long = "severity", requires = "query")]
         severities: Vec<String>,
-        /// Remove all trigger severities
-        #[arg(long, conflicts_with = "severities")]
-        clear_severities: bool,
     },
     /// Delete a log-based trigger
     Delete {
@@ -2048,7 +2047,7 @@ async fn run(cli: Cli) -> Result<()> {
                         commands::logs::actions::TriggerFields {
                             description: replace_or_clear_scalar(description, false),
                             notifier_ids: (!notifier_ids.is_empty()).then_some(notifier_ids),
-                            severities: (!severities.is_empty()).then_some(severities),
+                            severities,
                         },
                         cli.output,
                     )
@@ -2066,7 +2065,6 @@ async fn run(cli: Cli) -> Result<()> {
                     notifier_ids,
                     clear_notifiers,
                     severities,
-                    clear_severities,
                 } => {
                     commands::logs::actions::update_trigger(
                         &app.as_ref(),
@@ -2077,7 +2075,7 @@ async fn run(cli: Cli) -> Result<()> {
                         commands::logs::actions::TriggerFields {
                             description: replace_or_clear_scalar(description, clear_description),
                             notifier_ids: replace_or_clear(notifier_ids, clear_notifiers),
-                            severities: replace_or_clear(severities, clear_severities),
+                            severities,
                         },
                         cli.output,
                     )
@@ -2908,7 +2906,6 @@ mod tests {
                         notifier_ids: Vec::new(),
                         clear_notifiers: false,
                         severities: Vec::new(),
-                        clear_severities: false,
                     },
                 },
             },
