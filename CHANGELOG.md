@@ -1,5 +1,17 @@
 # AppSignal CLI changelog
 
+## 2.2.1
+
+_Published on 2026-10-15._
+
+### Changed
+
+- Stop sending and requesting the `severities` field for log views and log triggers. Severity filters are now part of the log query. `logs triggers create --severity` and `logs triggers update --severity` add the severities to the query as `severity=[...]`, and `logs triggers update --severity` now requires `--query`. The `logs triggers update --clear-severities` flag has been removed; edit the query instead. (patch [1fd9b59](https://github.com/appsignal/appsignal-cli/commit/1fd9b5981480d369ad01c6857f88d3abb4f6cc4a))
+
+### Fixed
+
+- Log searches and tails now handle JSON-encoded attribute strings without failing the entire result. Unstructured attribute strings are preserved in a raw field. (patch [1fd9b59](https://github.com/appsignal/appsignal-cli/commit/1fd9b5981480d369ad01c6857f88d3abb4f6cc4a))
+
 ## 2.2.0
 
 _Published on 2026-09-10._
