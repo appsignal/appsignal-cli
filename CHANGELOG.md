@@ -1,5 +1,13 @@
 # AppSignal CLI changelog
 
+## 2.2.2
+
+_Published on 2026-10-22._
+
+### Security
+
+- Stop trusting certificates issued under the eMudhra intermediate certificate authorities whose private keys were [compromised in October 2026](https://bugzilla.mozilla.org/show_bug.cgi?id=2083449). The bundled CA certificates no longer include the emSign ECC Root CA - G3 root certificate, which those intermediates chain to. (patch [983917d](https://github.com/appsignal/appsignal-cli/commit/983917dac0fe322fe849a534ebd7d107fa6a7732))
+
 ## 2.2.1
 
 _Published on 2026-10-15._
